@@ -303,9 +303,27 @@ These went beyond the settled notes and ADRs and were approved with this spec.
 
 ## Amendment 2026-11-01 — from Phase 4 (Areas 2–3 schemas and fixtures)
 
-- **CFG-032**: the configuration error's `details` **MUST** include `artifact` (id@version), `field` (dotted path), and `layer` (`policyBundle`, `persona`, `harnessProfile`, `runRequest`, or `overlay`), so tools and fixtures can rely on them.
-- **CFG-050**: the snapshot hash is `sha256:` followed by the SHA-256 of the RFC 8785 canonical JSON (EVAL-000) of the effective configuration: an object whose keys are artifact kinds, each holding its artifacts sorted by id then version, after merging and with secret references unresolved. Key order and file layout therefore never affect the hash.
-- **CFG-033** is annotated *(untestable)* for implementation fixtures; the spec's CI enforces it on the schemas.
-- **CFG-101**: run-request values use harness profile field paths (e.g. `{budget: {tokens: 500}}`).
-- **Environment overlays** are given a form for fixtures: an environment name, deployment field values, and per-artifact behavioural values applied last, which may only tighten (CFG-021, CFG-112). A deployment's overlay file format is left to implementations.
+Writing schemas and fixtures for these areas exposed the gaps below. They are approved with the Phase 4 Areas 2–3 pull request.
 
+**Errors and fields**
+- **CFG-032**: the configuration error's `details` **MUST** include `artifact` (id@version), `field` (a JSON Pointer, RFC 6901, into that artifact, e.g. `/budget/tokens`), and `layer` (`policyBundle`, `persona`, `harnessProfile`, or `overlay`). Run-request violations (CFG-101) are `invalid_input` errors, not configuration errors, and carry `details.field` as a JSON Pointer into the profile.
+- **CFG-033** is annotated *(untestable)* for implementation fixtures; the spec's CI enforces it on the schemas.
+- **CFG-070**: the policy bundle field is renamed **`policyInstructions`** (merge `union`), so no field path has different merge rules in different kinds. Persona `instructions` stays `locked`. The two are separate fields and both reach the model (CTX-010).
+- **CFG-030, maps**: map-valued fields merge per key. Any layer **MAY** add keys; a key a higher layer set keeps its value's merge rule. The schema annotates the map `union` and each value with its own rule.
+- **HITL-023 in configuration**: `allowSelfApproval` **MUST NOT** have keys `taint` or `recovery`; such a key is a configuration error.
+- **Secrets in bindings**: provider, port, MCP-server, and remote-hook bindings take secrets only in a `credentials` map of secret references. `extensions` **MUST NOT** carry secret values.
+
+**Loading and snapshots**
+- **CFG-042**: semantic checks apply to each persona combined with each profile in its `allowedProfiles`, with the full policy bundle stack. An artifact not reachable from any persona is checked on its own.
+- **Defaults**: schema defaults (e.g. `deliveryMode: buffered`, `onExpiry: close`) apply after all layers merge. They are not a layer value, so a run request tightens relative to the effective value, defaults included.
+- **CFG-050**: the **effective configuration snapshot** is the validated set of artifacts after overlays, with schema defaults filled in and secret references unresolved. Merged views (persona × profile × run request) are computed from it deterministically and are not part of the snapshot. The **snapshot hash** is `sha256:` followed by the SHA-256 of the RFC 8785 canonical JSON (EVAL-000) of an object whose keys are artifact kinds, each holding its artifacts sorted by id then version.
+- **JSON-compatible values**: configuration **MUST** use only JSON-compatible YAML values — strings, booleans, null, arrays, objects, and numbers within I-JSON's range (RFC 7493). Implicit YAML types such as dates or `yes`/`no` booleans are configuration errors. This makes the snapshot hash identical across implementations.
+- **PORT-050**: a snapshot is written to a tenant's snapshot store when the first session for that tenant is created against it.
+
+**Run requests**
+- **CFG-101**: run requests **MAY** tighten run-scoped profile fields (`stepLimit`, `budget`, `timeouts`, `retry`, `outputRetryLimit`, `deliveryMode`, `limits.partSize`, `context`). Session-scoped fields (`idleTtl`, `suspendedTtl`, `onExpiry`, `limits.sessionSize`, `delegation`) **MAY** be tightened only by the run request that creates the session, and are recorded on `session.created`.
+- **CFG-101**: run-request values use harness profile field paths (e.g. `{budget: {tokens: 500}}`).
+
+**Environment overlays** (CFG-021, CFG-112)
+- An overlay has an environment name, deployment values, and per-artifact behavioural values applied last, which may only tighten. Its file format is left to implementations; fixtures use the form in the fixture schema.
+- An overlay **MAY** change endpoints, adapters, regions (subject to `dataResidency`), and port bindings. It **MUST NOT** loosen deployment governance: it may only append policy bundles, only remove `attachmentSources`, only add legal holds, and only lengthen retention periods.

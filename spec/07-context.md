@@ -172,3 +172,8 @@ This block replaces the provisional `context` field (CFG-090, CFG-092).
 
 - CTX-050: compaction targets the smallest `contextLimit` among the primary model and its remaining fallbacks (PROV-044).
 - CTX-060: required reasoning parts are protected only while the same provider continues; after a provider switch they are not sent (PROV-055).
+
+## Amendment 2026-11-01 — from Phase 4 (Areas 2–3)
+
+- CTX-010: "policy-bundle `instructions`" is now the bundle field `policyInstructions` (CFG amendment).
+
