@@ -296,3 +296,8 @@ These went beyond the settled notes and ADRs and were approved with this spec.
 - CFG-090: harness profiles may set `delegation.maxDepth` (merge `min`, default 2) (ORCH-030).
 - CFG-042: agent tools must declare `mutating`/`egress` if any reachable tool is; an agent tool's `output` requires a compatible child output schema; agent tools may not be listed in `trustedTools`; cost budgets require pricing for every model reachable through delegation (ORCH-020–023).
 - CFG-091: a child's token and cost usage also counts toward its parent's turn budget (ORCH-042).
+
+## Amendment 2026-11-01 — from Phase 4 review
+
+- CFG-110: a deployment declares `attachmentSources`, the channel names hosts may give for attachments (CORE-121). `trustedAttachmentSources` (CFG-070) may list only declared names.
+

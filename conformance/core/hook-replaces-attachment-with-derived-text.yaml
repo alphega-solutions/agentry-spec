@@ -100,7 +100,7 @@ script:
     persona: assistant@1
     input:
       - { type: text, text: "Summarise this" }
-      - { type: file, mediaType: text/plain, name: report.txt, provenance: "attachment:upload", blob: { id: blob-file-1, hash: "sha256:488b66a845535f2173fe026ad21ad4238ca6b733b00a24ba332adab6729a0a80", mediaType: text/plain, size: 44 } }
+      - { type: file, mediaType: text/plain, name: report.txt, source: upload, blob: { id: blob-file-1, hash: "sha256:488b66a845535f2173fe026ad21ad4238ca6b733b00a24ba332adab6729a0a80", mediaType: text/plain, size: 44 } }
     expect: { ok: true, endReason: responded }
 expect:
   sessions:

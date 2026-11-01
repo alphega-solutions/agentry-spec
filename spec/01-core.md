@@ -397,6 +397,7 @@ Writing schemas and fixtures for this area exposed these gaps. Requirement text 
 
 - **CORE-112, CORE-114** now name their error category: `invalid_input`.
 - **CORE-121** attachments carry a new provenance value, `attachment:<source>`, which `trustedAttachmentSources` matches. This adds one value to the provenance list in `domain.md` §7.
+- **CORE-121 — declaring the source.** The host **MUST** state the source of each attachment it passes to `run()`, as a channel name (e.g. `upload`, `email`). Channel names **MUST** be declared in the deployment's `attachmentSources` list *(extends CFG-110)*. An attachment with no source, or an undeclared one, **MUST** be rejected with `invalid_input` (`agentry.content.attachment_source`) before a run starts. The implementation sets the part's provenance to `attachment:<source>`; a host cannot supply any other provenance.
 - **CORE-131, CORE-161, CORE-182** reworded with **MUST**, so they are normative and covered by fixtures.
 - **CORE-191** `unauthorized` covers the principal lacking rights in the host's authorization; a principal below a tool's `minAssurance` produces `policy` (CORE-180, TOOL pipeline stage 4). The table's "or assurance" is withdrawn.
 - **CORE-191** `not_found` and `conflict` errors returned by a **tool** are delivered to the model as tool results, like `invalid_input`; "returned to the caller" applies to host operations only.

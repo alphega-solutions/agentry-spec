@@ -34,7 +34,7 @@ script:
       - { type: text, text: "Describe this" }
       - type: image
         mediaType: image/png
-        provenance: "attachment:upload"
+        source: upload
         blob: { id: blob-t2-img, hash: "sha256:3ca865795af4739e8f740b9bd739cf13a0872e39fdfa6769a9eb8b3801a8d0c4", mediaType: image/png, size: 23 }
     expect: { ok: false, error: { category: not_found } }
 expect:

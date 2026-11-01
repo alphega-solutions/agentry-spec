@@ -4,6 +4,7 @@ version: 1
 schemaVersion: "0.1.0"
 environment: test
 policyBundles: [org@1]
+attachmentSources: [upload, email]
 providers:
   - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
   - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
