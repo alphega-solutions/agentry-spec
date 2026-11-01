@@ -1,0 +1,94 @@
+schemaVersion: "0.1.0"
+id: cfg.snapshot-retained-while-open
+title: A snapshot pinned by a session that is not closed stays retrievable after newer loads and a restart
+description: >-
+  The session suspends under the first snapshot. Two further loads make a
+  newer snapshot current, and the implementation restarts against the same
+  port contents. The first snapshot is still in the snapshot store, and
+  resume() retrieves it and completes the turn under it. Its failure branch
+  (snapshot missing → `not_found`) is core.resume-snapshot-unavailable.
+requirements: [CFG-053]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, ref: test.update_record }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+script:
+  - load: {}
+    bind: $h1
+    expect: { ok: true }
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $esc, payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: extra, version: 1, schemaVersion: "0.1.0", idleTtl: PT1H, suspendedTtl: PT1H, stepLimit: 2 }
+    expect: { ok: true }
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: extra, version: 2, schemaVersion: "0.1.0", idleTtl: PT1H, suspendedTtl: PT1H, stepLimit: 3 }
+    expect: { ok: true }
+  - restart: {}
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-0000000000d2", escalationId: $esc, actionId: $act, type: approve }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, snapshotHash: $h1 }
+          - { type: run.started, snapshotHash: $h1, payload: { kind: resume } }
+          - { type: tool.call, snapshotHash: $h1, payload: { callId: c1 } }
+          - { type: run.ended, snapshotHash: $h1, payload: { reason: responded } }
+  ports:
+    snapshotStore:
+      t1:
+        $h1: { $any: true }
+  stubCalls:
+    update_record: { count: 1 }

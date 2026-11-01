@@ -169,6 +169,40 @@ def check_merge_annotations(schemas: dict) -> list[str]:
     return errors
 
 
+def check_inline_config(doc: dict, schemas: dict, reg) -> list[str]:
+    """Inline configuration that is expected to load must be schema-valid.
+
+    Artifacts in setup.config.artifacts, and in `load` steps expected to
+    succeed, are validated against their kind's schema. Artifacts in steps
+    expected to fail are not, since they may be invalid on purpose.
+    """
+    problems: list[str] = []
+
+    def check(art: dict, where: str) -> None:
+        kind = art.get("kind")
+        if kind in PENDING_KINDS:
+            return
+        if kind not in KIND_SCHEMAS:
+            problems.append(f"{where}: unknown configuration kind {kind!r}")
+            return
+        v = Draft202012Validator(schemas[KIND_SCHEMAS[kind]], registry=reg, format_checker=FormatChecker())
+        for err in v.iter_errors(art):
+            path = "/".join(map(str, err.absolute_path))
+            problems.append(f"{where} {kind} {art.get('id')}@{art.get('version')}: {path}: {err.message}")
+
+    setup_cfg = (doc.get("setup") or {}).get("config") or {}
+    for i, art in enumerate(setup_cfg.get("artifacts", []) or []):
+        check(art, f"setup.config.artifacts[{i}]")
+    for i, step in enumerate(doc.get("script", []) or []):
+        if "load" not in step:
+            continue
+        if (step.get("expect") or {}).get("ok") is not True:
+            continue
+        for j, art in enumerate((step["load"] or {}).get("artifacts", []) or []):
+            check(art, f"script[{i}].load.artifacts[{j}]")
+    return problems
+
+
 def main() -> int:
     errors: list[str] = []
     schemas = load_schemas()
@@ -219,6 +253,7 @@ def main() -> int:
                 errors.append(f"{fx.relative_to(ROOT)}: unknown requirement {rid}")
         if target == FIXTURE_ID:
             errors += [f"{fx.relative_to(ROOT)}: {e}" for e in check_placeholders(doc)]
+            errors += [f"{fx.relative_to(ROOT)}: {e}" for e in check_inline_config(doc, schemas, reg)]
 
     # 4. Shared configuration artifacts validate against their kind's schema.
     errors += check_shared_config(schemas, reg)

@@ -1,0 +1,163 @@
+schemaVersion: "0.1.0"
+id: cfg.semantic-trust-outside-bundle
+title: Output and attachment trust can be granted only in a policy bundle, and never to retrieval or agent tools
+description: >-
+  Rejected, each with category configuration:
+
+  - `trustedOutput` in a tool definition;
+  - `trustedTools` or `trustedAttachmentSources` in a persona, a harness
+    profile, or a deployment;
+  - a retrieval tool listed in a bundle's `trustedTools`;
+  - an agent tool listed in a bundle's `trustedTools`.
+
+  A bundle that trusts the native lookup tool and the `upload` attachment
+  source loads.
+requirements: [CFG-042]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+          vectorStore: { adapter: memory, region: test-region, sources: [docs] }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: Tool
+        id: search_docs
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Search the document store.
+        input: { type: object, additionalProperties: false, required: [query], properties: { query: { type: string } } }
+        effect: read
+        binding: { kind: retrieval, source: docs }
+      - kind: Persona
+        id: helper
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You are a helper persona."
+        tools: [lookup@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: ask_helper
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the helper persona.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: read
+        binding: { kind: agent, persona: helper@1 }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  # trustedOutput in a tool.
+  - load:
+      artifacts:
+        - { kind: Tool, id: lookup, version: 1, schemaVersion: "0.1.0", description: Look up a record by key., input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }, effect: read, trustedOutput: true, binding: { kind: native, ref: test.lookup } }
+    expect: { ok: false, error: { category: configuration } }
+  # Grants in a persona.
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], trustedTools: [lookup@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }] } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], trustedAttachmentSources: [upload], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }] } }
+    expect: { ok: false, error: { category: configuration } }
+  # Grants in a profile.
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, trustedTools: [lookup@1] }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, trustedAttachmentSources: [upload] }
+    expect: { ok: false, error: { category: configuration } }
+  # Grant in a deployment.
+  - load:
+      artifacts:
+        - kind: Deployment
+          id: test
+          version: 1
+          schemaVersion: "0.1.0"
+          environment: test
+          policyBundles: [org@1]
+          attachmentSources: [upload, email]
+          trustedAttachmentSources: [upload]
+          providers:
+            - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+            - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          ports:
+            eventLog: { adapter: memory, region: test-region }
+            checkpointStore: { adapter: memory, region: test-region }
+            idempotencyStore: { adapter: memory, region: test-region }
+            snapshotStore: { adapter: memory, region: test-region }
+            blobStore: { adapter: memory, region: test-region }
+            auditLog: { adapter: memory, region: test-region }
+            secrets: { adapter: memory, region: test-region }
+            vectorStore: { adapter: memory, region: test-region, sources: [docs] }
+          retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+    expect: { ok: false, error: { category: configuration } }
+  # A retrieval tool, and an agent tool, in a bundle's trustedTools.
+  - load:
+      artifacts:
+        - kind: PolicyBundle
+          id: org
+          version: 1
+          schemaVersion: "0.1.0"
+          instructions: "Follow organisational policy."
+          defaultFallbackMessage: "I can't help with that request."
+          trustedTools: [search_docs@1]
+          sensitivityPolicies:
+            pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+            phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - kind: PolicyBundle
+          id: org
+          version: 1
+          schemaVersion: "0.1.0"
+          instructions: "Follow organisational policy."
+          defaultFallbackMessage: "I can't help with that request."
+          trustedTools: [ask_helper@1]
+          sensitivityPolicies:
+            pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+            phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+    expect: { ok: false, error: { category: configuration } }
+  # Control: grants in a policy bundle.
+  - load:
+      artifacts:
+        - kind: PolicyBundle
+          id: org
+          version: 1
+          schemaVersion: "0.1.0"
+          instructions: "Follow organisational policy."
+          defaultFallbackMessage: "I can't help with that request."
+          trustedTools: [lookup@1]
+          trustedAttachmentSources: [upload]
+          sensitivityPolicies:
+            pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+            phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+    expect: { ok: true }
+expect: {}

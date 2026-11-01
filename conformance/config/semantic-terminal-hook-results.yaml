@@ -1,0 +1,60 @@
+schemaVersion: "0.1.0"
+id: cfg.semantic-terminal-hook-results
+title: A hook at onError or sessionEnd declaring rewrite, block, or escalate is rejected during configuration loading
+description: >-
+  One hook per load. A hook that sits at an ordinary point and also at
+  onError or sessionEnd is rejected too, since a result must be permitted at
+  every one of its points. An annotate hook at both points loads.
+  (core.hook-on-error-session-end-restricted covers every result at each
+  point for CORE-182.)
+requirements: [CFG-042]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        remoteHooks:
+          - { id: scanner, endpoint: "memory://hook-scanner", region: test-region }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  - load:
+      artifacts:
+        - { kind: Hook, id: error-block, version: 1, schemaVersion: "0.1.0", points: [onError], results: [block], timeoutMs: 1000, source: { kind: rule, when: "error.category == 'fatal'", then: { result: block, reasonCode: test.guard.blocked } } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Hook, id: end-rewrite, version: 1, schemaVersion: "0.1.0", points: [sessionEnd], results: [rewrite], timeoutMs: 1000, source: { kind: remote, endpoint: "memory://hook-scanner" } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Hook, id: mixed-escalate, version: 1, schemaVersion: "0.1.0", points: [beforeToolCall, sessionEnd], results: [escalate], timeoutMs: 1000, source: { kind: rule, when: "true", then: { result: escalate, reasonCode: test.guard.review } } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Hook, id: terminal-annotate, version: 1, schemaVersion: "0.1.0", points: [onError, sessionEnd], results: [annotate], timeoutMs: 1000, source: { kind: rule, when: "true", then: { result: annotate, labels: [pii] } } }
+    expect: { ok: true }
+expect: {}

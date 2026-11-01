@@ -1,0 +1,52 @@
+schemaVersion: "0.1.0"
+id: cfg.semantic-egress-taint-allow
+title: An effective taint outcome of allow for an egress tool is rejected; the effective outcome is the stricter of tool and bundle
+description: >-
+  - An egress tool declaring `onTaintedEgress: allow` → rejected, whether
+    the tool is read or mutating.
+  - An egress tool with the default `onTaintedEgress` (block) and a policy
+    bundle `toolTaintDefaults` entry of `allow` → accepted: the effective
+    outcome is the stricter of the two, block.
+  - The same with the tool declaring `onTaintedEgress: escalate` →
+    accepted: the effective outcome is escalate.
+requirements: [CFG-042]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  stubs:
+    tools:
+      send_note: []
+script:
+  - load:
+      artifacts:
+        - { kind: Tool, id: send_note, version: 1, schemaVersion: "0.1.0", description: Send a note to an external address., input: { type: object, additionalProperties: false, required: [text], properties: { text: { type: string } } }, effect: read, egress: true, onTaintedEgress: allow, binding: { kind: native, ref: test.send_note } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Tool, id: send_note, version: 1, schemaVersion: "0.1.0", description: Send a note to an external address., input: { type: object, additionalProperties: false, required: [text], properties: { text: { type: string } } }, effect: mutating, egress: true, idempotent: false, onTainted: escalate, onTaintedEgress: allow, binding: { kind: native, ref: test.send_note } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Tool, id: send_note, version: 1, schemaVersion: "0.1.0", description: Send a note to an external address., input: { type: object, additionalProperties: false, required: [text], properties: { text: { type: string } } }, effect: read, egress: true, binding: { kind: native, ref: test.send_note } }
+        - kind: PolicyBundle
+          id: org
+          version: 1
+          schemaVersion: "0.1.0"
+          instructions: "Follow organisational policy."
+          defaultFallbackMessage: "I can't help with that request."
+          toolTaintDefaults: { send_note@1: allow }
+          sensitivityPolicies:
+            pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+            phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+    expect: { ok: true }
+  - load:
+      artifacts:
+        - { kind: Tool, id: send_note, version: 1, schemaVersion: "0.1.0", description: Send a note to an external address., input: { type: object, additionalProperties: false, required: [text], properties: { text: { type: string } } }, effect: read, egress: true, onTaintedEgress: escalate, binding: { kind: native, ref: test.send_note } }
+    expect: { ok: true }
+expect: {}

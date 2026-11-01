@@ -1,0 +1,67 @@
+schemaVersion: "0.1.0"
+id: cfg.semantic-agent-tool-effect
+title: An agent tool declaring a weaker effect or egress than the tools it can reach is rejected
+description: >-
+  `writer@1` can call the mutating `update_record`; `mailer@1` can call the
+  egress tool `send_note`; `relay@1` can reach `send_note` only through the
+  agent tool `ask_mailer`.
+
+  - `ask_writer` declared `effect: read` → rejected; `mutating` → accepted.
+  - `ask_mailer` declared without egress → rejected; `egress: true` →
+    accepted.
+  - `ask_relay` declared without egress → rejected, because egress is
+    reachable transitively; `egress: true` → accepted.
+requirements: [CFG-042]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: send_note
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Send a note to an external address.
+        input: { type: object, additionalProperties: false, required: [text], properties: { text: { type: string } } }
+        effect: read
+        egress: true
+        binding: { kind: native, ref: test.send_note }
+      - { kind: Persona, id: writer, version: 1, schemaVersion: "0.1.0", instructions: "You update records.", tools: [update_record@1], defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a } }
+      - { kind: Persona, id: mailer, version: 1, schemaVersion: "0.1.0", instructions: "You send notes.", tools: [send_note@1], defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a } }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  stubs:
+    tools:
+      send_note: []
+script:
+  - load:
+      artifacts:
+        - { kind: Tool, id: ask_writer, version: 1, schemaVersion: "0.1.0", description: Ask the writer persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: read, binding: { kind: agent, persona: writer@1 } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Tool, id: ask_writer, version: 1, schemaVersion: "0.1.0", description: Ask the writer persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: mutating, binding: { kind: agent, persona: writer@1 } }
+    expect: { ok: true }
+  - load:
+      artifacts:
+        - { kind: Tool, id: ask_mailer, version: 1, schemaVersion: "0.1.0", description: Ask the mailer persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: read, binding: { kind: agent, persona: mailer@1 } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Tool, id: ask_mailer, version: 1, schemaVersion: "0.1.0", description: Ask the mailer persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: read, egress: true, binding: { kind: agent, persona: mailer@1 } }
+    expect: { ok: true }
+  - load:
+      artifacts:
+        - { kind: Persona, id: relay, version: 1, schemaVersion: "0.1.0", instructions: "You pass work to the mailer.", tools: [ask_mailer@1], defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a } }
+        - { kind: Tool, id: ask_relay, version: 1, schemaVersion: "0.1.0", description: Ask the relay persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: read, binding: { kind: agent, persona: relay@1 } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Persona, id: relay, version: 1, schemaVersion: "0.1.0", instructions: "You pass work to the mailer.", tools: [ask_mailer@1], defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a } }
+        - { kind: Tool, id: ask_relay, version: 1, schemaVersion: "0.1.0", description: Ask the relay persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: read, egress: true, binding: { kind: agent, persona: relay@1 } }
+    expect: { ok: true }
+expect: {}

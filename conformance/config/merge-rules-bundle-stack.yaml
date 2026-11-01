@@ -1,0 +1,151 @@
+schemaVersion: "0.1.0"
+id: cfg.merge-rules-bundle-stack
+title: A department bundle below the organisation bundle may only do what each field's merge rule permits
+description: >-
+  The deployment stacks `org@1` above `dept@1`. Each load replaces `dept@1`
+  with one change. Permitted changes load; forbidden ones fail with category
+  configuration and are not clamped.
+
+  - union: dept adds instructions, a new sensitivity label (`pci`), and a
+    redaction rule to the existing `pii` key; an existing key's
+    `allowedProviders` narrows per key (map fields merge per key) — accepted.
+  - intersect: narrowing `allowedProviders` is accepted; adding a provider
+    org does not allow is rejected; widening `phi.allowedProviders` inside
+    the map is rejected; adding a tool to the `trustedTools` grant is
+    rejected.
+  - locked: restating org's `defaultFallbackMessage` unchanged is accepted;
+    a different message, or a different `dataResidency`, is rejected.
+  - min: lowering `context.compaction.triggerPercent` is accepted; raising
+    it is rejected.
+
+  The persona declares no fallbacks, so narrowing providers to scripted-a
+  leaves its model allowed. Strictness orders are covered by
+  cfg.strictness-orders-layers.
+requirements: [CFG-020, CFG-030, CFG-032]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1, dept@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          - { id: scripted-c, adapter: scripted, endpoint: "memory://scripted-c", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        allowedProviders: [scripted-a, scripted-b]
+        trustedTools: [lookup@1]
+        dataResidency: [test-region]
+        context: { compaction: { triggerPercent: 80 } }
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+      - kind: PolicyBundle
+        id: dept
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "Follow department policy."
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model: { provider: scripted-a, name: model-a }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  # union, and per-key map merge.
+  - load:
+      artifacts:
+        - kind: PolicyBundle
+          id: dept
+          version: 1
+          schemaVersion: "0.1.0"
+          instructions: "Follow department policy."
+          sensitivityPolicies:
+            pii:
+              allowedProviders: [scripted-a]
+              redaction: [{ mode: hash, targets: [audit] }]
+            pci:
+              allowedProviders: [scripted-a]
+              redaction: [{ mode: remove }]
+    expect: { ok: true }
+  # intersect.
+  - load:
+      artifacts:
+        - { kind: PolicyBundle, id: dept, version: 1, schemaVersion: "0.1.0", allowedProviders: [scripted-a] }
+    expect: { ok: true }
+  - load:
+      artifacts:
+        - { kind: PolicyBundle, id: dept, version: 1, schemaVersion: "0.1.0", allowedProviders: [scripted-a, scripted-c] }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - kind: PolicyBundle
+          id: dept
+          version: 1
+          schemaVersion: "0.1.0"
+          sensitivityPolicies:
+            phi:
+              allowedProviders: [scripted-a, scripted-b]
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: PolicyBundle, id: dept, version: 1, schemaVersion: "0.1.0", trustedTools: [lookup@1, update_record@1] }
+    expect: { ok: false, error: { category: configuration } }
+  # locked.
+  - load:
+      artifacts:
+        - { kind: PolicyBundle, id: dept, version: 1, schemaVersion: "0.1.0", defaultFallbackMessage: "I can't help with that request." }
+    expect: { ok: true }
+  - load:
+      artifacts:
+        - { kind: PolicyBundle, id: dept, version: 1, schemaVersion: "0.1.0", defaultFallbackMessage: "Department fallback." }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: PolicyBundle, id: dept, version: 1, schemaVersion: "0.1.0", dataResidency: [test-region, other-region] }
+    expect: { ok: false, error: { category: configuration } }
+  # min.
+  - load:
+      artifacts:
+        - { kind: PolicyBundle, id: dept, version: 1, schemaVersion: "0.1.0", context: { compaction: { triggerPercent: 70 } } }
+    expect: { ok: true }
+  - load:
+      artifacts:
+        - { kind: PolicyBundle, id: dept, version: 1, schemaVersion: "0.1.0", context: { compaction: { triggerPercent: 90 } } }
+    expect: { ok: false, error: { category: configuration } }
+expect: {}

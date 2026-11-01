@@ -1,0 +1,94 @@
+schemaVersion: "0.1.0"
+id: cfg.hook-not-reversioned
+title: A lower layer requiring a different version of a hook id already required above is a configuration error
+description: >-
+  Two versions of each hook exist in the snapshot. `org@1` requires
+  `guard@1`. A persona or profile requiring `guard@2` is rejected, as is a
+  profile requiring `note@2` when the persona requires `note@1`. Restating
+  the same version below is accepted, as is requiring an unrelated hook.
+requirements: [CFG-034]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Hook
+        id: guard
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeModelCall]
+        results: [block]
+        timeoutMs: 1000
+        source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-GUARD-1'))", then: { result: block, reasonCode: test.guard.v1 } }
+      - kind: Hook
+        id: guard
+        version: 2
+        schemaVersion: "0.1.0"
+        points: [beforeModelCall]
+        results: [block]
+        timeoutMs: 1000
+        failureMode: failOpen
+        source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-GUARD-2'))", then: { result: block, reasonCode: test.guard.v2 } }
+      - kind: Hook
+        id: note
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeModelCall]
+        results: [annotate]
+        timeoutMs: 1000
+        source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-PII'))", then: { result: annotate, labels: [pii] } }
+      - kind: Hook
+        id: note
+        version: 2
+        schemaVersion: "0.1.0"
+        points: [beforeModelCall]
+        results: [annotate]
+        timeoutMs: 1000
+        source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-PHI'))", then: { result: annotate, labels: [phi] } }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        requiredHooks: [guard@1]
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  # Persona re-versions the bundle's hook.
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], requiredHooks: [guard@2], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }] } }
+    expect: { ok: false, error: { category: configuration } }
+  # Profile re-versions the bundle's hook.
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, requiredHooks: [guard@2] }
+    expect: { ok: false, error: { category: configuration } }
+  # Persona restates guard@1 and adds note@1: accepted.
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], requiredHooks: [guard@1, note@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }] } }
+    expect: { ok: true }
+  # Profile re-versions the persona's hook.
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, requiredHooks: [note@2] }
+    expect: { ok: false, error: { category: configuration } }
+  # Profile restates note@1: accepted.
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, requiredHooks: [note@1] }
+    expect: { ok: true }
+expect: {}

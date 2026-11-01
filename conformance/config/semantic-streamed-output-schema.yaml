@@ -1,0 +1,58 @@
+schemaVersion: "0.1.0"
+id: cfg.semantic-streamed-output-schema
+title: A streamed delivery mode combined with an output schema is rejected, wherever the schema is declared
+description: >-
+  An output schema on the streamed profile itself, and an output schema on
+  a persona that allows the streamed profile, are each rejected with
+  category configuration. A persona output schema with only buffered
+  profiles allowed loads.
+requirements: [CFG-042]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  - load:
+      artifacts:
+        - kind: HarnessProfile
+          id: streamed
+          version: 1
+          schemaVersion: "0.1.0"
+          idleTtl: PT24H
+          suspendedTtl: PT72H
+          stepLimit: 8
+          deliveryMode: streamed
+          outputSchema: { type: object, required: [answer], properties: { answer: { type: string } } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - kind: Persona
+          id: structured
+          version: 1
+          schemaVersion: "0.1.0"
+          instructions: "You answer in structured form."
+          tools: [lookup@1]
+          defaultProfile: default@1
+          allowedProfiles: [default@1, streamed@1]
+          outputSchema: { type: object, required: [answer], properties: { answer: { type: string } } }
+          model: { provider: scripted-a, name: model-a }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - kind: Persona
+          id: structured
+          version: 1
+          schemaVersion: "0.1.0"
+          instructions: "You answer in structured form."
+          tools: [lookup@1]
+          defaultProfile: default@1
+          allowedProfiles: [default@1]
+          outputSchema: { type: object, required: [answer], properties: { answer: { type: string } } }
+          model: { provider: scripted-a, name: model-a }
+    expect: { ok: true }
+expect: {}

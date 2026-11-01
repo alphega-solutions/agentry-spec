@@ -73,7 +73,7 @@ Map-valued fields merge per key: a lower layer **MAY** add new keys; for an exis
 | Include reasoning in traces | `false` → `true` |
 
 - **CFG-032** A lower layer that sets a value its merge rule does not permit **MUST** cause a configuration error naming the artifact, field, and layer. Implementations **MUST NOT** silently clamp the value.
-- **CFG-033** `override` **MUST NOT** be used on any field that affects tools, hooks, providers, sensitivity, trust, limits, budgets, delivery, or retention. The provisional `model` and `context` fields (CFG-092) are the only exceptions, and remain subject to `allowedProviders` (CFG-042).
+- **CFG-033** `override` **MUST NOT** be used on any field that affects tools, hooks, providers, sensitivity, trust, limits, budgets, delivery, or retention. The provisional `model` and `context` fields (CFG-092) are the only exceptions, and remain subject to `allowedProviders` (CFG-042). *(untestable: a property of the spec's own schemas, enforced by spec CI rather than by implementation fixtures.)*
 - **CFG-034** A hook referenced by a higher layer **MUST NOT** be replaced, re-versioned, or removed by a lower layer. A lower layer requiring a different version of a hook `id` already required above is a configuration error. This keeps a hook's failure mode and declared results intact (`notes/hooks.md` §5).
 
 ## 6. Loading
@@ -300,4 +300,12 @@ These went beyond the settled notes and ADRs and were approved with this spec.
 ## Amendment 2026-11-01 — from Phase 4 review
 
 - CFG-110: a deployment declares `attachmentSources`, the channel names hosts may give for attachments (CORE-121). `trustedAttachmentSources` (CFG-070) may list only declared names.
+
+## Amendment 2026-11-01 — from Phase 4 (Areas 2–3 schemas and fixtures)
+
+- **CFG-032**: the configuration error's `details` **MUST** include `artifact` (id@version), `field` (dotted path), and `layer` (`policyBundle`, `persona`, `harnessProfile`, `runRequest`, or `overlay`), so tools and fixtures can rely on them.
+- **CFG-050**: the snapshot hash is `sha256:` followed by the SHA-256 of the RFC 8785 canonical JSON (EVAL-000) of the effective configuration: an object whose keys are artifact kinds, each holding its artifacts sorted by id then version, after merging and with secret references unresolved. Key order and file layout therefore never affect the hash.
+- **CFG-033** is annotated *(untestable)* for implementation fixtures; the spec's CI enforces it on the schemas.
+- **CFG-101**: run-request values use harness profile field paths (e.g. `{budget: {tokens: 500}}`).
+- **Environment overlays** are given a form for fixtures: an environment name, deployment field values, and per-artifact behavioural values applied last, which may only tighten (CFG-021, CFG-112). A deployment's overlay file format is left to implementations.
 

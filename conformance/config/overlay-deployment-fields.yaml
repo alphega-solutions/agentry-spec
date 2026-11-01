@@ -2,13 +2,10 @@ schemaVersion: "0.1.0"
 id: cfg.overlay-deployment-fields
 title: Environment-specific deployment fields may change freely; behavioural values never come from the deployment
 description: >-
-  Closest expressible form of CFG-112. The fixture format has no artifact or
-  step for an environment overlay, so this fixture reloads the deployment as
-  it would look after a `prod` overlay changes its environment name and a
-  provider endpoint, which loads, and shows that a behavioural value placed
-  at the deployment level is rejected even for `prod`. Overlay tightening of
-  behavioural values (accepted when tighter, rejected when looser) is not
-  expressible and is not verified here.
+  Reloads the deployment as it would look for another environment, with a
+  different endpoint, which loads; and shows that a behavioural value placed
+  at the deployment level is rejected. Overlay tightening is covered by
+  cfg.overlay-tighten-only.
 requirements: [CFG-112]
 contract: ">=0.1.0 <1.0.0"
 features: []

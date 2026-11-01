@@ -1,0 +1,117 @@
+schemaVersion: "0.1.0"
+id: cfg.layer-violation-rejected
+title: A persona or profile that loosens a value set by a higher layer is a configuration error, not a clamp
+description: >-
+  `org@1` restricts providers to scripted-a and pins the model
+  scripted-a/model-a with `params.maxOutputTokens: 1000`. Each load replaces
+  the persona or the default profile.
+
+  - Persona `allowedProviders` adding scripted-b (intersect) → rejected.
+  - Persona `model` naming a different provider and model (locked) →
+    rejected.
+  - Persona raising `params.maxOutputTokens` to 2000 (min) → rejected.
+  - Persona restating the pinned model and lowering maxOutputTokens to 800
+    → accepted.
+  - Profile naming another model below that persona (locked) → rejected.
+  - Profile raising maxOutputTokens above the persona's 800 → rejected;
+    lowering it to 500 → accepted.
+
+  A rejected load is not clamped to a permitted value and accepted: the
+  session created at the end is pinned to the snapshot of the last accepted
+  load and calls scripted-a/model-a. (The error must also name the artifact,
+  field, and layer; the fixture format can assert only its category.)
+requirements: [CFG-020, CFG-032]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        allowedProviders: [scripted-a]
+        model: { provider: scripted-a, name: model-a, params: { maxOutputTokens: 1000 } }
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      responses: []
+script:
+  # Persona below the bundle.
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], allowedProviders: [scripted-a, scripted-b] }
+    expect: { ok: false, error: { category: configuration, details: { artifact: assistant@1, field: allowedProviders, layer: persona } } }
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], model: { provider: scripted-b, name: model-b } }
+    expect: { ok: false, error: { category: configuration, details: { artifact: assistant@1, field: model.provider, layer: persona } } }
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], model: { params: { maxOutputTokens: 2000 } } }
+    expect: { ok: false, error: { category: configuration, details: { artifact: assistant@1, field: model.params.maxOutputTokens, layer: persona } } }
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], model: { provider: scripted-a, name: model-a, params: { maxOutputTokens: 800 } } }
+    bind: $hPersona
+    expect: { ok: true }
+  # Profile below the persona.
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, model: { provider: scripted-b, name: model-b } }
+    expect: { ok: false, error: { category: configuration, details: { artifact: default@1, field: model.provider, layer: harnessProfile } } }
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, model: { params: { maxOutputTokens: 900 } } }
+    expect: { ok: false, error: { category: configuration, details: { artifact: default@1, field: model.params.maxOutputTokens, layer: harnessProfile } } }
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, model: { params: { maxOutputTokens: 500 } } }
+    bind: $hProfile
+    expect: { ok: true }
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, snapshotHash: { $all: [$hProfile, { $not: $hPersona }] } }
+          - { type: model.request, payload: { provider: scripted-a, model: model-a } }
+  providerRequests:
+    scripted-a: { count: 1 }
+    scripted-b: { count: 0 }

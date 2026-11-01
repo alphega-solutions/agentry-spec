@@ -1,0 +1,147 @@
+schemaVersion: "0.1.0"
+id: cfg.snapshot-pinned-across-reload
+title: A new snapshot applies only to sessions created after it; existing idle and resumed sessions keep their own
+description: >-
+  Session $sSusp suspends on an approval and session $sIdle completes a
+  turn, both under the first snapshot. A reload then switches the persona's
+  model to scripted-b/model-b. Afterwards:
+
+  - resuming $sSusp continues on scripted-a, under the first snapshot;
+  - a second run on the idle session $sIdle also uses scripted-a, under the
+    first snapshot;
+  - a session created after the reload uses scripted-b, under the new
+    snapshot.
+requirements: [CFG-052]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, ref: test.update_record }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Hello again." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      responses:
+        - parts: [{ type: text, text: "Hello from the new snapshot." }]
+          usage: { inputTokens: 20, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+script:
+  - load: {}
+    bind: $h1
+    expect: { ok: true }
+  - action: run
+    bind: $sSusp
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $esc, payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  - action: run
+    bind: $sIdle
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - load:
+      artifacts:
+        - kind: Persona
+          id: assistant
+          version: 1
+          schemaVersion: "0.1.0"
+          displayName: Test assistant
+          instructions: "You are a test assistant."
+          tools: [lookup@1, update_record@1]
+          fallbackMessage: "This request was blocked."
+          defaultProfile: default@1
+          allowedProfiles: [default@1, streamed@1]
+          model: { provider: scripted-b, name: model-b }
+    bind: $h2
+    expect: { ok: true }
+  - action: resume
+    session: $sSusp
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-0000000000d1", escalationId: $esc, actionId: $act, type: approve }
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $sIdle
+    tenant: t1
+    principal: p1
+    input: [{ type: text, text: "Hi again" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sNew
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sSusp:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, snapshotHash: $h1 }
+          - { type: run.started, snapshotHash: $h1, payload: { kind: resume } }
+          - { type: tool.call, snapshotHash: $h1, payload: { callId: c1 } }
+          - { type: model.request, snapshotHash: $h1, payload: { provider: scripted-a, model: model-a } }
+          - { type: run.ended, snapshotHash: $h1, payload: { reason: responded } }
+    $sIdle:
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, snapshotHash: $h1 }
+          - { type: run.ended, snapshotHash: $h1, payload: { reason: responded } }
+          - { type: run.started, snapshotHash: $h1 }
+          - { type: model.request, snapshotHash: $h1, payload: { provider: scripted-a, model: model-a } }
+          - { type: run.ended, snapshotHash: $h1, payload: { reason: responded } }
+    $sNew:
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, snapshotHash: { $all: [$h2, { $not: $h1 }] } }
+          - { type: model.request, snapshotHash: $h2, payload: { provider: scripted-b, model: model-b } }
+  delivered:
+    $sNew: { text: "Hello from the new snapshot." }
+  providerRequests:
+    scripted-a: { count: 4 }
+    scripted-b: { count: 1 }

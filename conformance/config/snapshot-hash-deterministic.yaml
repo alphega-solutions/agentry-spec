@@ -1,0 +1,101 @@
+schemaVersion: "0.1.0"
+id: cfg.snapshot-hash-deterministic
+title: Identical configuration gives an identical snapshot hash; changed content gives a different one
+description: >-
+  Loads 1 and 2 load the same configuration and must bind the same snapshot
+  hash. Load 3 replaces the persona with identical content written with its
+  keys in a different order and flow style; normalized content is unchanged,
+  so the hash is the same. Load 4 changes one character of the persona's
+  instructions; a session created afterwards carries a hash different from
+  the first, so tampering with configuration is detectable from the hash.
+  No artifact is signed: unsigned configuration loads (signing is optional
+  in 1.0). The snapshots are stored under their hashes.
+requirements: [CFG-050, CFG-051, CFG-055]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Hello again." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - load: {}
+    bind: $h
+    expect: { ok: true }
+  - load: {}
+    bind: $h
+    expect: { ok: true }
+  - load:
+      artifacts:
+        - model: { fallbacks: [{ name: model-b, provider: scripted-b }], name: model-a, provider: scripted-a }
+          allowedProfiles: [default@1, streamed@1]
+          defaultProfile: default@1
+          fallbackMessage: "This request was blocked."
+          tools: [lookup@1, update_record@1]
+          instructions: "You are a test assistant."
+          displayName: Test assistant
+          schemaVersion: "0.1.0"
+          version: 1
+          id: assistant
+          kind: Persona
+    bind: $h
+    expect: { ok: true }
+  - action: run
+    bind: $sBefore
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - load:
+      artifacts:
+        - kind: Persona
+          id: assistant
+          version: 1
+          schemaVersion: "0.1.0"
+          displayName: Test assistant
+          instructions: "You are a test assistant!"
+          tools: [lookup@1, update_record@1]
+          fallbackMessage: "This request was blocked."
+          defaultProfile: default@1
+          allowedProfiles: [default@1, streamed@1]
+          model:
+            provider: scripted-a
+            name: model-a
+            fallbacks:
+              - { provider: scripted-b, name: model-b }
+    bind: $hChanged
+    expect: { ok: true }
+  - action: run
+    bind: $sAfter
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sBefore:
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, snapshotHash: $h }
+    $sAfter:
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, snapshotHash: { $all: [$hChanged, { $not: $h }] } }
+  ports:
+    snapshotStore:
+      t1:
+        $h: { $any: true }
+        $hChanged: { $any: true }

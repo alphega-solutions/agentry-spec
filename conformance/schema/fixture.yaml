@@ -261,7 +261,9 @@ $defs:
       runtimeScope:
         type: array
         items: { type: string }
-      overrides: { type: object }
+      overrides:
+        description: "Run-request values (CFG-101), using harness profile field paths, e.g. {budget: {tokens: 500}}."
+        type: object
       reviewer: { type: string, description: Principal ID of the reviewer for decide/resume. }
       decisions: { type: array, items: { type: object } }
       capture:
@@ -273,7 +275,13 @@ $defs:
       expect: { $ref: "#/$defs/stepOutcome" }
 
   loadStep:
-    description: Load (or reload) configuration; used by configuration fixtures.
+    description: >-
+      Load configuration. A load starts from the configuration of the last
+      successful load (initially setup.config), adds or replaces the given
+      artifacts (same kind, id, version), removes the listed references, applies
+      any overlay, and produces a new snapshot. `load: {}` reloads unchanged. A
+      failed load leaves the previous snapshot in force. `bind` binds the new
+      snapshot hash.
     type: object
     additionalProperties: false
     required: [load]
@@ -284,6 +292,21 @@ $defs:
         properties:
           artifacts: { type: array, items: { type: object } }
           remove: { type: array, items: { type: string } }
+          overlay:
+            description: >-
+              Environment overlay (CFG-021, CFG-112): `deployment` replaces
+              deployment fields freely; `tighten` maps artifact references
+              (id@version) to partial field values applied after all layers,
+              which must only tighten under each field's merge rule.
+            type: object
+            additionalProperties: false
+            required: [environment]
+            properties:
+              environment: { type: string }
+              deployment: { type: object }
+              tighten:
+                type: object
+                additionalProperties: { type: object }
       bind: { $ref: "#/$defs/placeholder" }
       expect: { $ref: "#/$defs/stepOutcome" }
 
@@ -379,6 +402,9 @@ $defs:
         properties:
           category: { type: string }
           code: { type: string }
+          details:
+            description: Partial match on the error's structured `details` (e.g. artifact, field, layer for CFG-032).
+            type: object
       endReason: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/runEndReason" }
       sameAs:
         description: Index of an earlier step whose outcome this one must equal.
@@ -459,7 +485,7 @@ $defs:
               description: Ephemeral deltas received, in order.
             fallback: { type: boolean, description: The response was the fixed fallback message. }
       noPersistedContent:
-        description: Strings that must not appear anywhere in persisted events, checkpoints, or audit records.
+        description: Strings that must not appear anywhere in persisted events, checkpoints, audit records, blobs, or configuration snapshots.
         type: array
         items: { type: string }
       schemaValid:

@@ -1,0 +1,96 @@
+schemaVersion: "0.1.0"
+id: cfg.semantic-streamed-output-hooks
+title: A streamed profile is rejected if any afterModelCall or beforeResponse hook declares rewrite, block, or escalate
+description: >-
+  Each load replaces `streamed@1` (allowed by the baseline persona) so that
+  it requires one output hook. Streamed text cannot be recalled, so a hook at
+  afterModelCall or beforeResponse able to block, rewrite, or escalate is a
+  configuration error, for each of the three results at each of the two
+  points. Rewrite is declared by remote hooks, since rule hooks cannot
+  rewrite. Controls load: annotate-only output hooks and a blocking
+  beforeModelCall hook on the streamed profile, and the blocking and
+  rewriting output hooks on the buffered profile.
+requirements: [CFG-042]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        remoteHooks:
+          - { id: scanner, endpoint: "memory://hook-scanner", region: test-region }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  # Streamed + afterModelCall block: rejected.
+  - load:
+      artifacts:
+        - { kind: Hook, id: amc-block, version: 1, schemaVersion: "0.1.0", points: [afterModelCall], results: [block], timeoutMs: 1000, source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-UNSAFE'))", then: { result: block, reasonCode: test.guard.blocked } } }
+        - { kind: HarnessProfile, id: streamed, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, deliveryMode: streamed, requiredHooks: [amc-block@1] }
+    expect: { ok: false, error: { category: configuration } }
+  # Streamed + afterModelCall escalate: rejected.
+  - load:
+      artifacts:
+        - { kind: Hook, id: amc-escalate, version: 1, schemaVersion: "0.1.0", points: [afterModelCall], results: [escalate], timeoutMs: 1000, source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-UNSAFE'))", then: { result: escalate, reasonCode: test.guard.review } } }
+        - { kind: HarnessProfile, id: streamed, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, deliveryMode: streamed, requiredHooks: [amc-escalate@1] }
+    expect: { ok: false, error: { category: configuration } }
+  # Streamed + afterModelCall rewrite: rejected.
+  - load:
+      artifacts:
+        - { kind: Hook, id: amc-rewrite, version: 1, schemaVersion: "0.1.0", points: [afterModelCall], results: [rewrite], timeoutMs: 1000, source: { kind: remote, endpoint: "memory://hook-scanner" } }
+        - { kind: HarnessProfile, id: streamed, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, deliveryMode: streamed, requiredHooks: [amc-rewrite@1] }
+    expect: { ok: false, error: { category: configuration } }
+  # Streamed + beforeResponse block: rejected.
+  - load:
+      artifacts:
+        - { kind: Hook, id: br-block, version: 1, schemaVersion: "0.1.0", points: [beforeResponse], results: [block], timeoutMs: 1000, source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-UNSAFE'))", then: { result: block, reasonCode: test.guard.blocked } } }
+        - { kind: HarnessProfile, id: streamed, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, deliveryMode: streamed, requiredHooks: [br-block@1] }
+    expect: { ok: false, error: { category: configuration } }
+  # Streamed + beforeResponse escalate: rejected.
+  - load:
+      artifacts:
+        - { kind: Hook, id: br-escalate, version: 1, schemaVersion: "0.1.0", points: [beforeResponse], results: [escalate], timeoutMs: 1000, source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-UNSAFE'))", then: { result: escalate, reasonCode: test.guard.review } } }
+        - { kind: HarnessProfile, id: streamed, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, deliveryMode: streamed, requiredHooks: [br-escalate@1] }
+    expect: { ok: false, error: { category: configuration } }
+  # Streamed + beforeResponse rewrite: rejected.
+  - load:
+      artifacts:
+        - { kind: Hook, id: br-rewrite, version: 1, schemaVersion: "0.1.0", points: [beforeResponse], results: [rewrite], timeoutMs: 1000, source: { kind: remote, endpoint: "memory://hook-scanner" } }
+        - { kind: HarnessProfile, id: streamed, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, deliveryMode: streamed, requiredHooks: [br-rewrite@1] }
+    expect: { ok: false, error: { category: configuration } }
+  # Controls, accepted: advisory output hooks on the streamed profile; a blocking input hook on it; blocking output hooks on the buffered profile.
+  - load:
+      artifacts:
+        - { kind: Hook, id: amc-annotate, version: 1, schemaVersion: "0.1.0", points: [afterModelCall, beforeResponse], results: [annotate], timeoutMs: 1000, source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-PII'))", then: { result: annotate, labels: [pii] } } }
+        - { kind: Hook, id: bmc-block, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [block], timeoutMs: 1000, source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-UNSAFE'))", then: { result: block, reasonCode: test.guard.blocked } } }
+        - { kind: HarnessProfile, id: streamed, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, deliveryMode: streamed, requiredHooks: [amc-annotate@1, bmc-block@1] }
+    expect: { ok: true }
+  - load:
+      artifacts:
+        - { kind: Hook, id: amc-block, version: 1, schemaVersion: "0.1.0", points: [afterModelCall], results: [block], timeoutMs: 1000, source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-UNSAFE'))", then: { result: block, reasonCode: test.guard.blocked } } }
+        - { kind: Hook, id: br-rewrite, version: 1, schemaVersion: "0.1.0", points: [beforeResponse], results: [rewrite], timeoutMs: 1000, source: { kind: remote, endpoint: "memory://hook-scanner" } }
+        - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, deliveryMode: buffered, requiredHooks: [amc-block@1, br-rewrite@1] }
+    expect: { ok: true }
+expect: {}

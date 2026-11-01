@@ -78,7 +78,7 @@ def spec_requirements() -> dict[str, dict]:
                 reqs[rid] = {
                     "file": path.name,
                     "normative": "**MUST" in text,
-                    "untestable": "*(untestable)*" in text,
+                    "untestable": "*(untestable" in text,
                     "text": first.strip(),
                 }
             i = j
