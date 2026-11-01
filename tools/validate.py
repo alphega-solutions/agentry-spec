@@ -197,9 +197,8 @@ def _check_pending(art: dict) -> list[str]:
         if not isinstance(creds, dict):
             problems.append(f"{key}.credentials: must be a map of names to secret references")
         else:
-            bad = sum(1 for ref in creds.values() if not (isinstance(ref, str) and SECRET_PATTERN.match(ref)))
-            if bad:
-                problems.append(f"{key}.credentials: {bad} entr{'y is' if bad == 1 else 'ies are'} not secret references (CFG-061)")
+            if not all(isinstance(ref, str) and SECRET_PATTERN.match(ref) for ref in creds.values()):
+                problems.append(f"{key}.credentials: every entry must be a secret reference (CFG-061)")
     if bkind == "rule" and isinstance(block.get("then"), dict):
         then = block["then"]
         result = then.get("result")
@@ -399,7 +398,7 @@ def check_merge_annotations(schemas: dict) -> list[str]:
     return errors
 
 
-def check_secret_annotations(schemas: dict) -> list[str]:
+def check_reference_markers(schemas: dict) -> list[str]:
     """CFG-060, 061: a schema node is a secretRef (directly or by $ref chain)
     exactly when it carries `x-agentry-secret: true`."""
     errors: list[str] = []
@@ -588,7 +587,7 @@ def main() -> int:
     errors += check_merge_annotations(schemas)
 
     # 6. Spec maintenance: secret fields are exactly the secretRef fields (CFG-060, 061).
-    errors += check_secret_annotations(schemas)
+    errors += check_reference_markers(schemas)
 
     for e in errors:
         print(f"ERROR {e}")
