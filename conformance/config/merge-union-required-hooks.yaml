@@ -1,0 +1,157 @@
+schemaVersion: "0.1.0"
+id: cfg.merge-union-required-hooks
+title: requiredHooks merge by union across policy bundle, persona, and profile, so a hook from every layer runs
+description: >-
+  The policy bundle, the persona, and the default profile each require a
+  different rule hook at beforeModelCall that blocks on its own synthetic
+  marker. With `union`, the effective set holds all three: each marker,
+  sent in its own session, is blocked by the hook from that layer before any
+  model call. A message with no marker reaches the model. A lower layer
+  replacing the list (override) or narrowing it (intersect) would leave at
+  least one marker unblocked.
+requirements: [CFG-020, CFG-030]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Hook
+        id: guard-org
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeModelCall]
+        results: [block]
+        timeoutMs: 1000
+        source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-MARK-ORG'))", then: { result: block, reasonCode: test.guard.org } }
+      - kind: Hook
+        id: guard-persona
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeModelCall]
+        results: [block]
+        timeoutMs: 1000
+        source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-MARK-PERSONA'))", then: { result: block, reasonCode: test.guard.persona } }
+      - kind: Hook
+        id: guard-profile
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeModelCall]
+        results: [block]
+        timeoutMs: 1000
+        source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-MARK-PROFILE'))", then: { result: block, reasonCode: test.guard.profile } }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        requiredHooks: [guard-org@1]
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [guard-persona@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+        requiredHooks: [guard-profile@1]
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $sOrg
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYN-MARK-ORG" }]
+    expect: { ok: true, endReason: blocked }
+  - action: run
+    bind: $sPersona
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYN-MARK-PERSONA" }]
+    expect: { ok: true, endReason: blocked }
+  - action: run
+    bind: $sProfile
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYN-MARK-PROFILE" }]
+    expect: { ok: true, endReason: blocked }
+  - action: run
+    bind: $sClear
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sOrg:
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: guard-org@1, point: beforeModelCall, result: block, reasonCode: test.guard.org } }
+          - { type: run.ended, payload: { reason: blocked } }
+      absentEvents:
+        - { type: model.request }
+    $sPersona:
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: guard-persona@1, point: beforeModelCall, result: block, reasonCode: test.guard.persona } }
+          - { type: run.ended, payload: { reason: blocked } }
+      absentEvents:
+        - { type: model.request }
+    $sProfile:
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: guard-profile@1, point: beforeModelCall, result: block, reasonCode: test.guard.profile } }
+          - { type: run.ended, payload: { reason: blocked } }
+      absentEvents:
+        - { type: model.request }
+    $sClear:
+      absentEvents:
+        - { type: hook.decision }
+  providerRequests:
+    scripted-a: { count: 1 }

@@ -1,0 +1,166 @@
+schemaVersion: "0.1.0"
+id: cfg.merge-grant-absent-vs-empty
+title: For the trustedTools grant, a lower bundle that omits the field imposes no constraint, an empty list grants nothing, and a list narrows by intersection
+description: >-
+  The deployment stacks `org@1` above `dept@1`. `org@1` trusts lookup@1 and
+  update_record@1. In each session the model calls lookup and then the
+  mutating update_record; if lookup's output is untrusted the session is
+  tainted and the mutating call escalates (onTainted defaults to escalate).
+
+  1. `dept@1` does not set trustedTools: the effective grant is org's, lookup
+     is trusted, the update runs, and the run ends `responded`.
+  2. `dept@1` sets `trustedTools: []`: the grant is empty, lookup is
+     untrusted, and the update escalates.
+  3. `dept@1` sets `[update_record@1]`: the intersection excludes lookup, so
+     lookup is untrusted and the update escalates (a union would have kept
+     lookup trusted).
+requirements: [CFG-020, CFG-030]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1, dept@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        trustedTools: [lookup@1, update_record@1]
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+      - kind: PolicyBundle
+        id: dept
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "Follow department policy."
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # Session 1
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: a } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: a, value: v } }]
+          usage: { inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated." }]
+          usage: { inputTokens: 50, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # Session 2
+        - parts: [{ type: tool_call, callId: c3, tool: lookup, arguments: { key: a } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c4, tool: update_record, arguments: { key: a, value: v } }]
+          usage: { inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # Session 3
+        - parts: [{ type: tool_call, callId: c5, tool: lookup, arguments: { key: a } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c6, tool: update_record, arguments: { key: a, value: v } }]
+          usage: { inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "synthetic-value" } }
+        - ok: { output: { value: "synthetic-value" } }
+        - ok: { output: { value: "synthetic-value" } }
+      update_record:
+        - ok: { output: { updated: true } }
+script:
+  - action: run
+    bind: $sAbsent
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up a, then update it" }]
+    expect: { ok: true, endReason: responded }
+  - load:
+      artifacts:
+        - kind: PolicyBundle
+          id: dept
+          version: 1
+          schemaVersion: "0.1.0"
+          instructions: "Follow department policy."
+          trustedTools: []
+    expect: { ok: true }
+  - action: run
+    bind: $sEmpty
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up a, then update it" }]
+    expect: { ok: true, endReason: escalated }
+  - load:
+      artifacts:
+        - kind: PolicyBundle
+          id: dept
+          version: 1
+          schemaVersion: "0.1.0"
+          instructions: "Follow department policy."
+          trustedTools: [update_record@1]
+    expect: { ok: true }
+  - action: run
+    bind: $sNarrowed
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up a, then update it" }]
+    expect: { ok: true, endReason: escalated }
+expect:
+  sessions:
+    $sAbsent:
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: c1 } }
+          - { type: tool.call, payload: { callId: c2, tool: update_record } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: policy.decision, payload: { kind: taint } }
+    $sEmpty:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - { type: policy.decision, payload: { kind: taint, outcome: escalate, callId: c4 } }
+          - { type: escalation.raised }
+      absentEvents:
+        - { type: tool.call, payload: { callId: c4 } }
+    $sNarrowed:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - { type: policy.decision, payload: { kind: taint, outcome: escalate, callId: c6 } }
+          - { type: escalation.raised }
+      absentEvents:
+        - { type: tool.call, payload: { callId: c6 } }
+  stubCalls:
+    lookup: { count: 3 }
+    update_record: { count: 1 }

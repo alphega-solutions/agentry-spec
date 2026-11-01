@@ -1,0 +1,103 @@
+schemaVersion: "0.1.0"
+id: cfg.artifact-envelope-required
+title: An artifact missing kind, id, version, or schemaVersion, or failing its kind's schema, is rejected
+description: >-
+  Each load adds one otherwise well-formed harness profile with one envelope
+  field removed, then profiles and personas that carry every envelope field
+  but break their kind's schema (a value out of range, an unknown field, a
+  wrong type). Every one fails with category configuration. A complete,
+  schema-valid profile loads (positive control).
+requirements: [CFG-001, CFG-005]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  # CFG-001: each envelope field missing in turn.
+  - load:
+      artifacts:
+        - id: no-kind
+          version: 1
+          schemaVersion: "0.1.0"
+          idleTtl: PT24H
+          suspendedTtl: PT72H
+          stepLimit: 4
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - kind: HarnessProfile
+          version: 1
+          schemaVersion: "0.1.0"
+          idleTtl: PT24H
+          suspendedTtl: PT72H
+          stepLimit: 4
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - kind: HarnessProfile
+          id: no-version
+          schemaVersion: "0.1.0"
+          idleTtl: PT24H
+          suspendedTtl: PT72H
+          stepLimit: 4
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - kind: HarnessProfile
+          id: no-schema-version
+          version: 1
+          idleTtl: PT24H
+          suspendedTtl: PT72H
+          stepLimit: 4
+    expect: { ok: false, error: { category: configuration } }
+  # CFG-005: envelope complete, kind schema violated.
+  - load:
+      artifacts:
+        - kind: HarnessProfile
+          id: zero-steps
+          version: 1
+          schemaVersion: "0.1.0"
+          idleTtl: PT24H
+          suspendedTtl: PT72H
+          stepLimit: 0
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - kind: HarnessProfile
+          id: unknown-field
+          version: 1
+          schemaVersion: "0.1.0"
+          idleTtl: PT24H
+          suspendedTtl: PT72H
+          stepLimit: 4
+          colour: blue
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - kind: Persona
+          id: tools-not-a-list
+          version: 1
+          schemaVersion: "0.1.0"
+          instructions: "You are a test assistant."
+          tools: "lookup@1"
+          defaultProfile: default@1
+          allowedProfiles: [default@1]
+          model: { provider: scripted-a, name: model-a }
+    expect: { ok: false, error: { category: configuration } }
+  # Positive control.
+  - load:
+      artifacts:
+        - kind: HarnessProfile
+          id: complete
+          version: 1
+          schemaVersion: "0.1.0"
+          idleTtl: PT24H
+          suspendedTtl: PT72H
+          stepLimit: 4
+    expect: { ok: true }
+expect: {}
