@@ -1,0 +1,138 @@
+schemaVersion: "0.1.0"
+id: cfg.run-request-tighten-only
+title: Run-request overrides may only tighten `min` and `stricter` profile fields, apply to that run only, and are recorded on `run.started`
+description: >-
+  Run 1 lowers the token budget from 100000 to 50. Its two steps use 70
+  tokens, so it ends budget_exhausted, and its run.started records the
+  override. Run 2, on the same session with no override, uses 70 tokens over
+  two steps and goes on to respond: the override did not outlive its run.
+  Raising the budget, loosening deliveryMode (buffered → streamed), and
+  setting a locked field (outputSchema) or a union field
+  (defaultAttachmentLabels) each fail with invalid_input before anything is
+  persisted. Tightening a stricter field (streamed → buffered on streamed@1)
+  is accepted, recorded, and applied: no deltas reach the host.
+requirements: [CFG-101, CFG-102]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { streaming: true }
+      responses:
+        # run 1
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: a } }]
+          usage: { inputTokens: 30, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: lookup, arguments: { key: b } }]
+          usage: { inputTokens: 25, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # run 2
+        - parts: [{ type: tool_call, callId: c3, tool: lookup, arguments: { key: c } }]
+          usage: { inputTokens: 30, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c4, tool: lookup, arguments: { key: d } }]
+          usage: { inputTokens: 25, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Done." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # run on streamed@1 tightened to buffered
+        - deltas: ["Synthetic ", "reply."]
+          parts: [{ type: text, text: "Synthetic reply." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "synthetic-value" } }
+        - ok: { output: { value: "synthetic-value" } }
+        - ok: { output: { value: "synthetic-value" } }
+        - ok: { output: { value: "synthetic-value" } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    overrides: { budget: { tokens: 50 } }
+    input: [{ type: text, text: "Look up a and b" }]
+    expect: { ok: true, endReason: budget_exhausted }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Look up c and d" }]
+    expect: { ok: true, endReason: responded }
+  # Loosening a min field.
+  - action: run
+    bind: $x1
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    overrides: { budget: { tokens: 200000 } }
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: false, error: { category: invalid_input }, newEvents: 0 }
+  # Loosening a stricter field.
+  - action: run
+    bind: $x2
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    overrides: { deliveryMode: streamed }
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: false, error: { category: invalid_input }, newEvents: 0 }
+  # A locked field.
+  - action: run
+    bind: $x3
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    overrides: { outputSchema: { type: object } }
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: false, error: { category: invalid_input }, newEvents: 0 }
+  # A union field.
+  - action: run
+    bind: $x4
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    overrides: { defaultAttachmentLabels: [pii] }
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: false, error: { category: invalid_input }, newEvents: 0 }
+  # Tightening a stricter field.
+  - action: run
+    bind: $b
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    profile: streamed@1
+    overrides: { deliveryMode: buffered }
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: run.started, runId: $r1, payload: { kind: run, overrides: { budget: { tokens: 50 } } } }
+          - { type: model.request, runId: $r1, turn: 1, step: 2 }
+          - { type: run.ended, runId: $r1, payload: { reason: budget_exhausted } }
+          - { type: run.started, runId: $r2, payload: { kind: run, overrides: { $absent: true } } }
+          - { type: model.request, runId: $r2, turn: 2, step: 3 }
+          - { type: run.ended, runId: $r2, payload: { reason: responded } }
+      absentEvents:
+        - { type: model.request, turn: 1, step: 3 }
+    $b:
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, payload: { profile: streamed@1 } }
+          - { type: run.started, payload: { kind: run, overrides: { deliveryMode: buffered } } }
+          - { type: run.ended, payload: { reason: responded } }
+  delivered:
+    $b:
+      text: "Synthetic reply."
+      deltas: []
+  providerRequests:
+    scripted-a: { count: 6 }

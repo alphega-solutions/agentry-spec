@@ -1,0 +1,91 @@
+schemaVersion: "0.1.0"
+id: cfg.deployment-attachment-sources-declared
+title: "`trustedAttachmentSources` may list only channel names the deployment declares in `attachmentSources`"
+description: >-
+  The baseline deployment declares attachmentSources [upload, email]. A policy
+  bundle trusting `fax` is rejected, as is trusting `upload` when the
+  deployment declares no attachmentSources. Trusting declared names loads.
+requirements: [CFG-110]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  # `fax` is not in the deployment's attachmentSources.
+  - load:
+      artifacts:
+        - kind: PolicyBundle
+          id: org
+          version: 1
+          schemaVersion: "0.1.0"
+          instructions: "Follow organisational policy."
+          defaultFallbackMessage: "I can't help with that request."
+          trustedAttachmentSources: [upload, fax]
+          sensitivityPolicies:
+            pii:
+              allowedProviders: [scripted-a, scripted-b]
+              redaction: [{ mode: mask }]
+            phi:
+              allowedProviders: [scripted-a]
+              redaction: [{ mode: mask }]
+    expect: { ok: false, error: { category: configuration } }
+  # The deployment declares no attachmentSources at all.
+  - load:
+      artifacts:
+        - kind: PolicyBundle
+          id: org
+          version: 1
+          schemaVersion: "0.1.0"
+          instructions: "Follow organisational policy."
+          defaultFallbackMessage: "I can't help with that request."
+          trustedAttachmentSources: [upload]
+          sensitivityPolicies:
+            pii:
+              allowedProviders: [scripted-a, scripted-b]
+              redaction: [{ mode: mask }]
+            phi:
+              allowedProviders: [scripted-a]
+              redaction: [{ mode: mask }]
+        - kind: Deployment
+          id: test
+          version: 1
+          schemaVersion: "0.1.0"
+          environment: test
+          policyBundles: [org@1]
+          providers:
+            - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+            - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          ports:
+            eventLog: { adapter: memory, region: test-region }
+            checkpointStore: { adapter: memory, region: test-region }
+            idempotencyStore: { adapter: memory, region: test-region }
+            snapshotStore: { adapter: memory, region: test-region }
+            blobStore: { adapter: memory, region: test-region }
+            auditLog: { adapter: memory, region: test-region }
+            secrets: { adapter: memory, region: test-region }
+          retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+    expect: { ok: false, error: { category: configuration } }
+  # Declared names only: accepted.
+  - load:
+      artifacts:
+        - kind: PolicyBundle
+          id: org
+          version: 1
+          schemaVersion: "0.1.0"
+          instructions: "Follow organisational policy."
+          defaultFallbackMessage: "I can't help with that request."
+          trustedAttachmentSources: [upload, email]
+          sensitivityPolicies:
+            pii:
+              allowedProviders: [scripted-a, scripted-b]
+              redaction: [{ mode: mask }]
+            phi:
+              allowedProviders: [scripted-a]
+              redaction: [{ mode: mask }]
+    expect: { ok: true }
+expect: {}

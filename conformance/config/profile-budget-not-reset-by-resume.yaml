@@ -1,0 +1,94 @@
+schemaVersion: "0.1.0"
+id: cfg.profile-budget-not-reset-by-resume
+title: The token budget applies per turn, so a resumed run continues the suspended turn's budget
+description: >-
+  The budget is 60 tokens per turn. Step 1 uses 40 tokens and requests
+  update_record, which requires approval, so the run escalates. The resume
+  approves; the tool runs and step 2 uses 30 more tokens (70 in the turn) and
+  requests another call. Had resume reset the budget, 30 would be under 60
+  and a third model call would follow; instead the run ends
+  budget_exhausted.
+requirements: [CFG-091]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        budget: { tokens: 60 }
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, ref: test.update_record }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 30, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 25, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Unused." }]
+          usage: { inputTokens: 10, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+      lookup:
+        - ok: { output: { value: "synthetic-value" } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1, then check it" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $esc, payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000001", escalationId: $esc, actionId: $act, type: approve }
+    expect: { ok: true, endReason: budget_exhausted }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: run.ended, runId: $r1, payload: { reason: escalated } }
+          - { type: run.started, runId: $r2, payload: { kind: resume } }
+          - { type: tool.result, runId: $r2, turn: 1, payload: { callId: c1 } }
+          - { type: model.request, runId: $r2, turn: 1, step: 2 }
+          - { type: run.ended, runId: $r2, payload: { reason: budget_exhausted } }
+      absentEvents:
+        - { type: model.request, turn: 1, step: 3 }
+  providerRequests:
+    scripted-a: { count: 2 }

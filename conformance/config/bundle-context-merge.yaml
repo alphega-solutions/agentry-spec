@@ -1,0 +1,103 @@
+schemaVersion: "0.1.0"
+id: cfg.bundle-context-merge
+title: "`context` block fields merge by their own rules: a profile may tighten what a policy bundle sets, never loosen it"
+description: >-
+  org@1 sets compaction.mode truncate, triggerPercent 80, a pinned summarizer
+  model, and retrieval.limit 5. A profile that moves mode to the looser
+  `summarize` (order none → truncate → summarize), raises triggerPercent or
+  retrieval.limit (min), or changes the summarizer model (locked) is
+  rejected. A profile that tightens every field it sets loads.
+requirements: [CTX-100, CTX-102]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+        context:
+          compaction:
+            mode: truncate
+            triggerPercent: 80
+            model: { provider: scripted-a, name: model-a }
+          retrieval:
+            limit: 5
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  # compaction.mode looser than truncate.
+  - load:
+      artifacts:
+        - kind: HarnessProfile
+          id: default
+          version: 1
+          schemaVersion: "0.1.0"
+          idleTtl: PT24H
+          suspendedTtl: PT72H
+          stepLimit: 8
+          context: { compaction: { mode: summarize } }
+    expect: { ok: false, error: { category: configuration } }
+  # compaction.triggerPercent raised.
+  - load:
+      artifacts:
+        - kind: HarnessProfile
+          id: default
+          version: 1
+          schemaVersion: "0.1.0"
+          idleTtl: PT24H
+          suspendedTtl: PT72H
+          stepLimit: 8
+          context: { compaction: { triggerPercent: 90 } }
+    expect: { ok: false, error: { category: configuration } }
+  # compaction.model changed (locked).
+  - load:
+      artifacts:
+        - kind: HarnessProfile
+          id: default
+          version: 1
+          schemaVersion: "0.1.0"
+          idleTtl: PT24H
+          suspendedTtl: PT72H
+          stepLimit: 8
+          context: { compaction: { model: { provider: scripted-b, name: model-b } } }
+    expect: { ok: false, error: { category: configuration } }
+  # retrieval.limit raised.
+  - load:
+      artifacts:
+        - kind: HarnessProfile
+          id: default
+          version: 1
+          schemaVersion: "0.1.0"
+          idleTtl: PT24H
+          suspendedTtl: PT72H
+          stepLimit: 8
+          context: { retrieval: { limit: 10 } }
+    expect: { ok: false, error: { category: configuration } }
+  # Every field tightened (or, for defaultLabels, added to): accepted.
+  - load:
+      artifacts:
+        - kind: HarnessProfile
+          id: default
+          version: 1
+          schemaVersion: "0.1.0"
+          idleTtl: PT24H
+          suspendedTtl: PT72H
+          stepLimit: 8
+          context: { reserveOutputTokens: 4096, compaction: { mode: none, triggerPercent: 70 }, retrieval: { limit: 3, defaultLabels: [pii] } }
+    expect: { ok: true }
+expect: {}
