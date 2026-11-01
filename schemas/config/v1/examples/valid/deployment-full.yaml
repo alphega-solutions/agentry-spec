@@ -1,0 +1,40 @@
+schema: https://alphega.io/agentry/schemas/config/deployment/v1.json
+instance:
+  kind: Deployment
+  id: prod
+  version: 7
+  schemaVersion: "0.1.0"
+  environment: prod
+  policyBundles: [org@3, dept-finance@1]
+  attachmentSources: [upload]
+  providers:
+    - id: vendor-eu
+      adapter: vendor
+      endpoint: "https://eu.api.vendor.example"
+      region: eu-west-1
+      retainsData: false
+      attributes: { zeroDataRetention: true, certification: iso27001 }
+      credentials: { apiKey: "secret://vault/vendor-eu-key" }
+      capabilities: { large-1: { contextLimit: 100000, parallelToolCalls: false } }
+  ports:
+    eventLog: { adapter: postgres, region: eu-west-1, credentials: { password: "secret://vault/pg" }, extensions: { database: agentry } }
+    checkpointStore: { adapter: postgres, region: eu-west-1 }
+    idempotencyStore: { adapter: postgres, region: eu-west-1 }
+    snapshotStore: { adapter: s3, region: eu-west-1, encryption: { keys: customer, keyId: "arn:aws:kms:eu-west-1:1:key/abc" } }
+    blobStore: { adapter: s3, region: eu-west-1, encryption: { keys: platform } }
+    auditLog: { adapter: postgres, region: eu-west-1 }
+    vectorStore: { adapter: pgvector, region: eu-west-1, sources: [kb-main] }
+    secrets: { adapter: vault, region: eu-west-1 }
+    telemetry: { adapter: otlp, region: eu-west-1 }
+  retention: { events: P90D, checkpoints: P30D, idempotency: P30D, blobs: P90D, snapshots: P365D, audit: P2555D }
+  legalHolds:
+    - { tenant: acme, reason: "Litigation 2026-14" }
+    - { tenant: globex, session: 0190a3c4-0000-7000-8000-000000000001 }
+  priceTable:
+    currency: EUR
+    models:
+      - { provider: vendor-eu, name: large-1, input: 3, cachedInput: 0.3, output: 15, reasoning: 15 }
+  mcpServers:
+    - { id: crm, endpoint: "https://mcp.crm.example/sse", identity: "mcp.crm.example", credentials: { token: "secret://vault/crm-token" } }
+  remoteHooks:
+    - { id: scanner, endpoint: "grpc://scanner.internal:443", protocol: grpc, region: eu-west-1 }

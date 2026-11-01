@@ -1,0 +1,139 @@
+schemaVersion: "0.1.0"
+id: cfg.strictness-orders-layers
+title: Stricter-merged fields set by a policy bundle may be tightened by lower layers and never loosened
+description: >-
+  `org@1` sets one value for each `stricter` field that a lower layer of the
+  configuration can also set. Each load changes one value in `dept@1` (the
+  next bundle in the stack) or in the default profile. A step toward the
+  strict end of the field's order loads; a step away from it fails with
+  category configuration.
+
+  | Field | org | accepted | rejected |
+  |---|---|---|---|
+  | toolTaintDefaults entry (taint outcome) | escalate | block | allow |
+  | sensitivity approval (approval policy) | policy | always | never |
+  | allowSelfApproval entry | false | false | true |
+  | guardrails.requireDeterministic (profile) | true | true | false |
+  | context.compaction.mode (profile) | truncate | none | summarize |
+  | context.retrieval.auto (profile) | false | false | true |
+
+  org also sets `context.retrieval.source` (a vector store source the
+  deployment declares), so enabling automatic retrieval has an effective
+  source (CTX-101) and only the strictness order is under test.
+
+  Delivery mode, checkpoint granularity, reasoning in traces, and onExpiry
+  are profile-only fields; their orders are exercised against run requests
+  in cfg.strictness-orders-run-request.
+requirements: [CFG-031, CFG-032]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1, dept@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+          vectorStore: { adapter: memory, region: test-region, sources: [kb] }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        toolTaintDefaults: { update_record@1: escalate }
+        allowSelfApproval: { hook: false }
+        guardrails: { requireDeterministic: true }
+        context:
+          compaction: { mode: truncate }
+          retrieval: { auto: false, source: kb }
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+            approval: policy
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+      - kind: PolicyBundle
+        id: dept
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow department policy."
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  # Taint outcome: block -> escalate -> allow.
+  - load:
+      artifacts:
+        - { kind: PolicyBundle, id: dept, version: 1, schemaVersion: "0.1.0", toolTaintDefaults: { update_record@1: block } }
+    expect: { ok: true }
+  - load:
+      artifacts:
+        - { kind: PolicyBundle, id: dept, version: 1, schemaVersion: "0.1.0", toolTaintDefaults: { update_record@1: allow } }
+    expect: { ok: false, error: { category: configuration } }
+  # Approval policy: always -> policy -> never.
+  - load:
+      artifacts:
+        - { kind: PolicyBundle, id: dept, version: 1, schemaVersion: "0.1.0", sensitivityPolicies: { pii: { approval: always } } }
+    expect: { ok: true }
+  - load:
+      artifacts:
+        - { kind: PolicyBundle, id: dept, version: 1, schemaVersion: "0.1.0", sensitivityPolicies: { pii: { approval: never } } }
+    expect: { ok: false, error: { category: configuration } }
+  # allowSelfApproval: false -> true.
+  - load:
+      artifacts:
+        - { kind: PolicyBundle, id: dept, version: 1, schemaVersion: "0.1.0", allowSelfApproval: { hook: false } }
+    expect: { ok: true }
+  - load:
+      artifacts:
+        - { kind: PolicyBundle, id: dept, version: 1, schemaVersion: "0.1.0", allowSelfApproval: { hook: true } }
+    expect: { ok: false, error: { category: configuration } }
+  # guardrails.requireDeterministic: true -> false (profile below the bundles).
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, guardrails: { requireDeterministic: true } }
+    expect: { ok: true }
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, guardrails: { requireDeterministic: false } }
+    expect: { ok: false, error: { category: configuration } }
+  # Compaction mode: none -> truncate -> summarize.
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, context: { compaction: { mode: none } } }
+    expect: { ok: true }
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, context: { compaction: { mode: summarize } } }
+    expect: { ok: false, error: { category: configuration } }
+  # Automatic retrieval: false -> true.
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, context: { retrieval: { auto: false } } }
+    expect: { ok: true }
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, context: { retrieval: { auto: true } } }
+    expect: { ok: false, error: { category: configuration } }
+expect: {}

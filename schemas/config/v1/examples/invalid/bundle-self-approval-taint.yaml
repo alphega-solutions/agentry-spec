@@ -1,0 +1,9 @@
+# HITL-023, CFG-070 as amended 2026-11-01: allowSelfApproval must not have
+# keys `taint` or `recovery`, whatever the value.
+schema: https://alphega.io/agentry/schemas/config/policy-bundle/v1.json
+instance:
+  kind: PolicyBundle
+  id: org
+  version: 1
+  schemaVersion: "0.1.0"
+  allowSelfApproval: { approval: true, taint: false }

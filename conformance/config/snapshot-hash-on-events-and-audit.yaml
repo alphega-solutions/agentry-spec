@@ -1,0 +1,52 @@
+schemaVersion: "0.1.0"
+id: cfg.snapshot-hash-on-events-and-audit
+title: Every event and every audit record carries the session's snapshot hash
+description: >-
+  The run makes a mutating tool call, which produces an audit record. Every
+  persisted event of the session, and every audit record of the tenant
+  (of which there is at least one), carries the hash bound from the load.
+requirements: [CFG-054]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+script:
+  - load: {}
+    bind: $h
+    expect: { ok: true }
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: update_record } }
+  ports:
+    eventLog:
+      t1:
+        $s: { $all: [{ $not: { $len: 0 } }, { $every: { snapshotHash: $h } }] }
+    auditLog:
+      t1: { $all: [{ $not: { $len: 0 } }, { $every: { snapshotHash: $h } }] }

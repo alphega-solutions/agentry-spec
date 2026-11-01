@@ -1,0 +1,34 @@
+schemaVersion: "0.1.0"
+id: cfg.profile-required-fields
+title: A harness profile must declare `idleTtl`, `suspendedTtl`, and `stepLimit`; everything else is optional
+description: >-
+  Each of the first three loads adds a profile missing one required field and
+  is rejected. A profile declaring only the three required fields loads.
+requirements: [CFG-090]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: minimal, version: 1, schemaVersion: "0.1.0", suspendedTtl: PT72H, stepLimit: 8 }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: minimal, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, stepLimit: 8 }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: minimal, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: minimal, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8 }
+    expect: { ok: true }
+expect: {}

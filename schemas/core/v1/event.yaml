@@ -117,6 +117,9 @@ $defs:
     properties:
       persona: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/artifactRef" }
       profile: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/artifactRef" }
+      overrides:
+        description: Session-scoped values tightened by the session-creating run request (CFG-101, amended).
+        type: object
       parent:
         description: Present for child sessions (ORCH-004).
         type: object

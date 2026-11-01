@@ -19,7 +19,7 @@ setup:
         id: org
         version: 1
         schemaVersion: "0.1.0"
-        instructions: "Follow organisational policy."
+        policyInstructions: "Follow organisational policy."
         defaultFallbackMessage: "I can't help with that request."
         sensitivityPolicies:
           pii:
@@ -43,7 +43,7 @@ setup:
           properties: { key: { type: string } }
         effect: read
         sensitivity: ["example.test:region-b"]
-        binding: { kind: native, ref: test.lookup }
+        binding: { kind: native, handler: test.lookup }
   tenants:
     - id: t1
       principals: [{ id: p1, subject: user-1, assurance: multi_factor }]

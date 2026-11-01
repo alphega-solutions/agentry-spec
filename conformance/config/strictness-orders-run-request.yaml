@@ -1,0 +1,130 @@
+schemaVersion: "0.1.0"
+id: cfg.strictness-orders-run-request
+title: Profile-only stricter fields follow their declared order when a run request changes them
+description: >-
+  `default@1` sits at the strict end of each profile-only order except
+  delivery mode; `streamed@1` sits at the loose end. A run request that
+  moves a value toward the strict end runs; one that moves it toward the
+  loose end fails with `invalid_input` before a run starts.
+
+  | Field (strictest first) | Accepted | Rejected |
+  |---|---|---|
+  | deliveryMode: buffered → streamed | streamed@1 with buffered | default@1 with streamed |
+  | checkpoint: tool → turn | default@1 (turn) with tool | streamed@1 (tool) with turn |
+  | trace.includeReasoning: false → true | default@1 (true) with false | streamed@1 (false) with true |
+  | onExpiry: close → reject | default@1 (reject) with close | streamed@1 (close) with reject |
+requirements: [CFG-031]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        checkpoint: turn
+        trace: { includeReasoning: true }
+        onExpiry: reject
+      - kind: HarnessProfile
+        id: streamed
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: streamed
+        checkpoint: tool
+        trace: { includeReasoning: false }
+        onExpiry: close
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "One." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Two." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Three." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Four." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  # Tightening: accepted.
+  - action: run
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    profile: streamed@1
+    overrides: { deliveryMode: buffered }
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    profile: default@1
+    overrides: { checkpoint: tool }
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    profile: default@1
+    overrides: { trace: { includeReasoning: false } }
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    profile: default@1
+    overrides: { onExpiry: close }
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  # Loosening: rejected before a run starts.
+  - action: run
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    profile: default@1
+    overrides: { deliveryMode: streamed }
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: false, error: { category: invalid_input } }
+  - action: run
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    profile: streamed@1
+    overrides: { checkpoint: turn }
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: false, error: { category: invalid_input } }
+  - action: run
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    profile: streamed@1
+    overrides: { trace: { includeReasoning: true } }
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: false, error: { category: invalid_input } }
+  - action: run
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    profile: streamed@1
+    overrides: { onExpiry: reject }
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: false, error: { category: invalid_input } }
+expect:
+  providerRequests:
+    scripted-a: { count: 4 }

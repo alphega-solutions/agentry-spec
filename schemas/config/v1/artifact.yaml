@@ -1,0 +1,61 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://alphega.io/agentry/schemas/config/artifact/v1.json
+title: Configuration artifact envelope
+description: >-
+  Fields every configuration artifact carries (CFG-001–003). Each kind's
+  schema composes this envelope and closes the object.
+
+
+  Merge annotations (CFG-030, ADR-0007). Every field of a behavioural kind
+  (`PolicyBundle`, `Persona`, `HarnessProfile`) declares `x-agentry-merge`,
+  saying what a lower layer may do to a value set by a higher one:
+  `union` — add items (for a map, add keys; for a scalar such as a CEL
+  condition or instructions, add another value that also applies);
+  `intersect` — remove items (absent imposes no constraint, empty means
+  nothing; for the grant fields `trustedTools` and `trustedAttachmentSources`
+  the value is empty unless some layer sets it);
+  `min` — lower the value;
+  `stricter` — move toward the strict end of the order given in
+  `x-agentry-order`, an array listing the field's values strictest first
+  (CFG-031 and the orders added by Areas 5, 6 and 7);
+  `locked` — not change a value once a higher layer has set it;
+  `override` — replace the value; never on a field that affects tools, hooks,
+  providers, sensitivity, trust, limits, budgets, delivery or retention
+  (CFG-033), so only on display labels and adapter-declared generation
+  parameters (PROV-022).
+  A field whose value is a block of named fields (for example `budget`,
+  `model`, `context`) carries no rule itself; each of its fields carries one.
+  A map-valued field is annotated `union` — any layer may add keys — and its
+  value schema (`additionalProperties`, or each named property) carries the
+  rule for each key's value, which a key set by a higher layer keeps
+  (CFG-030 as amended 2026-11-01). A field path has the same rule in every
+  kind that declares it.
+
+
+  Secret fields carry `x-agentry-secret: true` and accept only a secret
+  reference `secret://<provider>/<name>` (CFG-060, CFG-061). `Deployment`
+  is not a behavioural layer and carries no merge annotations (CFG-021).
+
+
+  Values are JSON-compatible only: strings, booleans, null, arrays, objects
+  and numbers within the I-JSON range (RFC 7493). Implicit YAML types such as
+  timestamps or `yes`/`no` booleans are configuration errors (CFG amendment
+  2026-11-01). The schemas use only JSON Schema types; durations and times
+  are strings.
+type: object
+required: [kind, id, version, schemaVersion]
+properties:
+  kind:
+    description: CFG-002.
+    enum: [PolicyBundle, Persona, HarnessProfile, Tool, Hook, Deployment]
+  id: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/artifactId" }
+  version:
+    description: Positive integer (CFG-003, ADR-0002).
+    type: integer
+    minimum: 1
+  schemaVersion: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/contractVersion" }
+  extensions: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/extensions" }
+$defs:
+  mergeRule:
+    description: Values of `x-agentry-merge`.
+    enum: [union, intersect, min, stricter, locked, override]

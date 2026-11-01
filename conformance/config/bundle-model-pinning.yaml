@@ -1,0 +1,126 @@
+schemaVersion: "0.1.0"
+id: cfg.bundle-model-pinning
+title: A model pinned by a policy bundle cannot be changed below it; lower layers may only remove its fallbacks
+description: >-
+  org@1 pins scripted-b/model-b with fallback scripted-a/model-a; the persona
+  declares no model, so the pinned model is used. Lower layers that change
+  the provider and name, or add a fallback, are rejected (provider and name
+  are locked; fallbacks belong to the pinning layer). A persona that removes
+  the fallback loads.
+requirements: [PROV-020, PROV-021]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+        model:
+          provider: scripted-b
+          name: model-b
+          fallbacks:
+            - { provider: scripted-a, name: model-a }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a: { responses: [] }
+    scripted-b:
+      responses:
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  # Persona changes the pinned provider and name (locked).
+  - load:
+      artifacts:
+        - kind: Persona
+          id: assistant
+          version: 1
+          schemaVersion: "0.1.0"
+          instructions: "You are a test assistant."
+          tools: [lookup@1, update_record@1]
+          fallbackMessage: "This request was blocked."
+          defaultProfile: default@1
+          allowedProfiles: [default@1, streamed@1]
+          model: { provider: scripted-a, name: model-a }
+    expect: { ok: false, error: { category: configuration } }
+  # Persona adds a fallback to the pinning layer's list.
+  - load:
+      artifacts:
+        - kind: Persona
+          id: assistant
+          version: 1
+          schemaVersion: "0.1.0"
+          instructions: "You are a test assistant."
+          tools: [lookup@1, update_record@1]
+          fallbackMessage: "This request was blocked."
+          defaultProfile: default@1
+          allowedProfiles: [default@1, streamed@1]
+          model: { fallbacks: [{ provider: scripted-a, name: model-a }, { provider: scripted-a, name: model-c }] }
+    expect: { ok: false, error: { category: configuration } }
+  # Profile replaces the fallback list with a new entry.
+  - load:
+      artifacts:
+        - kind: HarnessProfile
+          id: default
+          version: 1
+          schemaVersion: "0.1.0"
+          idleTtl: PT24H
+          suspendedTtl: PT72H
+          stepLimit: 8
+          model: { fallbacks: [{ provider: scripted-a, name: model-c }] }
+    expect: { ok: false, error: { category: configuration } }
+  # Persona removes the only fallback: accepted.
+  - load:
+      artifacts:
+        - kind: Persona
+          id: assistant
+          version: 1
+          schemaVersion: "0.1.0"
+          instructions: "You are a test assistant."
+          tools: [lookup@1, update_record@1]
+          fallbackMessage: "This request was blocked."
+          defaultProfile: default@1
+          allowedProfiles: [default@1, streamed@1]
+          model: { fallbacks: [] }
+    expect: { ok: true }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, payload: { provider: scripted-b, model: model-b, role: primary } }
+  providerRequests:
+    scripted-a: { count: 0 }
+    scripted-b: { count: 1 }

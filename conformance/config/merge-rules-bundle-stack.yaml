@@ -1,0 +1,220 @@
+schemaVersion: "0.1.0"
+id: cfg.merge-rules-bundle-stack
+title: A department bundle below the organisation bundle may only do what each field's merge rule permits
+description: >-
+  The deployment stacks `org@1` above `dept@1`. Each load replaces `dept@1`
+  with one change. Permitted changes load; forbidden ones fail with category
+  configuration and are not clamped.
+
+  - union: dept adds policy instructions, a new sensitivity label (`pci`),
+    and a redaction rule to the existing `pii` key; an existing key's
+    `allowedProviders` narrows per key (map fields merge per key) — accepted.
+    A session run on that configuration shows both bundles' values in
+    effect: the model's system content holds org's and dept's policy
+    instructions, and the `pii` result of `lookup` is still masked in events
+    by org's redaction rule. An implementation that let dept override org
+    (replacing the instructions, or the `sensitivityPolicies` map or its
+    `pii` entry) fails these checks.
+  - intersect: narrowing `allowedProviders` is accepted; adding a provider
+    org does not allow is rejected; widening `phi.allowedProviders` inside
+    the map is rejected; adding a tool to the `trustedTools` grant is
+    rejected.
+  - locked: restating org's `defaultFallbackMessage` unchanged is accepted;
+    a different message is rejected. org sets `dataResidency` to two
+    regions; dept naming a superset, or a strict subset (which `intersect`
+    would accept), is rejected.
+  - min: lowering `context.compaction.triggerPercent` is accepted; raising
+    it is rejected.
+
+  The persona declares no fallbacks, so narrowing providers to scripted-a
+  leaves its model allowed. Strictness orders are covered by
+  cfg.strictness-orders-layers.
+requirements: [CFG-020, CFG-030, CFG-032]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1, dept@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          - { id: scripted-c, adapter: scripted, endpoint: "memory://scripted-c", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        allowedProviders: [scripted-a, scripted-b]
+        trustedTools: [lookup@1]
+        dataResidency: [test-region, other-region]
+        context: { compaction: { triggerPercent: 80 } }
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+      - kind: PolicyBundle
+        id: dept
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow department policy."
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: lookup
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Look up a record by key.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        sensitivity: [pii]
+        binding: { kind: native, handler: test.lookup }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Found the record." }]
+          usage: { inputTokens: 30, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { name: "SYN-PII-NAME-JANE-ROE-0030" } }
+  limits:
+    inlinePayloadBytes: 65536
+script:
+  # union, and per-key map merge.
+  - load:
+      artifacts:
+        - kind: PolicyBundle
+          id: dept
+          version: 1
+          schemaVersion: "0.1.0"
+          policyInstructions: "Follow SYN-DEPT-0030 department policy."
+          sensitivityPolicies:
+            pii:
+              allowedProviders: [scripted-a]
+              redaction: [{ mode: hash, targets: [audit] }]
+            pci:
+              allowedProviders: [scripted-a]
+              redaction: [{ mode: remove }]
+    expect: { ok: true }
+  # The union is observable: both bundles' values are in effect for a session.
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1" }]
+    expect: { ok: true, endReason: responded }
+  # intersect.
+  - load:
+      artifacts:
+        - { kind: PolicyBundle, id: dept, version: 1, schemaVersion: "0.1.0", allowedProviders: [scripted-a] }
+    expect: { ok: true }
+  - load:
+      artifacts:
+        - { kind: PolicyBundle, id: dept, version: 1, schemaVersion: "0.1.0", allowedProviders: [scripted-a, scripted-c] }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - kind: PolicyBundle
+          id: dept
+          version: 1
+          schemaVersion: "0.1.0"
+          sensitivityPolicies:
+            phi:
+              allowedProviders: [scripted-a, scripted-b]
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: PolicyBundle, id: dept, version: 1, schemaVersion: "0.1.0", trustedTools: [lookup@1, update_record@1] }
+    expect: { ok: false, error: { category: configuration } }
+  # locked.
+  - load:
+      artifacts:
+        - { kind: PolicyBundle, id: dept, version: 1, schemaVersion: "0.1.0", defaultFallbackMessage: "I can't help with that request." }
+    expect: { ok: true }
+  - load:
+      artifacts:
+        - { kind: PolicyBundle, id: dept, version: 1, schemaVersion: "0.1.0", defaultFallbackMessage: "Department fallback." }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: PolicyBundle, id: dept, version: 1, schemaVersion: "0.1.0", dataResidency: [test-region, other-region, eu-region] }
+    expect: { ok: false, error: { category: configuration } }
+  # A strict subset of org's regions: `intersect` would accept it, `locked` must not.
+  - load:
+      artifacts:
+        - { kind: PolicyBundle, id: dept, version: 1, schemaVersion: "0.1.0", dataResidency: [test-region] }
+    expect: { ok: false, error: { category: configuration } }
+  # min.
+  - load:
+      artifacts:
+        - { kind: PolicyBundle, id: dept, version: 1, schemaVersion: "0.1.0", context: { compaction: { triggerPercent: 70 } } }
+    expect: { ok: true }
+  - load:
+      artifacts:
+        - { kind: PolicyBundle, id: dept, version: 1, schemaVersion: "0.1.0", context: { compaction: { triggerPercent: 90 } } }
+    expect: { ok: false, error: { category: configuration } }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: contains
+        items:
+          - { type: tool.result, payload: { callId: c1 }, labels: { $contains: [pii] } }
+      absentEvents:
+        - type: tool.result
+          payload: { result: { ok: { output: { name: "SYN-PII-NAME-JANE-ROE-0030" } } } }
+  providerRequests:
+    scripted-a:
+      - messages:
+          $all:
+            - $contains:
+                - parts:
+                    $contains:
+                      - { type: text, text: { $regex: "Follow organisational policy\\." }, provenance: system }
+            - $contains:
+                - parts:
+                    $contains:
+                      - { type: text, text: { $regex: "Follow SYN-DEPT-0030 department policy\\." }, provenance: system }
+      - {}

@@ -1,0 +1,27 @@
+schema: https://alphega.io/agentry/schemas/config/harness-profile/v1.json
+instance:
+  kind: HarnessProfile
+  id: full
+  version: 1
+  schemaVersion: "0.1.0"
+  idleTtl: P1DT12H
+  suspendedTtl: P3D
+  stepLimit: 12
+  budget: { tokens: 200000, cost: 2.5 }
+  timeouts: { run: PT10M, tool: PT1.5S }
+  retry: { unavailable: 3 }
+  outputRetryLimit: 1
+  outputSchema: { type: object }
+  deliveryMode: buffered
+  checkpoint: tool
+  limits: { partSize: 1048576, sessionSize: 10485760 }
+  defaultAttachmentLabels: [pii, com.example:unscanned]
+  trace: { includeReasoning: false }
+  requiredHooks: [audit-tap@1]
+  guardrails: { requireDeterministic: false }
+  onExpiry: reject
+  delegation: { maxDepth: 1 }
+  context:
+    compaction: { mode: summarize }
+    retrieval: { auto: true, source: kb-main, limit: 5 }
+  model: { params: { maxOutputTokens: 1024 } }

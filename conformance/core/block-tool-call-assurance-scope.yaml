@@ -29,7 +29,7 @@ setup:
         effect: mutating
         idempotent: false
         minAssurance: phishing_resistant
-        binding: { kind: native, ref: test.update_record }
+        binding: { kind: native, handler: test.update_record }
   tenants:
     - id: t1
       principals: [{ id: p1, subject: user-1, assurance: multi_factor }]

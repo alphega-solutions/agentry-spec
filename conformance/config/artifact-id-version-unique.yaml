@@ -1,0 +1,48 @@
+schemaVersion: "0.1.0"
+id: cfg.artifact-id-version-unique
+title: (id, version) is unique within a kind; several versions of one id coexist; version is a positive integer
+description: >-
+  A single load containing two different harness profiles both named
+  `quick@1` is rejected. Two versions of one id (`quick@1`, `quick@2`) load
+  together, and a harness profile may share an id and version with an
+  artifact of another kind (`lookup@1`, a Tool), since uniqueness is per kind.
+  Versions 0, -1, "2" (a string) and 1.5 are each rejected.
+requirements: [CFG-003]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: quick, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 4 }
+        - { kind: HarnessProfile, id: quick, version: 1, schemaVersion: "0.1.0", idleTtl: PT1H, suspendedTtl: PT1H, stepLimit: 2 }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: quick, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 4 }
+        - { kind: HarnessProfile, id: quick, version: 2, schemaVersion: "0.1.0", idleTtl: PT1H, suspendedTtl: PT1H, stepLimit: 2 }
+        - { kind: HarnessProfile, id: lookup, version: 1, schemaVersion: "0.1.0", idleTtl: PT1H, suspendedTtl: PT1H, stepLimit: 2 }
+    expect: { ok: true }
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: version-zero, version: 0, schemaVersion: "0.1.0", idleTtl: PT1H, suspendedTtl: PT1H, stepLimit: 2 }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: version-negative, version: -1, schemaVersion: "0.1.0", idleTtl: PT1H, suspendedTtl: PT1H, stepLimit: 2 }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: version-string, version: "2", schemaVersion: "0.1.0", idleTtl: PT1H, suspendedTtl: PT1H, stepLimit: 2 }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: version-fraction, version: 1.5, schemaVersion: "0.1.0", idleTtl: PT1H, suspendedTtl: PT1H, stepLimit: 2 }
+    expect: { ok: false, error: { category: configuration } }
+expect: {}

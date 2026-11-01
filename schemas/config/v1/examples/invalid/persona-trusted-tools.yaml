@@ -1,0 +1,12 @@
+# CFG-071: trustedTools is settable only in policy bundles.
+schema: https://alphega.io/agentry/schemas/config/persona/v1.json
+instance:
+  kind: Persona
+  id: assistant
+  version: 1
+  schemaVersion: "0.1.0"
+  instructions: "You are a test assistant."
+  tools: [lookup@1]
+  trustedTools: [lookup@1]
+  defaultProfile: default@1
+  allowedProfiles: [default@1]

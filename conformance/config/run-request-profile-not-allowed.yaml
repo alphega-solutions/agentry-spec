@@ -1,0 +1,66 @@
+schemaVersion: "0.1.0"
+id: cfg.run-request-profile-not-allowed
+title: A run request may name only a profile in the persona's `allowedProfiles`; with none named, `defaultProfile` applies
+description: >-
+  other@1 is a valid profile in the snapshot but not in assistant@1's
+  allowedProfiles, so naming it fails with invalid_input before anything is
+  persisted. A request naming no profile gets default@1; one naming
+  streamed@1 (allowed) gets that profile.
+requirements: [CFG-100]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - { kind: HarnessProfile, id: other, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8 }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Hello again." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $s0
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    profile: other@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: false, error: { category: invalid_input }, newEvents: 0 }
+  - action: run
+    bind: $s1
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $s2
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    profile: streamed@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s1:
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, payload: { persona: assistant@1, profile: default@1 } }
+    $s2:
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, payload: { persona: assistant@1, profile: streamed@1 } }
+  providerRequests:
+    scripted-a: { count: 2 }

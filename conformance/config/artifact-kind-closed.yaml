@@ -1,0 +1,50 @@
+schemaVersion: "0.1.0"
+id: cfg.artifact-kind-closed
+title: An artifact whose kind is not one of the six configuration kinds is rejected
+description: >-
+  `Workflow` is not a kind, and kind names are case-sensitive (`persona` is
+  not `Persona`). Both loads fail with category configuration. The baseline
+  holds PolicyBundle, Persona, HarnessProfile, Tool and Deployment
+  artifacts; a final load adds a Hook, so all six kinds load together.
+requirements: [CFG-002]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  - load:
+      artifacts:
+        - kind: Workflow
+          id: steps
+          version: 1
+          schemaVersion: "0.1.0"
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - kind: persona
+          id: lower-case-kind
+          version: 1
+          schemaVersion: "0.1.0"
+          instructions: "You are a test assistant."
+          tools: [lookup@1]
+          defaultProfile: default@1
+          allowedProfiles: [default@1]
+          model: { provider: scripted-a, name: model-a }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - kind: Hook
+          id: note-pii
+          version: 1
+          schemaVersion: "0.1.0"
+          points: [beforeModelCall]
+          results: [annotate]
+          timeoutMs: 1000
+          source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-PII'))", then: { result: annotate, labels: [pii] } }
+    expect: { ok: true }
+expect: {}

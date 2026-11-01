@@ -1,0 +1,86 @@
+schemaVersion: "0.1.0"
+id: cfg.overlay-tighten-only
+title: An environment overlay may change deployment fields and tighten behaviour, never loosen it
+description: >-
+  A `prod` overlay changes a provider endpoint and lowers the default
+  profile's token budget: it loads, and the next run is bound by the lower
+  budget. A second overlay raises the budget above the profile's value and
+  is rejected with details naming the overlay layer. Overlays also must not
+  loosen deployment governance: one that removes the policy bundle from the
+  stack, and one that adds an attachment source, are each rejected with
+  details naming the deployment field and the overlay layer. After every
+  rejection the previous snapshot stays in force.
+requirements: [CFG-021, CFG-032, CFG-112]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Over budget." }]
+          usage: { inputTokens: 400, outputTokens: 200, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - load:
+      overlay:
+        environment: prod
+        deployment:
+          providers:
+            - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a-prod", region: test-region, retainsData: false }
+            - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        tighten:
+          default@1: { budget: { tokens: 500 } }
+    bind: $hTight
+    expect: { ok: true }
+  - load:
+      overlay:
+        environment: prod
+        tighten:
+          default@1: { budget: { tokens: 200000 } }
+    expect:
+      ok: false
+      error:
+        category: configuration
+        details: { artifact: default@1, field: /budget/tokens, layer: overlay }
+  # Removing a policy bundle from the stack loosens deployment governance.
+  - load:
+      overlay:
+        environment: prod
+        deployment:
+          policyBundles: []
+    expect:
+      ok: false
+      error:
+        category: configuration
+        details: { artifact: test@1, field: /policyBundles, layer: overlay }
+  # Adding an attachment source loosens deployment governance (overlays may only remove them).
+  - load:
+      overlay:
+        environment: prod
+        deployment:
+          attachmentSources: [upload, email, fax]
+    expect:
+      ok: false
+      error:
+        category: configuration
+        details: { artifact: test@1, field: /attachmentSources, layer: overlay }
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: budget_exhausted }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: contains
+        items:
+          - { type: session.created, snapshotHash: $hTight }

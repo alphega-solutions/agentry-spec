@@ -1,0 +1,191 @@
+schemaVersion: "0.1.0"
+id: cfg.json-compatible-values
+title: Configuration values must be JSON-compatible, and the snapshot hash does not depend on key order
+description: >-
+  Configuration may use only JSON-compatible values, with numbers in the
+  I-JSON range (CFG-050 as amended 2026-11-01). A profile whose `stepLimit`
+  is 9007199254740993 (2^53 + 1, valid for the schema's `integer` but outside
+  I-JSON's exactly representable range) is a configuration error, as is the
+  same value in a persona's `extensions`; nothing from either load is
+  applied. The same profile with an in-range value loads and binds the
+  snapshot hash.
+
+  The next load replaces the organisation bundle, the default profile and
+  the deployment with identical content whose keys — top-level and nested,
+  including the keys of the `sensitivityPolicies` map and of each port
+  binding — are in a different order. The snapshot hash is unchanged
+  (CFG-051), because it is computed over RFC 8785 canonical JSON, and it has
+  the form `sha256:` followed by 64 hex digits.
+
+  Implicit YAML types such as unquoted dates or `yes`/`no` booleans are not
+  exercised here: fixtures are published as JSON (tools/build.py), which
+  cannot carry them.
+requirements: [CFG-050, CFG-051]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  # An integer outside the I-JSON range in a behavioural field.
+  - load:
+      artifacts:
+        - kind: HarnessProfile
+          id: default
+          version: 1
+          schemaVersion: "0.1.0"
+          idleTtl: PT24H
+          suspendedTtl: PT72H
+          stepLimit: 9007199254740993
+          deliveryMode: buffered
+          budget: { tokens: 100000 }
+          timeouts: { run: PT5M, tool: PT30S }
+          retry: { unavailable: 2 }
+          outputRetryLimit: 2
+          limits: { partSize: 1048576, sessionSize: 10485760 }
+          defaultAttachmentLabels: []
+    expect: { ok: false, error: { category: configuration } }
+  # YAML-only types, supplied as raw YAML: an unquoted date and a yes/no boolean.
+  - load:
+      raw:
+        - |
+          kind: Persona
+          id: assistant
+          version: 1
+          schemaVersion: "0.1.0"
+          instructions: "You are a test assistant."
+          description: 2026-01-01
+          tools: [lookup@1, update_record@1]
+          fallbackMessage: "This request was blocked."
+          defaultProfile: default@1
+          allowedProfiles: [default@1, streamed@1]
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      raw:
+        - |
+          kind: HarnessProfile
+          id: default
+          version: 1
+          schemaVersion: "0.1.0"
+          idleTtl: PT24H
+          suspendedTtl: PT72H
+          stepLimit: 8
+          trace: { includeReasoning: no }
+    expect: { ok: false, error: { category: configuration } }
+  # The same value in vendor extensions, which are otherwise open.
+  - load:
+      artifacts:
+        - kind: Persona
+          id: assistant
+          version: 1
+          schemaVersion: "0.1.0"
+          displayName: Test assistant
+          instructions: "You are a test assistant."
+          tools: [lookup@1, update_record@1]
+          fallbackMessage: "This request was blocked."
+          defaultProfile: default@1
+          allowedProfiles: [default@1, streamed@1]
+          model:
+            provider: scripted-a
+            name: model-a
+            fallbacks:
+              - { provider: scripted-b, name: model-b }
+          extensions: { io.example: { counter: 9007199254740993 } }
+    expect: { ok: false, error: { category: configuration } }
+  # Control: an in-range value loads.
+  - load:
+      artifacts:
+        - kind: HarnessProfile
+          id: default
+          version: 1
+          schemaVersion: "0.1.0"
+          idleTtl: PT24H
+          suspendedTtl: PT72H
+          stepLimit: 6
+          deliveryMode: buffered
+          budget: { tokens: 100000 }
+          timeouts: { run: PT5M, tool: PT30S }
+          retry: { unavailable: 2 }
+          outputRetryLimit: 2
+          limits: { partSize: 1048576, sessionSize: 10485760 }
+          defaultAttachmentLabels: []
+    bind: $h
+    expect: { ok: true }
+  # Identical content, keys in a different order at every level: same hash.
+  - load:
+      artifacts:
+        - sensitivityPolicies:
+            phi:
+              redaction: [{ mode: mask }]
+              allowedProviders: [scripted-a]
+            pii:
+              redaction: [{ mode: mask }]
+              allowedProviders: [scripted-a, scripted-b]
+          defaultFallbackMessage: "I can't help with that request."
+          policyInstructions: "Follow organisational policy."
+          schemaVersion: "0.1.0"
+          version: 1
+          id: org
+          kind: PolicyBundle
+        - defaultAttachmentLabels: []
+          limits: { sessionSize: 10485760, partSize: 1048576 }
+          outputRetryLimit: 2
+          retry: { unavailable: 2 }
+          timeouts: { tool: PT30S, run: PT5M }
+          budget: { tokens: 100000 }
+          deliveryMode: buffered
+          stepLimit: 6
+          suspendedTtl: PT72H
+          idleTtl: PT24H
+          schemaVersion: "0.1.0"
+          version: 1
+          id: default
+          kind: HarnessProfile
+        - retention: { audit: P365D, snapshots: P30D, blobs: P30D, idempotency: P30D, checkpoints: P30D, events: P30D }
+          ports:
+            secrets: { region: test-region, adapter: memory }
+            auditLog: { region: test-region, adapter: memory }
+            blobStore: { region: test-region, adapter: memory }
+            snapshotStore: { region: test-region, adapter: memory }
+            idempotencyStore: { region: test-region, adapter: memory }
+            checkpointStore: { region: test-region, adapter: memory }
+            eventLog: { region: test-region, adapter: memory }
+          providers:
+            - { retainsData: false, region: test-region, endpoint: "memory://scripted-a", adapter: scripted, id: scripted-a }
+            - { retainsData: false, region: test-region, endpoint: "memory://scripted-b", adapter: scripted, id: scripted-b }
+          attachmentSources: [upload, email]
+          policyBundles: [org@1]
+          environment: test
+          schemaVersion: "0.1.0"
+          version: 1
+          id: test
+          kind: Deployment
+    bind: $h
+    expect: { ok: true }
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, snapshotHash: { $all: [$h, { $regex: "^sha256:[0-9a-f]{64}$" }] } }
+  ports:
+    snapshotStore:
+      t1:
+        $h: { $any: true }

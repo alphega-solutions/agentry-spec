@@ -1,0 +1,73 @@
+schemaVersion: "0.1.0"
+id: cfg.bundle-instructions-union
+title: Instructions from every bundle in the stack are added to the persona's system content with provenance `system`
+description: >-
+  The deployment stacks org@1 then dept@1. Each declares instructions; the
+  merge rule is union, so both appear in the model's system content, as
+  does the persona's own instructions, all with provenance system.
+requirements: [CFG-070]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: dept
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow SYN-DEPT-0070 departmental policy."
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1, dept@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  providerRequests:
+    scripted-a:
+      - messages:
+          $all:
+            - $contains:
+                - parts:
+                    $contains:
+                      - { type: text, text: { $regex: "Follow organisational policy\\." }, provenance: system }
+            - $contains:
+                - parts:
+                    $contains:
+                      - { type: text, text: { $regex: "Follow SYN-DEPT-0070 departmental policy\\." }, provenance: system }
+            - $contains:
+                - parts:
+                    $contains:
+                      - { type: text, text: { $regex: "You are a test assistant\\." }, provenance: system }

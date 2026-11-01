@@ -1,0 +1,67 @@
+schemaVersion: "0.1.0"
+id: cfg.persona-tool-reference-missing
+title: A persona's `tools` list may reference only `Tool` artifacts present in the snapshot
+description: >-
+  A reference to a tool id that does not exist, to a version of lookup that
+  does not exist, and to an artifact of another kind (the profile default@1)
+  are each rejected. A list naming only lookup@1 loads.
+requirements: [CFG-082]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  - load:
+      artifacts:
+        - kind: Persona
+          id: assistant
+          version: 1
+          schemaVersion: "0.1.0"
+          instructions: "You are a test assistant."
+          tools: [lookup@1, missing_tool@1]
+          defaultProfile: default@1
+          allowedProfiles: [default@1]
+          model: { provider: scripted-a, name: model-a }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - kind: Persona
+          id: assistant
+          version: 1
+          schemaVersion: "0.1.0"
+          instructions: "You are a test assistant."
+          tools: [lookup@2]
+          defaultProfile: default@1
+          allowedProfiles: [default@1]
+          model: { provider: scripted-a, name: model-a }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - kind: Persona
+          id: assistant
+          version: 1
+          schemaVersion: "0.1.0"
+          instructions: "You are a test assistant."
+          tools: [default@1]
+          defaultProfile: default@1
+          allowedProfiles: [default@1]
+          model: { provider: scripted-a, name: model-a }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - kind: Persona
+          id: assistant
+          version: 1
+          schemaVersion: "0.1.0"
+          instructions: "You are a test assistant."
+          tools: [lookup@1]
+          defaultProfile: default@1
+          allowedProfiles: [default@1]
+          model: { provider: scripted-a, name: model-a }
+    expect: { ok: true }
+expect: {}

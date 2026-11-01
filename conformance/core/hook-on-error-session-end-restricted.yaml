@@ -73,7 +73,7 @@ script:
           points: [onError]
           results: [rewrite]
           timeoutMs: 1000
-          source: { kind: remote, endpoint: "memory://hook-scanner" }
+          source: { kind: remote, endpoint: scanner }
     expect: { ok: false, error: { category: configuration } }
   - load:
       artifacts:
@@ -84,7 +84,7 @@ script:
           points: [sessionEnd]
           results: [rewrite]
           timeoutMs: 1000
-          source: { kind: remote, endpoint: "memory://hook-scanner" }
+          source: { kind: remote, endpoint: scanner }
     expect: { ok: false, error: { category: configuration } }
   - load:
       artifacts:
@@ -129,6 +129,6 @@ script:
           points: [onError, sessionEnd]
           results: [annotate]
           timeoutMs: 1000
-          source: { kind: remote, endpoint: "memory://hook-scanner" }
+          source: { kind: remote, endpoint: scanner }
     expect: { ok: true }
 expect: {}

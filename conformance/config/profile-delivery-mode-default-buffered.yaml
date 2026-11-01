@@ -1,0 +1,68 @@
+schemaVersion: "0.1.0"
+id: cfg.profile-delivery-mode-default-buffered
+title: A profile without `deliveryMode` is buffered
+description: >-
+  minimal@1 omits deliveryMode. Two consequences show it is buffered. At load
+  time, a beforeResponse hook that declares `block` is accepted with it
+  (CFG-042 rejects that combination only for streamed profiles). At run time,
+  the provider is able to stream and scripts deltas, but the host receives
+  none: only the final response is delivered.
+requirements: [CFG-090]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - { kind: HarnessProfile, id: minimal, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8 }
+      - kind: Hook
+        id: guard-response
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeResponse]
+        results: [block]
+        timeoutMs: 1000
+        source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-UNSAFE'))", then: { result: block, reasonCode: test.guard.blocked } }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: minimal@1
+        allowedProfiles: [minimal@1]
+        requiredHooks: [guard-response@1]
+        model: { provider: scripted-a, name: model-a }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { streaming: true }
+      responses:
+        - deltas: ["Synthetic ", "buffered ", "reply."]
+          parts: [{ type: text, text: "Synthetic buffered reply." }]
+          usage: { inputTokens: 20, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, payload: { profile: minimal@1 } }
+          - { type: run.ended, payload: { reason: responded } }
+  delivered:
+    $s:
+      text: "Synthetic buffered reply."
+      deltas: []

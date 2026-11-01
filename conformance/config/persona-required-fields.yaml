@@ -1,0 +1,74 @@
+schemaVersion: "0.1.0"
+id: cfg.persona-required-fields
+title: A persona missing `instructions`, `tools`, `defaultProfile`, or `allowedProfiles` is rejected
+description: >-
+  Each load replaces assistant@1 with a copy that omits one required field.
+  The last load declares all four (with an empty tool list) and is accepted.
+requirements: [CFG-080]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  - load:
+      artifacts:
+        - kind: Persona
+          id: assistant
+          version: 1
+          schemaVersion: "0.1.0"
+          tools: [lookup@1, update_record@1]
+          defaultProfile: default@1
+          allowedProfiles: [default@1, streamed@1]
+          model: { provider: scripted-a, name: model-a }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - kind: Persona
+          id: assistant
+          version: 1
+          schemaVersion: "0.1.0"
+          instructions: "You are a test assistant."
+          defaultProfile: default@1
+          allowedProfiles: [default@1, streamed@1]
+          model: { provider: scripted-a, name: model-a }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - kind: Persona
+          id: assistant
+          version: 1
+          schemaVersion: "0.1.0"
+          instructions: "You are a test assistant."
+          tools: [lookup@1, update_record@1]
+          allowedProfiles: [default@1, streamed@1]
+          model: { provider: scripted-a, name: model-a }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - kind: Persona
+          id: assistant
+          version: 1
+          schemaVersion: "0.1.0"
+          instructions: "You are a test assistant."
+          tools: [lookup@1, update_record@1]
+          defaultProfile: default@1
+          model: { provider: scripted-a, name: model-a }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - kind: Persona
+          id: assistant
+          version: 1
+          schemaVersion: "0.1.0"
+          instructions: "You are a test assistant."
+          tools: []
+          defaultProfile: default@1
+          allowedProfiles: [default@1]
+          model: { provider: scripted-a, name: model-a }
+    expect: { ok: true }
+expect: {}

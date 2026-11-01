@@ -61,7 +61,7 @@ setup:
         purpose: guardrail
         failureMode: failClosed
         timeoutMs: 1000
-        source: { kind: remote, endpoint: "memory://hook-scanner" }
+        source: { kind: remote, endpoint: scanner }
       - kind: HarnessProfile
         id: default
         version: 1
@@ -89,7 +89,7 @@ setup:
           usage: { inputTokens: 20, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
   stubs:
     remoteHooks:
-      "memory://hook-scanner":
+      scanner:
         - result: continue
 script:
   - action: run
@@ -104,7 +104,7 @@ expect:
     $s:
       state: idle
   stubCalls:
-    "memory://hook-scanner":
+    scanner:
       - arguments:
           point: beforeResponse
           content:

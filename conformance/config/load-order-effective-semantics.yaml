@@ -1,0 +1,132 @@
+schemaVersion: "0.1.0"
+id: cfg.load-order-effective-semantics
+title: Semantic validation runs after merging, on effective values that no single artifact holds
+description: >-
+  Loading runs discover → parse and schema-validate → resolve → merge →
+  semantic validation → freeze. Each case below is valid artifact by
+  artifact and only becomes invalid once layers are merged, so it can only
+  be caught if semantic validation runs on the merged result:
+
+  1. The persona declares an output schema and allows `streamed@1`; the
+     streamed delivery mode comes from the profile (streamed + output schema).
+  2. The policy bundle requires a blocking beforeResponse hook; the persona
+     allows `streamed@1` (streamed + blocking output hook).
+
+  Semantic checks apply to each persona combined with each profile in its
+  `allowedProfiles` (not only its `defaultProfile`, which is the buffered
+  `default@1` throughout), with the full policy bundle stack (CFG-042 as
+  amended 2026-11-01). The same artifacts load once the persona allows only
+  the buffered profile: `streamed@1` is then reachable from no persona, so
+  it is checked on its own and the invalid combinations are never formed.
+  Allowing `streamed@1` again is rejected. A configuration that fails is
+  never frozen: the session created at the end is pinned to the snapshot of
+  the last accepted load.
+requirements: [CFG-040, CFG-042]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Hook
+        id: response-guard
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeResponse]
+        results: [block]
+        timeoutMs: 1000
+        source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-UNSAFE'))", then: { result: block, reasonCode: test.guard.blocked } }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: structured, value: { answer: "Hello." } }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  # Case 1: output schema (persona) + streamed (profile).
+  - load:
+      artifacts:
+        - kind: Persona
+          id: assistant
+          version: 1
+          schemaVersion: "0.1.0"
+          instructions: "You are a test assistant."
+          tools: [lookup@1, update_record@1]
+          fallbackMessage: "This request was blocked."
+          defaultProfile: default@1
+          allowedProfiles: [default@1, streamed@1]
+          outputSchema: { type: object, required: [answer], properties: { answer: { type: string } } }
+          model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }] }
+    expect: { ok: false, error: { category: configuration } }
+  # Case 2: blocking output hook (bundle) + streamed (profile).
+  - load:
+      artifacts:
+        - kind: PolicyBundle
+          id: org
+          version: 1
+          schemaVersion: "0.1.0"
+          policyInstructions: "Follow organisational policy."
+          defaultFallbackMessage: "I can't help with that request."
+          requiredHooks: [response-guard@1]
+          sensitivityPolicies:
+            pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+            phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+    expect: { ok: false, error: { category: configuration } }
+  # The same artifacts, with the persona allowing only the buffered profile: accepted.
+  - load:
+      artifacts:
+        - kind: Persona
+          id: assistant
+          version: 1
+          schemaVersion: "0.1.0"
+          instructions: "You are a test assistant."
+          tools: [lookup@1, update_record@1]
+          fallbackMessage: "This request was blocked."
+          defaultProfile: default@1
+          allowedProfiles: [default@1]
+          outputSchema: { type: object, required: [answer], properties: { answer: { type: string } } }
+          model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }] }
+        - kind: PolicyBundle
+          id: org
+          version: 1
+          schemaVersion: "0.1.0"
+          policyInstructions: "Follow organisational policy."
+          defaultFallbackMessage: "I can't help with that request."
+          requiredHooks: [response-guard@1]
+          sensitivityPolicies:
+            pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+            phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+    bind: $hAccepted
+    expect: { ok: true }
+  - load:
+      artifacts:
+        - kind: Persona
+          id: assistant
+          version: 1
+          schemaVersion: "0.1.0"
+          instructions: "You are a test assistant."
+          tools: [lookup@1, update_record@1]
+          fallbackMessage: "This request was blocked."
+          defaultProfile: default@1
+          allowedProfiles: [default@1, streamed@1]
+          outputSchema: { type: object, required: [answer], properties: { answer: { type: string } } }
+          model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }] }
+    expect: { ok: false, error: { category: configuration } }
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, snapshotHash: $hAccepted }

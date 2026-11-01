@@ -1,0 +1,107 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://alphega.io/agentry/schemas/config/policy-bundle/v1.json
+title: PolicyBundle
+description: >-
+  Mandatory organisational rules (CFG-070, as amended by Areas 5, 6, 7 and 9).
+  Bundles stack in the order the deployment declares; each lower bundle can
+  only tighten those above it.
+allOf: [{ $ref: "https://alphega.io/agentry/schemas/config/artifact/v1.json" }]
+unevaluatedProperties: false
+properties:
+  kind: { const: PolicyBundle }
+  policyInstructions:
+    description: >-
+      Policy instructions added to every persona's system content, provenance
+      `system` (CFG-070 as amended 2026-11-01, CORE-119, CTX-010). Distinct
+      from the persona's `instructions` (`locked`); both reach the model.
+    x-agentry-merge: union
+    type: string
+    minLength: 1
+  requiredHooks:
+    description: Hooks every session must run (CFG-070, HOOK-070).
+    x-agentry-merge: union
+    $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/hookRefs"
+  sensitivityPolicies:
+    description: Label → behaviour (CFG-070, ADR-0015).
+    x-agentry-merge: union
+    $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/sensitivityPolicies"
+  trustedTools:
+    description: Tools whose output is trusted (CFG-070, CFG-071, ADR-0008). Only settable here.
+    x-agentry-merge: intersect
+    $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/artifactRefs"
+  trustedAttachmentSources:
+    description: Attachment sources treated as trusted (CFG-070, CORE-121); only names in the deployment's `attachmentSources`.
+    x-agentry-merge: intersect
+    type: array
+    uniqueItems: true
+    items: { $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/sourceName" }
+  allowedProviders:
+    description: Providers any persona may use (CFG-070, PROV-023).
+    x-agentry-merge: intersect
+    $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/providerIds"
+  toolTaintDefaults:
+    description: >-
+      Tool reference → taint outcome, applied to both `onTainted` and
+      `onTaintedEgress`; the effective outcome is the stricter of this and the
+      tool's own setting (CFG-042, HOOK-123). Lower layers may add tools and
+      tighten existing entries. The map merges per key (`union`: any layer
+      may add tools); each value is `stricter` (CFG-030 as amended).
+    x-agentry-merge: union
+    type: object
+    propertyNames: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/artifactRef" }
+    additionalProperties:
+      x-agentry-merge: stricter
+      x-agentry-order: [block, escalate, allow]
+      enum: [block, escalate, allow]
+  defaultFallbackMessage:
+    description: Fallback message when a persona declares none (CFG-070, CORE-181).
+    x-agentry-merge: locked
+    type: string
+    minLength: 1
+  dataResidency:
+    description: >-
+      Regions where data may be stored or processed: storage ports,
+      telemetry, secrets provider (PORT-005) and providers (PROV-012).
+    x-agentry-merge: locked
+    type: array
+    minItems: 1
+    uniqueItems: true
+    items: { $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/region" }
+  approvalRules:
+    description: "Approval rules for `approval: policy` (HOOK-130)."
+    x-agentry-merge: union
+    $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/approvalRules"
+  reviewerRules:
+    description: Reviewer rules per escalation source (HITL-021, HITL-024).
+    x-agentry-merge: union
+    $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/reviewerRules"
+  allowSelfApproval:
+    description: >-
+      Escalation source → whether the session's principal may review its own
+      escalation (HITL-023). Keys `taint` and `recovery` are a configuration
+      error (CFG-070 as amended 2026-11-01). Default `false`. The map merges
+      per key (`union`); each value is `stricter`.
+    x-agentry-merge: union
+    type: object
+    propertyNames:
+      allOf:
+        - $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/escalationSource"
+        - not: { enum: [taint, recovery] }
+    additionalProperties:
+      x-agentry-merge: stricter
+      x-agentry-order: [false, true]
+      type: boolean
+  guardrails:
+    type: object
+    additionalProperties: false
+    properties:
+      requireDeterministic:
+        description: Every point with a model hook able to `block` also needs a `rule` or `remote` hook able to `block` (HOOK-104).
+        x-agentry-merge: stricter
+        x-agentry-order: [true, false]
+        type: boolean
+        default: false
+  context:
+    $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/contextBlock"
+  model:
+    $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/modelBlock"

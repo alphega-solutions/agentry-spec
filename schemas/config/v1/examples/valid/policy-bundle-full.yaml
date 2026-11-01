@@ -1,0 +1,39 @@
+schema: https://alphega.io/agentry/schemas/config/policy-bundle/v1.json
+instance:
+  kind: PolicyBundle
+  id: org-full
+  version: 3
+  schemaVersion: "0.1.0"
+  policyInstructions: "Follow organisational policy."
+  requiredHooks: [pii-scan@2]
+  sensitivityPolicies:
+    phi:
+      allowedProviders: [vendor-eu]
+      providerRequirement: "!provider.retainsData"
+      redaction: [{ mode: mask, targets: [events, telemetry] }, { mode: remove, targets: [audit] }]
+      approval: policy
+      reviewerRule: "'phi_cleared' in reviewer.roles"
+      allowedRemoteHooks: [scanner]
+    com.example:clinical-note:
+      allowedProviders: [vendor-eu]
+  trustedTools: [lookup@1]
+  trustedAttachmentSources: [upload]
+  allowedProviders: [vendor-eu, vendor-us]
+  toolTaintDefaults: { send_email@1: block, update_record@1: escalate }
+  defaultFallbackMessage: "I can't help with that request."
+  dataResidency: [eu-west-1, eu-central-1]
+  approvalRules: ["call.arguments.amount > 1000"]
+  reviewerRules:
+    approval: [{ rule: "'approver' in reviewer.roles", requiredApprovals: 2 }]
+    taint: [{ rule: "reviewer.assurance == 'phishing_resistant'" }]
+  allowSelfApproval: { approval: true, hook: false }
+  guardrails: { requireDeterministic: true }
+  context:
+    reserveOutputTokens: 4096
+    compaction: { mode: truncate, triggerPercent: 80, model: { provider: vendor-eu, name: small-1 } }
+    retrieval: { auto: false, limit: 3, defaultLabels: [pii] }
+  model:
+    provider: vendor-eu
+    name: large-1
+    fallbacks: [{ provider: vendor-eu, name: medium-1 }]
+    params: { maxOutputTokens: 2048, temperature: 0.2, stopSequences: ["END"] }

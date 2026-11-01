@@ -121,7 +121,7 @@ $defs:
           mcpServers: { type: object }
           httpEndpoints: { type: object }
           remoteHooks:
-            description: Scripted remote hook results, keyed by endpoint, consumed in order (HOOK-091).
+            description: Scripted remote hook results, keyed by the remote hook ID declared in the deployment, consumed in order (HOOK-091).
             type: object
             additionalProperties:
               type: array
@@ -261,7 +261,9 @@ $defs:
       runtimeScope:
         type: array
         items: { type: string }
-      overrides: { type: object }
+      overrides:
+        description: "Run-request values (CFG-101), using harness profile field paths, e.g. {budget: {tokens: 500}}."
+        type: object
       reviewer: { type: string, description: Principal ID of the reviewer for decide/resume. }
       decisions: { type: array, items: { type: object } }
       capture:
@@ -273,7 +275,13 @@ $defs:
       expect: { $ref: "#/$defs/stepOutcome" }
 
   loadStep:
-    description: Load (or reload) configuration; used by configuration fixtures.
+    description: >-
+      Load configuration. A load starts from the configuration of the last
+      successful load (initially setup.config), adds or replaces the given
+      artifacts (same kind, id, version), removes the listed references, applies
+      any overlay, and produces a new snapshot. `load: {}` reloads unchanged. A
+      failed load leaves the previous snapshot in force. `bind` binds the new
+      snapshot hash.
     type: object
     additionalProperties: false
     required: [load]
@@ -283,7 +291,35 @@ $defs:
         additionalProperties: false
         properties:
           artifacts: { type: array, items: { type: object } }
+          raw:
+            description: >-
+              Artifacts as raw YAML text, parsed by the implementation exactly as its
+              config source would, for testing values that only exist in YAML
+              (dates, yes/no) — CFG amendment on JSON-compatible values.
+            type: array
+            items: { type: string }
           remove: { type: array, items: { type: string } }
+          overlay:
+            description: >-
+              Environment overlay (CFG-021, CFG-112 as amended 2026-11-01).
+              `deployment` gives partial deployment values: it may change
+              endpoints, adapters, regions (subject to `dataResidency`) and
+              port bindings, but must not loosen deployment governance — it
+              may only append to `policyBundles`, only remove
+              `attachmentSources`, only add `legalHolds`, and only lengthen
+              `retention` periods. `tighten` maps artifact references
+              (id@version) to partial behavioural field values applied last,
+              after all layers, which must only tighten under each field's
+              merge rule.
+            type: object
+            additionalProperties: false
+            required: [environment]
+            properties:
+              environment: { type: string }
+              deployment: { type: object }
+              tighten:
+                type: object
+                additionalProperties: { type: object }
       bind: { $ref: "#/$defs/placeholder" }
       expect: { $ref: "#/$defs/stepOutcome" }
 
@@ -379,6 +415,23 @@ $defs:
         properties:
           category: { type: string }
           code: { type: string }
+          details:
+            description: >-
+              Partial match on the error's structured `details`. For a
+              configuration error (CFG-032 as amended 2026-11-01): `artifact`
+              (id@version), `field` — a JSON Pointer (RFC 6901) into that
+              artifact, e.g. `/budget/tokens` — and `layer` (`policyBundle`,
+              `persona`, `harnessProfile` or `overlay`). For a run-request
+              violation (CFG-101, `invalid_input`): `field`, a JSON Pointer
+              into the profile.
+            type: object
+            properties:
+              artifact: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/artifactRef" }
+              field:
+                description: JSON Pointer (RFC 6901).
+                type: string
+                pattern: "^(/([^~/]|~[01])*)*$"
+              layer: { enum: [policyBundle, persona, harnessProfile, overlay] }
       endReason: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/runEndReason" }
       sameAs:
         description: Index of an earlier step whose outcome this one must equal.
@@ -459,7 +512,7 @@ $defs:
               description: Ephemeral deltas received, in order.
             fallback: { type: boolean, description: The response was the fixed fallback message. }
       noPersistedContent:
-        description: Strings that must not appear anywhere in persisted events, checkpoints, or audit records.
+        description: Strings that must not appear anywhere in persisted events, checkpoints, audit records, blobs, or configuration snapshots.
         type: array
         items: { type: string }
       schemaValid:

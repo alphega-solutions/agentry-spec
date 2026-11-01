@@ -1,0 +1,10 @@
+# CFG-003: version is a positive integer.
+schema: https://alphega.io/agentry/schemas/config/harness-profile/v1.json
+instance:
+  kind: HarnessProfile
+  id: default
+  version: 0
+  schemaVersion: "0.1.0"
+  idleTtl: PT24H
+  suspendedTtl: PT72H
+  stepLimit: 8

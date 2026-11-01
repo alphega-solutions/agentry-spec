@@ -26,7 +26,7 @@ setup:
           properties: { key: { type: string } }
         effect: read
         sensitivity: [pii]
-        binding: { kind: native, ref: test.lookup }
+        binding: { kind: native, handler: test.lookup }
   tenants:
     - id: t1
       principals: [{ id: p1, subject: user-1, assurance: multi_factor }]

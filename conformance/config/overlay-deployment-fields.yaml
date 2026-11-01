@@ -1,0 +1,43 @@
+schemaVersion: "0.1.0"
+id: cfg.overlay-deployment-fields
+title: Environment-specific deployment fields may change freely; behavioural values never come from the deployment
+description: >-
+  A `prod` environment overlay changes deployment fields — the providers'
+  endpoints — and loads. An overlay
+  whose deployment values carry a behavioural value (`stepLimit`) is
+  rejected: overlays apply to deployment fields, and behavioural values are
+  only tightened per artifact, never set at the deployment level. Overlay
+  tightening and deployment governance are covered by cfg.overlay-tighten-only;
+  behavioural values in the deployment artifact itself by
+  cfg.deployment-behavioural-layer-rejected.
+requirements: [CFG-021, CFG-112]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  # A prod overlay changes environment-specific deployment fields: accepted.
+  - load:
+      overlay:
+        environment: prod
+        deployment:
+          providers:
+            - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a-prod", region: test-region, retainsData: false }
+            - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b-prod", region: test-region, retainsData: false }
+    expect: { ok: true }
+  # A behavioural value in the overlay's deployment values: rejected, whatever the environment.
+  - load:
+      overlay:
+        environment: prod
+        deployment:
+          providers:
+            - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a-prod", region: test-region, retainsData: false }
+            - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b-prod", region: test-region, retainsData: false }
+          stepLimit: 4
+    expect: { ok: false, error: { category: configuration } }
+expect: {}

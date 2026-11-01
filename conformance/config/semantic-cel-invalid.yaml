@@ -1,0 +1,121 @@
+schemaVersion: "0.1.0"
+id: cfg.semantic-cel-invalid
+title: A declarative rule outside the agentry CEL subset, or one that fails to compile or type-check, is rejected at load
+description: >-
+  Each load adds one rule whose CEL is invalid, in each place configuration
+  holds CEL: a rule hook's `when`, a hook's `match`, policy-bundle and
+  persona `approvalRules`, a sensitivity policy's `providerRequirement`, and
+  a reviewer rule. Failures cover the subset (timestamp, duration and bytes
+  values; a function outside the list), compilation (a syntax error), and
+  type-checking (a non-boolean `when`, mismatched operand types, a variable
+  not available at the hook's point). Each fails with category
+  configuration. Well-formed rules in the same places load.
+requirements: [CFG-042]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  # Outside the subset.
+  - load:
+      artifacts:
+        - { kind: Hook, id: cel-timestamp, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [block], timeoutMs: 1000, source: { kind: rule, when: "timestamp('2026-01-01T00:00:00Z') < timestamp('2027-01-01T00:00:00Z')", then: { result: block, reasonCode: test.guard.blocked } } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Hook, id: cel-bytes, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [block], timeoutMs: 1000, source: { kind: rule, when: "b'syn' == b'syn'", then: { result: block, reasonCode: test.guard.blocked } } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Hook, id: cel-custom-function, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [block], timeoutMs: 1000, source: { kind: rule, when: "isUnsafe(content)", then: { result: block, reasonCode: test.guard.blocked } } }
+    expect: { ok: false, error: { category: configuration } }
+  # Does not compile.
+  - load:
+      artifacts:
+        - { kind: Hook, id: cel-syntax, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [block], timeoutMs: 1000, source: { kind: rule, when: "content.exists(p, ", then: { result: block, reasonCode: test.guard.blocked } } }
+    expect: { ok: false, error: { category: configuration } }
+  # Does not type-check.
+  - load:
+      artifacts:
+        - { kind: Hook, id: cel-not-bool, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [block], timeoutMs: 1000, source: { kind: rule, when: "size(content)", then: { result: block, reasonCode: test.guard.blocked } } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Hook, id: cel-operand-types, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [block], timeoutMs: 1000, source: { kind: rule, when: "session.turn + 'one' == 2", then: { result: block, reasonCode: test.guard.blocked } } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Hook, id: cel-wrong-point, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [block], timeoutMs: 1000, source: { kind: rule, when: "tool.id == 'update_record'", then: { result: block, reasonCode: test.guard.blocked } } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Hook, id: cel-bad-match, version: 1, schemaVersion: "0.1.0", points: [beforeToolCall], results: [block], timeoutMs: 1000, match: "duration('1h') > duration('1m')", source: { kind: rule, when: "true", then: { result: block, reasonCode: test.guard.blocked } } }
+    expect: { ok: false, error: { category: configuration } }
+  # CEL in configuration fields other than hooks.
+  - load:
+      artifacts:
+        - kind: PolicyBundle
+          id: org
+          version: 1
+          schemaVersion: "0.1.0"
+          policyInstructions: "Follow organisational policy."
+          defaultFallbackMessage: "I can't help with that request."
+          approvalRules: ["call.arguments.key.startsWith("]
+          sensitivityPolicies:
+            pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+            phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - kind: PolicyBundle
+          id: org
+          version: 1
+          schemaVersion: "0.1.0"
+          policyInstructions: "Follow organisational policy."
+          defaultFallbackMessage: "I can't help with that request."
+          sensitivityPolicies:
+            pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }], providerRequirement: "provider.retainsData + 1" }
+            phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - kind: PolicyBundle
+          id: org
+          version: 1
+          schemaVersion: "0.1.0"
+          policyInstructions: "Follow organisational policy."
+          defaultFallbackMessage: "I can't help with that request."
+          reviewerRules:
+            hook: [{ rule: "reviewer.roles.exists(r, r == 'reviewer'" }]
+          sensitivityPolicies:
+            pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+            phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], approvalRules: ["call.arguments.size() > 'two'"], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }] } }
+    expect: { ok: false, error: { category: configuration } }
+  # Controls: well-formed rules in the same places.
+  - load:
+      artifacts:
+        - { kind: Hook, id: cel-valid, version: 1, schemaVersion: "0.1.0", points: [beforeToolCall], results: [block], timeoutMs: 1000, match: "tool.effect == 'mutating'", source: { kind: rule, when: "call.arguments.key.startsWith('SYN-') && session.turn < 10", then: { result: block, reasonCode: test.guard.blocked } } }
+        - kind: PolicyBundle
+          id: org
+          version: 1
+          schemaVersion: "0.1.0"
+          policyInstructions: "Follow organisational policy."
+          defaultFallbackMessage: "I can't help with that request."
+          approvalRules: ["call.arguments.key.startsWith('SYN-')"]
+          reviewerRules:
+            hook: [{ rule: "reviewer.roles.exists(r, r == 'reviewer')" }]
+          sensitivityPolicies:
+            pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }], providerRequirement: "!provider.retainsData" }
+            phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], approvalRules: ["size(call.arguments) > 1"], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }] } }
+    expect: { ok: true }
+expect: {}
