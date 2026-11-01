@@ -1,0 +1,116 @@
+schemaVersion: "0.1.0"
+id: tool.agent-nested-session-identity
+title: An `agent`-bound tool runs the referenced persona as a nested session with the caller's principal and tenant
+description: >-
+  The parent calls ask_helper, bound to persona helper@1. A child session is
+  created, linked to the parent call, and runs as helper: its events carry
+  the parent's tenant and principal reference, and the tool it calls
+  receives a tool context naming the child session and the parent's
+  principal. The child's final response is returned to the parent as
+  ask_helper's `ok` result, and the parent run responds.
+requirements: [TOOL-100]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Persona
+        id: helper
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You look things up."
+        tools: [lookup@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: ask_helper
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the helper persona to look something up.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: read
+        binding: { kind: agent, persona: helper@1 }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, ask_helper@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # parent, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_helper, arguments: { task: "Find record a" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # child, step 1
+        - parts: [{ type: tool_call, callId: h1, tool: lookup, arguments: { key: a } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # child, step 2
+        - parts: [{ type: text, text: "Record a holds A." }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # parent, step 2
+        - parts: [{ type: text, text: "The helper says record a holds A." }]
+          usage: { inputTokens: 40, outputTokens: 8, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "A" } }
+      update_record: []
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Ask the helper to find record a" }]
+    capture:
+      - event: { type: tool.call, payload: { tool: ask_helper } }
+        bind: { payload.childSessionId: $child }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, runId: $r, payload: { callId: c1, tool: ask_helper, childSessionId: $child } }
+          - { type: tool.result, runId: $r, payload: { callId: c1, tool: ask_helper, result: { ok: { $any: true } } } }
+          - { type: run.ended, runId: $r, payload: { reason: responded } }
+    $child:
+      events:
+        mode: subsequence
+        items:
+          - type: session.created
+            tenantId: t1
+            principalRef: { subject: user-1, tenant: t1 }
+            payload:
+              persona: helper@1
+              parent: { sessionId: $s, runId: $r, callId: c1, tool: ask_helper, depth: 1 }
+          - { type: tool.call, payload: { callId: h1, tool: lookup } }
+          - { type: run.ended, payload: { reason: responded } }
+  ports:
+    eventLog:
+      t1:
+        $child: { $all: [{ $not: { $len: 0 } }, { $every: { tenantId: t1, principalRef: { subject: user-1, tenant: t1 } } }] }
+  stubCalls:
+    lookup:
+      - { arguments: { key: a }, context: { sessionId: $child, principal: { subject: user-1 } } }
+  providerRequests:
+    scripted-a: { count: 4 }

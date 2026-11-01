@@ -1,0 +1,100 @@
+schemaVersion: "0.1.0"
+id: tool.result-invalid-output-fatal
+title: An `ok` result that fails the tool's `output` schema is replaced by a `fatal` harness error; the run fails and the session closes
+description: >-
+  lookup declares an output schema requiring an integer `count`. Session 1:
+  the stub returns a valid output, which reaches the model unchanged
+  (control). Session 2: the stub returns `count` as a string holding a
+  synthetic marker. The call's tool.result is a `fatal` error
+  (`agentry.tool.invalid_output`, source `harness`), the invalid output is
+  recorded nowhere, the model is not called again, the run ends `failed`,
+  and the session closes `failed`.
+requirements: [TOOL-070]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: lookup
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Count records matching a key.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        output:
+          type: object
+          additionalProperties: false
+          required: [count]
+          properties: { count: { type: integer } }
+        effect: read
+        binding: { kind: native, handler: test.lookup }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "There are 3." }]
+          usage: { inputTokens: 30, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k2 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { count: 3 } }
+        - ok: { output: { count: "SYN-INVALID-OUTPUT-0070" } }
+script:
+  - action: run
+    bind: $s1
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Count k1" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $s2
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Count k2" }]
+    expect: { ok: true, endReason: failed }
+expect:
+  sessions:
+    $s1:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: c1, result: { ok: { output: { count: 3 } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+    $s2:
+      state: closed
+      closeReason: failed
+      events:
+        mode: subsequence
+        items:
+          - type: tool.result
+            payload:
+              callId: c1
+              tool: lookup
+              result: { error: { category: fatal, code: agentry.tool.invalid_output, source: harness } }
+          - { type: run.ended, payload: { reason: failed } }
+          - { type: session.closed, payload: { reason: failed } }
+      absentEvents:
+        - { type: model.request, step: 2 }
+        - { type: tool.result, payload: { result: { ok: { $any: true } } } }
+  stubCalls:
+    lookup: { count: 2 }
+  providerRequests:
+    scripted-a: { count: 3 }
+  noPersistedContent:
+    - "SYN-INVALID-OUTPUT-0070"

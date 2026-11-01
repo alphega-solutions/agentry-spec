@@ -1,0 +1,114 @@
+schemaVersion: "0.1.0"
+id: tool.exec-retry-read-and-idempotent
+title: A retryable error is retried for a read tool and for an idempotent mutating tool, with the same idempotency key
+description: >-
+  The profile allows two retries of `unavailable` (retry.unavailable 2).
+  Session 1: lookup (effect read) fails once with a retryable `unavailable`
+  error, then succeeds. Session 2: set_flag (mutating, idempotent) does the
+  same. In each session the stub is dispatched exactly twice, both attempts
+  carry the same idempotency key (stable across retries, TOOL-041), the
+  model receives the successful result, and the run responds. The two
+  sessions' calls have different keys (unique across calls).
+requirements: [TOOL-041, TOOL-052]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: set_flag
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Set a flag on a record. Safe to repeat.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, flag]
+          properties: { key: { type: string }, flag: { type: boolean } }
+        effect: mutating
+        idempotent: true
+        binding: { kind: native, handler: test.set_flag }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, set_flag@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Found it." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: set_flag, arguments: { key: k1, flag: true } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Flag set." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - error: { category: unavailable, code: test.backend.busy, retryable: true, message: "Backend busy." }
+        - ok: { output: { value: "synthetic-value" } }
+      set_flag:
+        - error: { category: unavailable, code: test.backend.busy, retryable: true, message: "Backend busy." }
+        - ok: { output: { set: true } }
+      update_record: []
+script:
+  - action: run
+    bind: $s1
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $s2
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Flag k1" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s1:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: c1, tool: lookup, result: { ok: { output: { value: "synthetic-value" } } } } }
+          - { type: model.request, step: 2 }
+          - { type: run.ended, payload: { reason: responded } }
+    $s2:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: c1, tool: set_flag, result: { ok: { output: { set: true } } } } }
+          - { type: model.request, step: 2 }
+          - { type: run.ended, payload: { reason: responded } }
+  stubCalls:
+    lookup:
+      - { arguments: { key: k1 }, context: { sessionId: $s1, idempotencyKey: $k1 } }
+      - { arguments: { key: k1 }, context: { sessionId: $s1, idempotencyKey: $k1 } }
+    set_flag:
+      - { arguments: { key: k1, flag: true }, context: { sessionId: $s2, idempotencyKey: { $all: [$k2, { $not: $k1 }] } } }
+      - { arguments: { key: k1, flag: true }, context: { sessionId: $s2, idempotencyKey: $k2 } }
+    update_record: { count: 0 }
+  providerRequests:
+    scripted-a: { count: 4 }

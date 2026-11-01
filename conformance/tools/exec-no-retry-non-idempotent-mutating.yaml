@@ -1,0 +1,57 @@
+schemaVersion: "0.1.0"
+id: tool.exec-no-retry-non-idempotent-mutating
+title: A retryable error on a non-idempotent mutating call is not retried and ends the run `failed`
+description: >-
+  update_record is mutating and not idempotent. Its stub fails with
+  `unavailable`, `retryable: true`, and has a second (successful) behaviour
+  scripted that a retry would consume. The call is dispatched exactly once
+  (TOOL-052); because the error may not be retried it is treated as `fatal`
+  (TOOL-053): the call's tool.result is recorded, no further model call is
+  made, the run ends `failed`, and the session closes `failed`.
+requirements: [TOOL-052, TOOL-053]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - error: { category: unavailable, code: test.backend.busy, retryable: true, message: "Backend busy." }
+        - ok: { output: { updated: true } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    expect: { ok: true, endReason: failed }
+expect:
+  sessions:
+    $s:
+      state: closed
+      closeReason: failed
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: update_record } }
+          - { type: tool.result, payload: { callId: c1, tool: update_record, result: { error: { $any: true } } } }
+          - { type: run.ended, payload: { reason: failed } }
+          - { type: session.closed, payload: { reason: failed } }
+      absentEvents:
+        - { type: model.request, step: 2 }
+        - { type: tool.result, payload: { result: { ok: { $any: true } } } }
+  stubCalls:
+    update_record: { count: 1 }
+  providerRequests:
+    scripted-a: { count: 1 }

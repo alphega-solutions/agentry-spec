@@ -1,0 +1,138 @@
+schemaVersion: "0.1.0"
+id: tool.agent-visible-tools-intersection
+title: A nested session sees only its persona's allowlist intersected with the caller's visible tools
+description: >-
+  The parent persona `coordinator` allows lookup and ask_helper; the child
+  persona `helper` allows lookup and update_record. Session 1: the host's
+  runtime scope is lookup, update_record and ask_helper, so the parent sees
+  lookup and ask_helper (update_record is in scope but not in the parent's
+  allowlist). The child sees only lookup: update_record is excluded even
+  though the runtime scope lists it (ORCH-013, as amended into TOOL-022).
+  When the child's model requests update_record anyway, it is stopped as
+  unavailable and never dispatched. Session 2: the runtime scope is only
+  ask_helper, so the parent sees only ask_helper and the child sees no
+  tools; its lookup request is stopped and never dispatched.
+requirements: [TOOL-101, ORCH-013]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Persona
+        id: helper
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You look things up and update records."
+        tools: [lookup@1, update_record@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: ask_helper
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the helper persona to do a task.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: mutating
+        binding: { kind: agent, persona: helper@1 }
+      - kind: Persona
+        id: coordinator
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You coordinate helpers."
+        tools: [lookup@1, ask_helper@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # session 1: parent step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_helper, arguments: { task: "Set k1 to v1" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # session 1: child step 1
+        - parts: [{ type: tool_call, callId: h1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # session 1: child step 2
+        - parts: [{ type: text, text: "I cannot update records." }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # session 1: parent step 2
+        - parts: [{ type: text, text: "The helper could not update it." }]
+          usage: { inputTokens: 40, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+        # session 2: parent step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_helper, arguments: { task: "Look up a" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # session 2: child step 1
+        - parts: [{ type: tool_call, callId: h1, tool: lookup, arguments: { key: a } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # session 2: child step 2
+        - parts: [{ type: text, text: "I cannot look things up." }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # session 2: parent step 2
+        - parts: [{ type: text, text: "The helper could not look it up." }]
+          usage: { inputTokens: 40, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup: []
+      update_record: []
+script:
+  - action: run
+    bind: $s1
+    tenant: t1
+    principal: p1
+    persona: coordinator@1
+    runtimeScope: [lookup@1, update_record@1, ask_helper@1]
+    input: [{ type: text, text: "Have the helper set k1 to v1" }]
+    capture:
+      - event: { type: tool.call, payload: { tool: ask_helper } }
+        bind: { payload.childSessionId: $child1 }
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $s2
+    tenant: t1
+    principal: p1
+    persona: coordinator@1
+    runtimeScope: [ask_helper@1]
+    input: [{ type: text, text: "Have the helper look up a" }]
+    capture:
+      - event: { type: tool.call, payload: { tool: ask_helper } }
+        bind: { payload.childSessionId: $child2 }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $child1:
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: h1, result: { error: { category: policy, code: agentry.tool.unavailable } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call }
+    $child2:
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: h1, result: { error: { category: policy, code: agentry.tool.unavailable } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call }
+  stubCalls:
+    lookup: { count: 0 }
+    update_record: { count: 0 }
+  providerRequests:
+    scripted-a:
+      - tools: { $all: [{ $len: 2 }, { $contains: [{ id: lookup }, { id: ask_helper }] }] }
+      - tools: [{ id: lookup }]
+      - tools: [{ id: lookup }]
+      - tools: { $all: [{ $len: 2 }, { $contains: [{ id: lookup }, { id: ask_helper }] }] }
+      - tools: [{ id: ask_helper }]
+      - tools: { $not: { $contains: [{ id: lookup }] } }
+      - tools: { $not: { $contains: [{ id: lookup }] } }
+      - tools: [{ id: ask_helper }]

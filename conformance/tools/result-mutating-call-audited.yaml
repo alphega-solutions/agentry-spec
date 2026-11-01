@@ -1,0 +1,66 @@
+schemaVersion: "0.1.0"
+id: tool.result-mutating-call-audited
+title: Every mutating call and its outcome is written to the audit log with the snapshot hash
+description: >-
+  The run makes a read call (lookup), a mutating call that succeeds (c2)
+  and a mutating call that fails with `invalid_input` (c3, returned to the
+  model). The tenant's audit log holds a record for each mutating call,
+  linked to the session and call, carrying the snapshot hash bound from the
+  load, the principal reference, and the call's outcome (ok for c2, the
+  error for c3).
+requirements: [TOOL-074]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c3, tool: update_record, arguments: { key: k9, value: v9 } }]
+          usage: { inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated k1; k9 does not exist." }]
+          usage: { inputTokens: 50, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "synthetic-value" } }
+      update_record:
+        - ok: { output: { updated: true } }
+        - error: { category: invalid_input, code: test.update.unknown_key, retryable: false, message: "Unknown key." }
+script:
+  - load: {}
+    bind: $h
+    expect: { ok: true }
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1, set it to v1, and set k9 to v9" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  ports:
+    auditLog:
+      t1:
+        $contains:
+          - sessionId: $s
+            snapshotHash: $h
+            principalRef: { subject: user-1, tenant: t1 }
+            callId: c2
+            tool: update_record
+            outcome: { ok: { output: { updated: true } } }
+          - sessionId: $s
+            snapshotHash: $h
+            principalRef: { subject: user-1, tenant: t1 }
+            callId: c3
+            tool: update_record
+            outcome: { error: { category: invalid_input, code: test.update.unknown_key } }

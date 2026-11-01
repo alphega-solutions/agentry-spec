@@ -1,0 +1,199 @@
+schemaVersion: "0.1.0"
+id: tool.result-provenance-labels-trust
+title: Every result carries provenance `tool:<id>` and the tool's labels, and is untrusted unless the effective policy lists it in `trustedTools`
+description: >-
+  Two read tools: `catalog` (no labels), listed in the policy bundle's
+  trustedTools, and `lookup` (sensitivity [pii]), not listed. A remote
+  afterToolCall hook observes each result. Session 1: catalog's result
+  carries provenance tool:catalog and no labels, both on the event and as
+  seen by the hook; because it is trusted, the session is not tainted and
+  the following mutating call is dispatched without a taint decision.
+  Session 2: lookup's result carries provenance tool:lookup and labels
+  [pii], as seen by the hook, the event and the model; it is untrusted, so
+  the following mutating call is stopped by the taint rule (escalated) and
+  not dispatched.
+requirements: [TOOL-071]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        remoteHooks:
+          - { id: inspector, endpoint: "memory://hook-inspector", region: test-region }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        trustedTools: [catalog@1]
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+      - kind: Tool
+        id: catalog
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Read the product catalog.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        binding: { kind: native, handler: test.catalog }
+      - kind: Tool
+        id: lookup
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Look up a record by key.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        sensitivity: [pii]
+        binding: { kind: native, handler: test.lookup }
+      - kind: Hook
+        id: inspector
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [afterToolCall]
+        results: [annotate]
+        purpose: guardrail
+        failureMode: failClosed
+        timeoutMs: 1000
+        source: { kind: remote, endpoint: inspector }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, catalog@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [inspector@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: catalog, arguments: { key: a } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: a, value: v } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated." }]
+          usage: { inputTokens: 40, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: a } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: a, value: v } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      catalog:
+        - ok: { output: { item: "synthetic-widget" } }
+      lookup:
+        - ok: { output: { value: "synthetic-value" } }
+      update_record:
+        - ok: { output: { updated: true } }
+    remoteHooks:
+      inspector:
+        - result: continue
+        - result: continue
+        - result: continue
+script:
+  - action: run
+    bind: $s1
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Read the catalog entry a, then update record a" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $s2
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up a, then update it" }]
+    expect: { ok: true, endReason: escalated }
+expect:
+  sessions:
+    $s1:
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, provenances: ["tool:catalog"], labels: [], payload: { callId: c1, tool: catalog } }
+          - { type: tool.call, payload: { callId: c2, tool: update_record } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: policy.decision, payload: { kind: taint } }
+        - { type: escalation.raised }
+    $s2:
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, provenances: ["tool:lookup"], labels: [pii], payload: { callId: c1, tool: lookup } }
+          - { type: policy.decision, payload: { kind: taint, outcome: escalate, callId: c2, provenances: { $contains: ["tool:lookup"] } } }
+          - { type: run.ended, payload: { reason: escalated } }
+      absentEvents:
+        - { type: tool.call, payload: { callId: c2 } }
+  stubCalls:
+    update_record: { count: 1 }
+    inspector:
+      - arguments:
+          point: afterToolCall
+          content: { $contains: [{ type: tool_result, callId: c1, provenance: "tool:catalog", labels: [] }] }
+      - arguments:
+          point: afterToolCall
+          content: { $contains: [{ type: tool_result, callId: c2, provenance: "tool:update_record", labels: [] }] }
+      - arguments:
+          point: afterToolCall
+          content: { $contains: [{ type: tool_result, callId: c1, provenance: "tool:lookup", labels: [pii] }] }
+  providerRequests:
+    scripted-a:
+      - {}
+      - messages:
+          $contains:
+            - role: tool
+              parts: [{ type: tool_result, callId: c1, provenance: "tool:catalog", labels: [] }]
+      - {}
+      - {}
+      - messages:
+          $contains:
+            - role: tool
+              parts: [{ type: tool_result, callId: c1, provenance: "tool:lookup", labels: [pii] }]

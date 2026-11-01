@@ -1,0 +1,129 @@
+schemaVersion: "0.1.0"
+id: tool.mcp-schema-drift-at-runtime
+title: If an MCP server's advertised schema changes while sessions run, calls to the affected tool fail with `agentry.tool.schema_drift`
+description: >-
+  `get_contact` loads with a compatible advertised schema, and its first
+  call (c1) is dispatched and succeeds. Once c1's tool.result is persisted,
+  the stub server re-advertises `get_contact` with a new required property
+  `region` (`changes` in the MCP stub), so the artifact's `input` is no
+  longer compatible. The next call (c2) is not sent to the server; it fails
+  with `unavailable` (`agentry.tool.schema_drift`, `retryable: false`),
+  recorded as c2's tool.result. That error is not retryable, so it is
+  treated as `fatal` (TOOL-053) and the run ends `failed`.
+requirements: [TOOL-092]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        mcpServers:
+          - { id: crm, endpoint: "memory://mcp-crm", identity: "crm.mcp.test.invalid", region: test-region }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: Tool
+        id: get_contact
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Get a CRM contact.
+        input:
+          type: object
+          additionalProperties: false
+          required: [contactId]
+          properties: { contactId: { type: string } }
+        effect: read
+        binding: { kind: mcp, server: crm, tool: get_contact }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, get_contact@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: get_contact, arguments: { contactId: ct-1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: get_contact, arguments: { contactId: ct-2 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    mcpServers:
+      crm:
+        tools:
+          - name: get_contact
+            inputSchema: { type: object, additionalProperties: false, required: [contactId], properties: { contactId: { type: string } } }
+        changes:
+          - after: { type: tool.result, payload: { callId: c1 } }
+            tools:
+              - name: get_contact
+                inputSchema:
+                  type: object
+                  additionalProperties: false
+                  required: [contactId, region]
+                  properties: { contactId: { type: string }, region: { type: string } }
+        calls:
+          get_contact:
+            - ok: { output: { name: "Synthetic Contact One" } }
+            - ok: { output: { name: "Synthetic Contact Two" } }
+    tools:
+      lookup: []
+      update_record: []
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Get contacts ct-1 and ct-2" }]
+    expect: { ok: true, endReason: failed }
+expect:
+  sessions:
+    $s:
+      state: closed
+      closeReason: failed
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: c1, result: { ok: { output: { name: "Synthetic Contact One" } } } } }
+          - type: tool.result
+            payload:
+              callId: c2
+              tool: get_contact
+              result: { error: { category: unavailable, code: agentry.tool.schema_drift, retryable: false } }
+          - { type: run.ended, payload: { reason: failed } }
+      absentEvents:
+        - { type: model.request, step: 3 }
+  stubCalls:
+    get_contact:
+      - { arguments: { contactId: ct-1 } }

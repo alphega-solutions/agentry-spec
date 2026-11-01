@@ -1,0 +1,178 @@
+schemaVersion: "0.1.0"
+id: tool.mcp-annotations-do-not-govern
+title: MCP tool annotations never influence governance; the `Tool` artifact's fields govern
+description: >-
+  Server `crm` advertises annotations that contradict each tool's artifact.
+  Session 1: `get_contact` is advertised read-only and idempotent, but its
+  artifact declares `effect: mutating` and `approval: always`: the call
+  escalates for approval and is not dispatched. Session 2:
+  `archive_contact` is advertised destructive and open-world, but its
+  artifact declares `effect: read` with default approval and egress: it is
+  dispatched without escalation. Session 3: `sync_contact` is advertised
+  idempotent and read-only, but its artifact declares a mutating,
+  non-idempotent tool: a retryable `unavailable` error is not retried
+  (TOOL-052) and the run ends `failed`.
+requirements: [TOOL-091]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        mcpServers:
+          - { id: crm, endpoint: "memory://mcp-crm", identity: "crm.mcp.test.invalid", region: test-region }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: Tool
+        id: get_contact
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Get a CRM contact (marks it as viewed).
+        input: { type: object, additionalProperties: false, required: [contactId], properties: { contactId: { type: string } } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: mcp, server: crm, tool: get_contact }
+      - kind: Tool
+        id: archive_contact
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Read a contact from the archive.
+        input: { type: object, additionalProperties: false, required: [contactId], properties: { contactId: { type: string } } }
+        effect: read
+        binding: { kind: mcp, server: crm, tool: archive_contact }
+      - kind: Tool
+        id: sync_contact
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Push a contact to downstream systems.
+        input: { type: object, additionalProperties: false, required: [contactId], properties: { contactId: { type: string } } }
+        effect: mutating
+        idempotent: false
+        binding: { kind: mcp, server: crm, tool: sync_contact }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, get_contact@1, archive_contact@1, sync_contact@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: get_contact, arguments: { contactId: ct-1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: archive_contact, arguments: { contactId: ct-2 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Archived contact found." }]
+          usage: { inputTokens: 30, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: sync_contact, arguments: { contactId: ct-3 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    mcpServers:
+      crm:
+        tools:
+          - name: get_contact
+            inputSchema: { type: object, additionalProperties: false, required: [contactId], properties: { contactId: { type: string } } }
+            annotations: { readOnlyHint: true, idempotentHint: true, destructiveHint: false, openWorldHint: false }
+          - name: archive_contact
+            inputSchema: { type: object, additionalProperties: false, required: [contactId], properties: { contactId: { type: string } } }
+            annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true }
+          - name: sync_contact
+            inputSchema: { type: object, additionalProperties: false, required: [contactId], properties: { contactId: { type: string } } }
+            annotations: { readOnlyHint: true, idempotentHint: true }
+        calls:
+          get_contact:
+            - ok: { output: { name: "Synthetic Contact" } }
+          archive_contact:
+            - ok: { output: { name: "Archived Contact" } }
+          sync_contact:
+            - error: { category: unavailable, code: test.crm.busy, retryable: true, message: "CRM busy." }
+            - ok: { output: { synced: true } }
+script:
+  - action: run
+    bind: $s1
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Get contact ct-1" }]
+    expect: { ok: true, endReason: escalated }
+  - action: run
+    bind: $s2
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Read archived contact ct-2" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $s3
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Sync contact ct-3" }]
+    expect: { ok: true, endReason: failed }
+expect:
+  sessions:
+    $s1:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            payload: { escalation: { sources: [approval], pendingActions: [{ kind: tool_call, source: approval, tool: get_contact }] } }
+          - { type: run.ended, payload: { reason: escalated } }
+      absentEvents:
+        - { type: tool.call }
+    $s2:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: archive_contact } }
+          - { type: tool.result, payload: { callId: c1, result: { ok: { output: { name: "Archived Contact" } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: escalation.raised }
+        - { type: policy.decision, payload: { outcome: block } }
+    $s3:
+      state: closed
+      closeReason: failed
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: c1, tool: sync_contact, result: { error: { $any: true } } } }
+          - { type: run.ended, payload: { reason: failed } }
+  stubCalls:
+    get_contact: { count: 0 }
+    archive_contact: { count: 1 }
+    sync_contact: { count: 1 }

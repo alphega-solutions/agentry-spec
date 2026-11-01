@@ -1,0 +1,81 @@
+schemaVersion: "0.1.0"
+id: tool.mcp-undeclared-server-rejected
+title: A tool bound to an MCP server the deployment does not declare is a configuration error
+description: >-
+  The deployment declares MCP server `crm` by endpoint and identity. A tool
+  bound to server `ghost`, which is not declared, fails to load with
+  category `configuration`, naming the tool artifact — even though a stub
+  server named `ghost` exists and advertises the tool, so only the missing
+  declaration can be the cause. The same tool bound to the declared `crm`
+  server loads (control).
+requirements: [TOOL-093]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        mcpServers:
+          - { id: crm, endpoint: "memory://mcp-crm", identity: "crm.mcp.test.invalid", region: test-region }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  stubs:
+    mcpServers:
+      crm:
+        tools:
+          - name: get_contact
+            inputSchema: { type: object, additionalProperties: false, required: [contactId], properties: { contactId: { type: string } } }
+        calls:
+          get_contact: []
+      ghost:
+        tools:
+          - name: get_contact
+            inputSchema: { type: object, additionalProperties: false, required: [contactId], properties: { contactId: { type: string } } }
+        calls:
+          get_contact: []
+script:
+  - load:
+      artifacts:
+        - kind: Tool
+          id: get_contact
+          version: 1
+          schemaVersion: "0.1.0"
+          description: Get a CRM contact.
+          input: { type: object, additionalProperties: false, required: [contactId], properties: { contactId: { type: string } } }
+          effect: read
+          binding: { kind: mcp, server: ghost, tool: get_contact }
+    expect: { ok: false, error: { category: configuration, details: { artifact: get_contact@1 } } }
+  - load:
+      artifacts:
+        - kind: Tool
+          id: get_contact
+          version: 1
+          schemaVersion: "0.1.0"
+          description: Get a CRM contact.
+          input: { type: object, additionalProperties: false, required: [contactId], properties: { contactId: { type: string } } }
+          effect: read
+          binding: { kind: mcp, server: crm, tool: get_contact }
+    expect: { ok: true }
+expect: {}

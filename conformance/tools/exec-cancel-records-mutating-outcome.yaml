@@ -1,0 +1,62 @@
+schemaVersion: "0.1.0"
+id: tool.exec-cancel-records-mutating-outcome
+title: Cancelling a run signals an in-flight mutating call, and its outcome is recorded in events and the idempotency store
+description: >-
+  update_record takes 5 s on the virtual clock. cancel() starts once the
+  run's tool.call for c1 has been persisted, so the call is in flight. The
+  stub records that it received the cancellation signal. Whatever outcome
+  the call produces is recorded: the call's tool.result is persisted before
+  run.ended (`cancelled`), and the same result is the outcome recorded in
+  the tenant's idempotency store under the call's idempotency key.
+requirements: [TOOL-080]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - { ok: { output: { updated: true } }, delayMs: 5000 }
+script:
+  - concurrently:
+      - action: run
+        bind: $s
+        tenant: t1
+        principal: p1
+        persona: assistant@1
+        input: [{ type: text, text: "Set k1 to v1" }]
+        expect: { ok: true, endReason: cancelled }
+      - action: cancel
+        session: $s
+        startAfter: { type: tool.call, payload: { callId: c1 } }
+        expect: { ok: true }
+expect:
+  sessions:
+    $s:
+      state: closed
+      closeReason: cancelled
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: update_record } }
+          - { type: tool.result, payload: { callId: c1, tool: update_record, result: $res } }
+          - { type: run.ended, payload: { reason: cancelled } }
+      absentEvents:
+        - { type: model.request, step: 2 }
+  stubCalls:
+    update_record:
+      - { arguments: { key: k1, value: v1 }, cancelled: true, context: { idempotencyKey: $k } }
+  ports:
+    idempotencyStore:
+      t1:
+        $k: { outcome: $res }

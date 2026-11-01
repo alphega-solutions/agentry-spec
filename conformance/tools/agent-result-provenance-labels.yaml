@@ -1,0 +1,132 @@
+schemaVersion: "0.1.0"
+id: tool.agent-result-provenance-labels
+title: A nested session's output returns as a tool result with provenance `agent:<persona>`, its least-trusted provenance, and the union of its labels
+description: >-
+  The child persona `helper` calls lookup (sensitivity [pii]) and chart
+  (sensitivity [phi]), both untrusted, then responds. The parent's
+  ask_helper result carries provenance agent:helper together with the
+  untrusted tool provenances the child saw, and the labels pii and phi —
+  on the tool.result event and on the part delivered to the parent model.
+  The result is untrusted: the parent's following mutating call is stopped
+  by the taint rule and not dispatched.
+requirements: [TOOL-102]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: lookup
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Look up a record by key.
+        input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }
+        effect: read
+        sensitivity: [pii]
+        binding: { kind: native, handler: test.lookup }
+      - kind: Tool
+        id: chart
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Read a chart entry.
+        input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }
+        effect: read
+        sensitivity: [phi]
+        binding: { kind: native, handler: test.chart }
+      - kind: Persona
+        id: helper
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You look things up."
+        tools: [lookup@1, chart@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: ask_helper
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the helper persona to look something up.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: read
+        binding: { kind: agent, persona: helper@1 }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, chart@1, ask_helper@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model: { provider: scripted-a, name: model-a }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # parent, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_helper, arguments: { task: "Summarise record a" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # child, step 1
+        - parts:
+            - { type: tool_call, callId: h1, tool: lookup, arguments: { key: a } }
+            - { type: tool_call, callId: h2, tool: chart, arguments: { key: a } }
+          usage: { inputTokens: 20, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        # child, step 2
+        - parts: [{ type: text, text: "Record a: synthetic summary." }]
+          usage: { inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # parent, step 2
+        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: a, value: "summarised" } }]
+          usage: { inputTokens: 50, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "synthetic-value" } }
+      chart:
+        - ok: { output: { entry: "synthetic-entry" } }
+      update_record: []
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Ask the helper to summarise record a, then mark it summarised" }]
+    expect: { ok: true, endReason: escalated }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - type: tool.result
+            provenances: { $all: [{ $contains: ["agent:helper", "tool:lookup", "tool:chart"] }] }
+            labels: { $all: [{ $contains: [pii, phi] }, { $len: 2 }] }
+            payload: { callId: c1, tool: ask_helper, result: { ok: { $any: true } } }
+          - { type: policy.decision, payload: { kind: taint, outcome: escalate, callId: c2 } }
+          - { type: run.ended, payload: { reason: escalated } }
+      absentEvents:
+        - { type: tool.call, payload: { callId: c2 } }
+  stubCalls:
+    lookup: { count: 1 }
+    chart: { count: 1 }
+    update_record: { count: 0 }
+  providerRequests:
+    scripted-a:
+      - {}
+      - {}
+      - {}
+      - messages:
+          $contains:
+            - role: tool
+              parts:
+                - type: tool_result
+                  callId: c1
+                  provenance: "agent:helper"
+                  labels: { $all: [{ $contains: [pii, phi] }, { $len: 2 }] }
