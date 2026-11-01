@@ -1,0 +1,41 @@
+schemaVersion: "0.1.0"
+id: core.resume-on-idle-conflict
+title: resume() on an idle session fails with `conflict` and leaves it idle
+requirements: [CORE-052]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Done." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions: []
+    expect: { ok: false, error: { category: conflict } }
+expect:
+  sessions:
+    $s:
+      state: idle
+      absentEvents:
+        - { type: run.started, payload: { kind: resume } }
+  providerRequests:
+    scripted-a: { count: 1 }

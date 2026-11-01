@@ -1,0 +1,73 @@
+schemaVersion: "0.1.0"
+id: core.closed-session-operations-conflict
+title: Every operation on a closed session fails with `conflict` and emits nothing
+description: >-
+  The clock advances one minute after close(), so any event emitted by a
+  refused operation would carry a 00:01 timestamp.
+requirements: [CORE-021, CORE-022]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Done." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - action: close
+    session: $s
+    expect: { ok: true }
+  - clock: { advance: PT1M }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Again" }]
+    expect: { ok: false, error: { category: conflict } }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions: []
+    expect: { ok: false, error: { category: conflict } }
+  - action: decide
+    session: $s
+    reviewer: r1
+    decisions: []
+    expect: { ok: false, error: { category: conflict } }
+  - action: close
+    session: $s
+    expect: { ok: false, error: { category: conflict } }
+  - action: cancel
+    session: $s
+    expect: { ok: false, error: { category: conflict } }
+expect:
+  sessions:
+    $s:
+      state: closed
+      closeReason: completed
+      events:
+        mode: subsequence
+        items:
+          - { type: run.ended, payload: { reason: responded } }
+          - { type: session.closed, payload: { reason: completed } }
+      absentEvents:
+        - { timestamp: { $regex: "^2026-01-01T00:01:" } }
+        - { type: run.started, payload: { kind: resume } }
+        - { type: turn.started, turn: 2 }
+        - { type: session.closed, payload: { reason: cancelled } }
+  providerRequests:
+    scripted-a: { count: 1 }

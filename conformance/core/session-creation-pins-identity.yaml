@@ -1,0 +1,43 @@
+schemaVersion: "0.1.0"
+id: core.session-creation-pins-identity
+title: A session is created with principal, persona, and snapshot; tenant comes from the principal; it starts idle
+requirements: [CORE-010, CORE-013]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+    - id: t2
+      principals: [{ id: p2, subject: user-2, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $s
+    principal: p2
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: session.created
+            seq: 1
+            sessionId: $s
+            runId: { $absent: true }
+            tenantId: t2
+            principalRef: { subject: user-2, tenant: t2 }
+            snapshotHash: $h
+            payload: { persona: assistant@1, profile: default@1 }
+          - { type: run.started, tenantId: t2, snapshotHash: $h, payload: { kind: run } }

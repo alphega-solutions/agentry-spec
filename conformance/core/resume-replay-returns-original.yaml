@@ -1,0 +1,99 @@
+schemaVersion: "0.1.0"
+id: core.resume-replay-returns-original
+title: A replayed resume() returns the original outcome without new work, also after the session closes
+description: >-
+  The resume carrying decision D1 runs at 00:00. The clock is advanced before
+  each replay (00:01 on the idle session, 00:03 after close() at 00:02), so any
+  event a replay emitted would carry a 00:01 or 00:03 timestamp. Both replays
+  return the original resume's outcome (script step 1) and call no model or tool.
+requirements: [CORE-053, CORE-022]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, ref: test.update_record }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Done." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-0000000000d1", escalationId: $esc, actionId: $act, type: approve }
+    expect: { ok: true, endReason: responded }
+  - clock: { advance: PT1M }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-0000000000d1", escalationId: $esc, actionId: $act, type: approve }
+    expect: { sameAs: 1 }
+  - clock: { advance: PT1M }
+  - action: close
+    session: $s
+    expect: { ok: true }
+  - clock: { advance: PT1M }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-0000000000d1", escalationId: $esc, actionId: $act, type: approve }
+    expect: { sameAs: 1 }
+expect:
+  sessions:
+    $s:
+      state: closed
+      closeReason: completed
+      events:
+        mode: subsequence
+        items:
+          - { type: escalation.raised, payload: { escalation: { id: $esc, pendingActions: [{ id: $act, kind: tool_call }] } } }
+          - { type: run.ended, runId: $r1, payload: { reason: escalated } }
+          - { type: run.started, runId: $r2, payload: { kind: resume } }
+          - { type: escalation.resolved, runId: $r2, payload: { escalationId: $esc } }
+          - { type: run.ended, runId: $r2, payload: { reason: responded } }
+          - { type: session.closed, payload: { reason: completed } }
+      absentEvents:
+        - { timestamp: { $regex: "^2026-01-01T00:0[13]:" } }
+  providerRequests:
+    scripted-a: { count: 2 }
+  stubCalls:
+    update_record: { count: 1 }

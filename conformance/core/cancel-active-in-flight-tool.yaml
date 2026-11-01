@@ -1,0 +1,67 @@
+schemaVersion: "0.1.0"
+id: core.cancel-active-in-flight-tool
+title: cancel() during an in-flight tool call signals the tool, records its outcome, and ends the run `cancelled`
+description: >-
+  The lookup stub hangs until it is cancelled, so its completing at all shows
+  it received the cancellation signal. cancel() is issued after the run has
+  dispatched the call (actions start in listed order). The tool outcome is
+  recorded before run.ended, no further model call is made, a checkpoint is
+  persisted, and the session closes `cancelled`.
+requirements: [CORE-020, CORE-061, CORE-070, CORE-072]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: a } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - { hang: true }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - concurrently:
+      - action: run
+        session: $s
+        principal: p1
+        input: [{ type: text, text: "Look up a" }]
+        expect: { ok: true, endReason: cancelled }
+      - action: cancel
+        session: $s
+        expect: { ok: true }
+expect:
+  sessions:
+    $s:
+      state: closed
+      closeReason: cancelled
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, runId: $r2, turn: 2, step: 1, payload: { callId: c1 } }
+          - { type: tool.result, runId: $r2, turn: 2, step: 1, payload: { callId: c1 } }
+          - { type: run.ended, runId: $r2, payload: { reason: cancelled } }
+          - { type: session.closed, payload: { reason: cancelled } }
+      absentEvents:
+        - { type: model.request, turn: 2, step: 2 }
+        - { type: turn.completed, turn: 2 }
+      checkpoint: { state: closed }
+  stubCalls:
+    lookup: { count: 1 }
+  providerRequests:
+    scripted-a: { count: 2 }
