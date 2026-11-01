@@ -9,8 +9,11 @@ allOf: [{ $ref: "https://alphega.io/agentry/schemas/config/artifact/v1.json" }]
 unevaluatedProperties: false
 properties:
   kind: { const: PolicyBundle }
-  instructions:
-    description: Policy instructions added to every persona's system content, provenance `system` (CFG-070, CORE-119).
+  policyInstructions:
+    description: >-
+      Policy instructions added to every persona's system content, provenance
+      `system` (CFG-070 as amended 2026-11-01, CORE-119, CTX-010). Distinct
+      from the persona's `instructions` (`locked`); both reach the model.
     x-agentry-merge: union
     type: string
     minLength: 1
@@ -41,9 +44,9 @@ properties:
       Tool reference → taint outcome, applied to both `onTainted` and
       `onTaintedEgress`; the effective outcome is the stricter of this and the
       tool's own setting (CFG-042, HOOK-123). Lower layers may add tools and
-      tighten existing entries.
-    x-agentry-merge: stricter
-    x-agentry-order: [block, escalate, allow]
+      tighten existing entries. The map merges per key (`union`: any layer
+      may add tools); each value is `stricter` (CFG-030 as amended).
+    x-agentry-merge: union
     type: object
     propertyNames: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/artifactRef" }
     additionalProperties:
@@ -75,12 +78,15 @@ properties:
   allowSelfApproval:
     description: >-
       Escalation source → whether the session's principal may review its own
-      escalation (HITL-023). Never effective for `taint` or `recovery`.
-      Default `false`.
-    x-agentry-merge: stricter
-    x-agentry-order: [false, true]
+      escalation (HITL-023). Keys `taint` and `recovery` are a configuration
+      error (CFG-070 as amended 2026-11-01). Default `false`. The map merges
+      per key (`union`); each value is `stricter`.
+    x-agentry-merge: union
     type: object
-    propertyNames: { $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/escalationSource" }
+    propertyNames:
+      allOf:
+        - $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/escalationSource"
+        - not: { enum: [taint, recovery] }
     additionalProperties:
       x-agentry-merge: stricter
       x-agentry-order: [false, true]

@@ -14,10 +14,10 @@ instance:
       region: eu-west-1
       retainsData: false
       attributes: { zeroDataRetention: true, certification: iso27001 }
-      credential: "secret://vault/vendor-eu-key"
+      credentials: { apiKey: "secret://vault/vendor-eu-key" }
       capabilities: { large-1: { contextLimit: 100000, parallelToolCalls: false } }
   ports:
-    eventLog: { adapter: postgres, region: eu-west-1, credential: "secret://vault/pg", extensions: { database: agentry } }
+    eventLog: { adapter: postgres, region: eu-west-1, credentials: { password: "secret://vault/pg" }, extensions: { database: agentry } }
     checkpointStore: { adapter: postgres, region: eu-west-1 }
     idempotencyStore: { adapter: postgres, region: eu-west-1 }
     snapshotStore: { adapter: s3, region: eu-west-1, encryption: { keys: customer, keyId: "arn:aws:kms:eu-west-1:1:key/abc" } }
@@ -35,6 +35,6 @@ instance:
     models:
       - { provider: vendor-eu, name: large-1, input: 3, cachedInput: 0.3, output: 15, reasoning: 15 }
   mcpServers:
-    - { id: crm, endpoint: "https://mcp.crm.example/sse", identity: "mcp.crm.example", credential: "secret://vault/crm-token" }
+    - { id: crm, endpoint: "https://mcp.crm.example/sse", identity: "mcp.crm.example", credentials: { token: "secret://vault/crm-token" } }
   remoteHooks:
     - { id: scanner, endpoint: "grpc://scanner.internal:443", protocol: grpc, region: eu-west-1 }

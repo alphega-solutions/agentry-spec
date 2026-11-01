@@ -8,7 +8,12 @@ description: >-
   a behavioural layer: it declares no persona, profile, tool or hook
   behaviour (CFG-021, CFG-111), and its fields carry no merge annotations.
   The config source is supplied to the loader at startup and is not declared
-  here (CFG-110, PORT-010).
+  here (CFG-110, PORT-010). Provider, port, MCP-server and remote-hook
+  bindings take secrets only in `credentials`; `extensions` must not carry
+  secret values. An environment overlay may change endpoints, adapters,
+  regions and port bindings, but may only append `policyBundles`, only remove
+  `attachmentSources`, only add `legalHolds`, and only lengthen `retention`
+  (CFG-021, CFG-112 as amended 2026-11-01).
 allOf: [{ $ref: "https://alphega.io/agentry/schemas/config/artifact/v1.json" }]
 unevaluatedProperties: false
 required: [environment, policyBundles, providers, ports, retention]
@@ -120,10 +125,23 @@ properties:
     items: { $ref: "#/$defs/remoteHook" }
 
 $defs:
-  credential:
-    description: Credential, by secret reference only (CFG-060, TOOL-011, HOOK-091).
-    x-agentry-secret: true
-    $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/secretRef"
+  credentials:
+    description: >-
+      Credential name → secret reference (CFG-060, TOOL-011, HOOK-091; CFG-110
+      as amended 2026-11-01). The only place a binding takes secrets; each
+      value must be a `secret://` reference, never a literal (CFG-061).
+      Names are adapter-defined, e.g. `apiKey`, `clientCert`.
+    type: object
+    propertyNames: { pattern: "^[A-Za-z][A-Za-z0-9_.-]{0,63}$" }
+    additionalProperties:
+      x-agentry-secret: true
+      $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/secretRef"
+
+  bindingExtensions:
+    description: >-
+      Adapter-specific settings. **MUST NOT** carry secret values; secrets go
+      in `credentials` (CFG-110 as amended 2026-11-01).
+    $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/extensions"
 
   capabilityRestriction:
     description: >-
@@ -164,12 +182,12 @@ $defs:
         type: object
         propertyNames: { pattern: "^[a-z][A-Za-z0-9]{0,63}$" }
         additionalProperties: { type: [string, number, boolean] }
-      credential: { $ref: "#/$defs/credential", x-agentry-secret: true }
+      credentials: { $ref: "#/$defs/credentials" }
       capabilities:
         description: Model name → capability restrictions (PROV-031).
         type: object
         additionalProperties: { $ref: "#/$defs/capabilityRestriction" }
-      extensions: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/extensions" }
+      extensions: { $ref: "#/$defs/bindingExtensions" }
 
   portBinding:
     allOf: [{ $ref: "#/$defs/portBindingFields" }]
@@ -179,7 +197,8 @@ $defs:
     description: >-
       Binding of a port to an adapter (Area 10). Every binding declares its
       region, checked against `dataResidency` (PORT-005). Adapter-specific
-      settings go in `extensions`; any secret they need goes in `credential`.
+      settings go in `extensions`, which must not carry secrets; any secret
+      the adapter needs goes in `credentials`.
     type: object
     required: [adapter, region]
     properties:
@@ -200,8 +219,8 @@ $defs:
             minLength: 1
         if: { properties: { keys: { const: customer } } }
         then: { required: [keyId] }
-      credential: { $ref: "#/$defs/credential", x-agentry-secret: true }
-      extensions: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/extensions" }
+      credentials: { $ref: "#/$defs/credentials" }
+      extensions: { $ref: "#/$defs/bindingExtensions" }
 
   mcpServer:
     description: An MCP server (TOOL-093).
@@ -218,8 +237,8 @@ $defs:
         type: string
         minLength: 1
       region: { $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/region" }
-      credential: { $ref: "#/$defs/credential", x-agentry-secret: true }
-      extensions: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/extensions" }
+      credentials: { $ref: "#/$defs/credentials" }
+      extensions: { $ref: "#/$defs/bindingExtensions" }
 
   remoteHook:
     description: A remote hook endpoint (HOOK-091, HOOK-092).
@@ -240,5 +259,5 @@ $defs:
         type: string
         minLength: 1
       region: { $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/region" }
-      credential: { $ref: "#/$defs/credential", x-agentry-secret: true }
-      extensions: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/extensions" }
+      credentials: { $ref: "#/$defs/credentials" }
+      extensions: { $ref: "#/$defs/bindingExtensions" }
