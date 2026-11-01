@@ -2,8 +2,8 @@ schemaVersion: "0.1.0"
 id: core.close-idle-and-suspended
 title: close() closes an idle session as `completed` and a suspended one as `cancelled`
 description: >-
-  After session.closed the clock advances one minute; the refused follow-up
-  operations must add no event (none timestamped 00:01).
+  After session.closed, the refused follow-up operations must persist no
+  event (newEvents: 0).
 requirements: [CORE-020, CORE-021]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -60,13 +60,12 @@ script:
   - action: close
     session: $b
     expect: { ok: true }
-  - clock: { advance: PT1M }
   - action: cancel
     session: $a
-    expect: { ok: false, error: { category: conflict } }
+    expect: { ok: false, error: { category: conflict }, newEvents: 0 }
   - action: close
     session: $b
-    expect: { ok: false, error: { category: conflict } }
+    expect: { ok: false, error: { category: conflict }, newEvents: 0 }
 expect:
   sessions:
     $a:
@@ -79,7 +78,6 @@ expect:
           - { type: session.closed, runId: { $absent: true }, payload: { reason: completed } }
       absentEvents:
         - { type: session.closed, payload: { reason: cancelled } }
-        - { timestamp: { $regex: "^2026-01-01T00:01:" } }
     $b:
       state: closed
       closeReason: cancelled
@@ -90,6 +88,5 @@ expect:
           - { type: session.closed, runId: { $absent: true }, payload: { reason: cancelled } }
       absentEvents:
         - { type: session.closed, payload: { reason: completed } }
-        - { timestamp: { $regex: "^2026-01-01T00:01:" } }
   providerRequests:
     scripted-a: { count: 2 }

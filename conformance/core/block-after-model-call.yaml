@@ -76,4 +76,4 @@ expect:
   stubCalls:
     update_record: { count: 0 }
   delivered:
-    $s: { text: "This request was blocked." }
+    $s: { text: "This request was blocked.", fallback: true }

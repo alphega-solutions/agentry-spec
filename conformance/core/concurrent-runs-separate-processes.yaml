@@ -6,8 +6,8 @@ description: >-
   once. Optimistic concurrency on the checkpoint version admits exactly one:
   only one further turn exists and the provider receives exactly one more
   request (a request beyond the script fails the test, EVAL-031). Which
-  process wins is not specified, so the concurrent steps carry no individual
-  outcome expectations.
+  process wins is not specified, so the outcomes are matched as an unordered
+  multiset: exactly one `responded` and exactly one `conflict`.
 requirements: [CORE-030, CORE-032]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -43,6 +43,10 @@ script:
         session: $s
         principal: p1
         input: [{ type: text, text: "From process B" }]
+    expect:
+      outcomes:
+        - { ok: true, endReason: responded }
+        - { ok: false, error: { category: conflict }, newEvents: 0 }
 expect:
   sessions:
     $s:

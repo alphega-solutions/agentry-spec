@@ -80,4 +80,4 @@ expect:
                 $contains:
                   - { type: tool_result, callId: c1, result: { error: { category: policy, retryable: false } } }
   delivered:
-    $s: { text: "I could not update it." }
+    $s: { text: "I could not update it.", fallback: false }

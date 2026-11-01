@@ -2,10 +2,9 @@ schemaVersion: "0.1.0"
 id: core.resume-replay-returns-original
 title: A replayed resume() returns the original outcome without new work, also after the session closes
 description: >-
-  The resume carrying decision D1 runs at 00:00. The clock is advanced before
-  each replay (00:01 on the idle session, 00:03 after close() at 00:02), so any
-  event a replay emitted would carry a 00:01 or 00:03 timestamp. Both replays
-  return the original resume's outcome (script step 1) and call no model or tool.
+  D1 is replayed twice: on the idle session, and after close(). Both replays
+  return the original resume's outcome (script step 1), persist no event
+  (newEvents: 0), and call no model or tool.
 requirements: [CORE-053, CORE-022]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -52,6 +51,9 @@ script:
     principal: p1
     persona: assistant@1
     input: [{ type: text, text: "Set k1 to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $esc, payload.escalation.pendingActions.0.id: $act }
     expect: { ok: true, endReason: escalated }
   - action: resume
     session: $s
@@ -59,24 +61,21 @@ script:
     decisions:
       - { decisionId: "01900000-0000-7000-8000-0000000000d1", escalationId: $esc, actionId: $act, type: approve }
     expect: { ok: true, endReason: responded }
-  - clock: { advance: PT1M }
   - action: resume
     session: $s
     reviewer: r1
     decisions:
       - { decisionId: "01900000-0000-7000-8000-0000000000d1", escalationId: $esc, actionId: $act, type: approve }
-    expect: { sameAs: 1 }
-  - clock: { advance: PT1M }
+    expect: { sameAs: 1, newEvents: 0 }
   - action: close
     session: $s
     expect: { ok: true }
-  - clock: { advance: PT1M }
   - action: resume
     session: $s
     reviewer: r1
     decisions:
       - { decisionId: "01900000-0000-7000-8000-0000000000d1", escalationId: $esc, actionId: $act, type: approve }
-    expect: { sameAs: 1 }
+    expect: { sameAs: 1, newEvents: 0 }
 expect:
   sessions:
     $s:
@@ -91,8 +90,6 @@ expect:
           - { type: escalation.resolved, runId: $r2, payload: { escalationId: $esc } }
           - { type: run.ended, runId: $r2, payload: { reason: responded } }
           - { type: session.closed, payload: { reason: completed } }
-      absentEvents:
-        - { timestamp: { $regex: "^2026-01-01T00:0[13]:" } }
   providerRequests:
     scripted-a: { count: 2 }
   stubCalls:

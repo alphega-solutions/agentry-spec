@@ -2,8 +2,8 @@ schemaVersion: "0.1.0"
 id: core.cancel-active-in-flight-tool
 title: cancel() during an in-flight tool call signals the tool, records its outcome, and ends the run `cancelled`
 description: >-
-  The lookup stub hangs until it is cancelled, so its completing at all shows
-  it received the cancellation signal. cancel() is issued after the run has
+  The lookup stub hangs until it is cancelled; its call record must show it
+  received the cancellation signal. cancel() is issued after the run has
   dispatched the call (actions start in listed order). The tool outcome is
   recorded before run.ended, no further model call is made, a checkpoint is
   persisted, and the session closes `cancelled`.
@@ -62,6 +62,7 @@ expect:
         - { type: turn.completed, turn: 2 }
       checkpoint: { state: closed }
   stubCalls:
-    lookup: { count: 1 }
+    lookup:
+      - { arguments: { key: a }, cancelled: true }
   providerRequests:
     scripted-a: { count: 2 }

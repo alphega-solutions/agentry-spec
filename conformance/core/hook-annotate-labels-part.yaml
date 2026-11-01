@@ -86,7 +86,7 @@ setup:
     remoteHooks:
       "memory://hook-scanner":
         - result: annotate
-          annotations:
+          labels:
             - { part: 1, labels: [phi] }
 script:
   - action: run

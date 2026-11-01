@@ -78,4 +78,4 @@ expect:
     scripted-a: { count: 1 }
     scripted-b: { count: 0 }
   delivered:
-    $s: { text: "This request was blocked." }
+    $s: { text: "This request was blocked.", fallback: true }

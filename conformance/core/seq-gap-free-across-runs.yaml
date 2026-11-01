@@ -54,6 +54,9 @@ script:
     principal: p1
     persona: assistant@1
     input: [{ type: text, text: "Set k1 to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $esc, payload.escalation.pendingActions.0.id: $act }
     expect: { ok: true, endReason: escalated }
   - action: resume
     session: $s

@@ -85,7 +85,7 @@ setup:
     remoteHooks:
       "memory://hook-scanner":
         - result: rewrite
-          content:
+          parts:
             - { type: text, text: "Describe this" }
 script:
   - action: run

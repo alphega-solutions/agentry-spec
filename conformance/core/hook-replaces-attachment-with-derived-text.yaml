@@ -86,7 +86,7 @@ setup:
     remoteHooks:
       "memory://hook-scanner":
         - result: rewrite
-          content:
+          parts:
             - { type: text, text: "Summarise this" }
             - { type: text, text: "SYNTHETIC-FILE-0001: quarterly widget report" }
 script:
