@@ -5,8 +5,12 @@ description: >-
   Format of a conformance fixture (EVAL-001–004). Values beginning with "$"
   followed by an identifier are placeholders that bind on first match and must
   match consistently afterwards (EVAL-002). Write "$$" for a literal "$".
-  Matcher objects ({"$any": true}, {"$absent": true}, {"$regex": "..."},
-  {"$len": n}, {"$contains": [...]}) may appear anywhere in expectations.
+  Matcher objects may appear anywhere in expectations: {"$any": true},
+  {"$absent": true}, {"$regex": "..."}, {"$len": n}, {"$contains": [...]},
+  {"$not": <value or matcher>}, {"$every": <matcher applied to each array
+  element>}, {"$gte": n}, {"$lte": n}. Placeholders may be bound in `expect`
+  or by a step's `capture`; a placeholder used in a step must be bound by an
+  earlier step's capture.
 type: object
 additionalProperties: false
 required: [schemaVersion, id, title, requirements, contract, setup, script, expect]
@@ -111,10 +115,28 @@ $defs:
               items: { $ref: "#/$defs/toolBehaviour" }
           mcpServers: { type: object }
           httpEndpoints: { type: object }
-          remoteHooks: { type: object }
+          remoteHooks:
+            description: Scripted remote hook results, keyed by endpoint, consumed in order (HOOK-091).
+            type: object
+            additionalProperties:
+              type: array
+              items: { $ref: "#/$defs/hookBehaviour" }
       ports:
         description: Initial contents of in-memory ports, keyed by port name.
         type: object
+      secrets:
+        description: Synthetic secret values served by the in-memory secrets provider, keyed by secret reference.
+        type: object
+        additionalProperties: { type: string }
+      limits:
+        description: Implementation limits the runner configures for this fixture.
+        type: object
+        additionalProperties: false
+        properties:
+          inlinePayloadBytes:
+            description: Payloads larger than this are stored in the BlobStore and referenced (CORE-154, TOOL-072).
+            type: integer
+            minimum: 1
 
   scriptedResponse:
     type: object
@@ -159,6 +181,47 @@ $defs:
       delayMs: { type: integer, minimum: 0 }
       hang: { type: boolean, description: Never completes unless cancelled. }
 
+  hookBehaviour:
+    type: object
+    additionalProperties: false
+    required: [result]
+    properties:
+      result: { enum: [continue, annotate, rewrite, block, escalate] }
+      reasonCode: { type: string }
+      labels:
+        description: For annotate — labels to add, per part index.
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [part, labels]
+          properties:
+            part: { type: integer, minimum: 0 }
+            labels: { type: array, items: { type: string } }
+      parts:
+        description: For rewrite — replacement parts.
+        type: array
+        items: { type: object, required: [type] }
+      error:
+        description: The hook fails instead of answering.
+        type: object
+      delayMs: { type: integer, minimum: 0 }
+
+  capture:
+    description: >-
+      Binds placeholders from events persisted by the step, so later steps can use
+      them. `event` selects the first matching event in the step's session;
+      `bind` maps dotted paths in that event to placeholders.
+    type: object
+    additionalProperties: false
+    required: [event, bind]
+    properties:
+      session: { $ref: "#/$defs/placeholder" }
+      event: { type: object }
+      bind:
+        type: object
+        additionalProperties: { $ref: "#/$defs/placeholder" }
+
   step:
     type: object
     oneOf:
@@ -194,6 +257,9 @@ $defs:
       overrides: { type: object }
       reviewer: { type: string, description: Principal ID of the reviewer for decide/resume. }
       decisions: { type: array, items: { type: object } }
+      capture:
+        type: array
+        items: { $ref: "#/$defs/capture" }
       expect: { $ref: "#/$defs/stepOutcome" }
 
   loadStep:
@@ -243,7 +309,13 @@ $defs:
     additionalProperties: false
     required: [restart]
     properties:
-      restart: { type: object }
+      restart:
+        type: object
+        additionalProperties: false
+        properties:
+          ports:
+            description: Port contents to replace before restarting, keyed by port name; an empty object empties the port.
+            type: object
 
   abandonStep:
     type: object
@@ -264,10 +336,19 @@ $defs:
     required: [concurrently]
     properties:
       concurrently:
+        description: Actions started in listed order, each after the previous has begun and before it completes.
         type: array
         minItems: 2
         items: { $ref: "#/$defs/actionStep" }
       separateProcesses: { type: boolean }
+      expect:
+        type: object
+        additionalProperties: false
+        properties:
+          outcomes:
+            description: Matched against the actions' outcomes as an unordered multiset.
+            type: array
+            items: { $ref: "#/$defs/stepOutcome" }
 
   stepOutcome:
     type: object
@@ -284,6 +365,10 @@ $defs:
       endReason: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/runEndReason" }
       sameAs:
         description: Index of an earlier step whose outcome this one must equal.
+        type: integer
+        minimum: 0
+      newEvents:
+        description: Number of events persisted as a result of this step (0 = none).
         type: integer
         minimum: 0
 
@@ -314,7 +399,9 @@ $defs:
               type: array
               items: { type: object }
             eventCount: { type: integer, minimum: 0 }
-            checkpoint: { type: object }
+            checkpoint:
+              description: Partial match on checkpoint contents, using the field names of PORT-030.
+              type: object
       providerRequests:
         description: Requests captured by scripted providers, matched in order (partial match).
         type: object
@@ -325,6 +412,10 @@ $defs:
             - type: object
               properties: { count: { type: integer, minimum: 0 } }
       stubCalls:
+        description: >-
+          Calls recorded by stubs, keyed by tool ID, endpoint, or server. Each
+          record has `arguments`, `context` (tool context), `cancelled` (whether
+          the cancellation signal was received), and `completed`.
         type: object
         additionalProperties:
           oneOf:
@@ -336,8 +427,17 @@ $defs:
         description: Expected port contents (partial match), keyed by port name.
         type: object
       delivered:
-        description: What the principal received, per session.
+        description: What the host received, per session.
         type: object
+        additionalProperties:
+          type: object
+          additionalProperties: false
+          properties:
+            text: {}
+            parts: {}
+            deltas:
+              description: Ephemeral deltas received, in order.
+            fallback: { type: boolean, description: The response was the fixed fallback message. }
       noPersistedContent:
         description: Strings that must not appear anywhere in persisted events, checkpoints, or audit records.
         type: array
