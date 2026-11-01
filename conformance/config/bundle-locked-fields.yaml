@@ -4,8 +4,10 @@ title: A lower bundle cannot change `defaultFallbackMessage` or `dataResidency` 
 description: >-
   Both fields are locked. org@1 sets defaultFallbackMessage (baseline). A
   department bundle stacked below it that sets a different fallback is
-  rejected. With dataResidency set by the organisation bundle, a department
-  bundle setting different regions is rejected. A department bundle that sets
+  rejected. With dataResidency set by the organisation bundle to two regions,
+  a department bundle naming a superset is rejected, and so is one naming a
+  strict subset — a narrowing `intersect` would accept, which `locked` must
+  reject; restating the same regions loads. A department bundle that sets
   dataResidency when the organisation bundle does not loads. The baseline
   persona declares its own fallbackMessage, so the bundle default is unused at
   run time here.
@@ -41,7 +43,7 @@ setup:
         id: dept
         version: 1
         schemaVersion: "0.1.0"
-        instructions: "Follow departmental policy."
+        policyInstructions: "Follow departmental policy."
   tenants:
     - id: t1
       principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
@@ -64,16 +66,62 @@ script:
           schemaVersion: "0.1.0"
           dataResidency: [test-region]
     expect: { ok: true }
-  # Organisation pins dataResidency; the department bundle names other regions.
+  # Organisation pins dataResidency to two regions; the department bundle names a superset.
   - load:
       artifacts:
         - kind: PolicyBundle
           id: org
           version: 1
           schemaVersion: "0.1.0"
-          instructions: "Follow organisational policy."
+          policyInstructions: "Follow organisational policy."
           defaultFallbackMessage: "I can't help with that request."
+          dataResidency: [test-region, other-region]
+          sensitivityPolicies:
+            pii:
+              allowedProviders: [scripted-a, scripted-b]
+              redaction: [{ mode: mask }]
+            phi:
+              allowedProviders: [scripted-a]
+              redaction: [{ mode: mask }]
+        - kind: PolicyBundle
+          id: dept
+          version: 1
+          schemaVersion: "0.1.0"
+          dataResidency: [test-region, other-region, eu-region]
+    expect: { ok: false, error: { category: configuration } }
+  # Same organisation bundle; the department bundle names a strict subset of its regions.
+  - load:
+      artifacts:
+        - kind: PolicyBundle
+          id: org
+          version: 1
+          schemaVersion: "0.1.0"
+          policyInstructions: "Follow organisational policy."
+          defaultFallbackMessage: "I can't help with that request."
+          dataResidency: [test-region, other-region]
+          sensitivityPolicies:
+            pii:
+              allowedProviders: [scripted-a, scripted-b]
+              redaction: [{ mode: mask }]
+            phi:
+              allowedProviders: [scripted-a]
+              redaction: [{ mode: mask }]
+        - kind: PolicyBundle
+          id: dept
+          version: 1
+          schemaVersion: "0.1.0"
           dataResidency: [test-region]
+    expect: { ok: false, error: { category: configuration } }
+  # Control: the department bundle restating the organisation's regions unchanged loads.
+  - load:
+      artifacts:
+        - kind: PolicyBundle
+          id: org
+          version: 1
+          schemaVersion: "0.1.0"
+          policyInstructions: "Follow organisational policy."
+          defaultFallbackMessage: "I can't help with that request."
+          dataResidency: [test-region, other-region]
           sensitivityPolicies:
             pii:
               allowedProviders: [scripted-a, scripted-b]
@@ -86,5 +134,5 @@ script:
           version: 1
           schemaVersion: "0.1.0"
           dataResidency: [test-region, other-region]
-    expect: { ok: false, error: { category: configuration } }
+    expect: { ok: true }
 expect: {}

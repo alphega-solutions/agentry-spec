@@ -45,7 +45,7 @@ setup:
         purpose: guardrail
         failureMode: failClosed
         timeoutMs: 1000
-        source: { kind: remote, endpoint: "memory://hook-scanner" }
+        source: { kind: remote, endpoint: scanner }
       - kind: HarnessProfile
         id: default
         version: 1
@@ -85,7 +85,7 @@ setup:
           data: "U1lOVEhFVElDLUZJTEUtMDAwMTogcXVhcnRlcmx5IHdpZGdldCByZXBvcnQ="
   stubs:
     remoteHooks:
-      "memory://hook-scanner":
+      scanner:
         - result: rewrite
           parts:
             - { type: text, text: "Describe this" }
@@ -108,7 +108,7 @@ expect:
           - { type: hook.decision, payload: { hook: scanner@1, point: sessionStart, result: rewrite } }
           - { type: model.request }
   stubCalls:
-    "memory://hook-scanner":
+    scanner:
       - arguments:
           point: sessionStart
           content:

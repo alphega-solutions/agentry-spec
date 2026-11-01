@@ -18,7 +18,7 @@ setup:
         id: dept
         version: 1
         schemaVersion: "0.1.0"
-        instructions: "Follow SYN-DEPT-0070 departmental policy."
+        policyInstructions: "Follow SYN-DEPT-0070 departmental policy."
       - kind: Deployment
         id: test
         version: 1

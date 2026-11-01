@@ -49,7 +49,7 @@ setup:
         purpose: guardrail
         failureMode: failClosed
         timeoutMs: 1000
-        source: { kind: remote, endpoint: "memory://hook-scanner" }
+        source: { kind: remote, endpoint: scanner }
       - kind: HarnessProfile
         id: default
         version: 1
@@ -79,7 +79,7 @@ setup:
           usage: { inputTokens: 20, outputTokens: 30, cachedInputTokens: 0, reasoningTokens: 24 }
   stubs:
     remoteHooks:
-      "memory://hook-scanner":
+      scanner:
         - result: annotate
           labels:
             - { part: 0, labels: [pii] }
@@ -120,7 +120,7 @@ expect:
           $contains:
             - { type: reasoning, provider: scripted-a, data: "SYNTHETIC-REASONING-PII-7781" }
   stubCalls:
-    "memory://hook-scanner":
+    scanner:
       - arguments:
           point: afterModelCall
           content:

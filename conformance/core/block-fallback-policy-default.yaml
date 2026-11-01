@@ -30,7 +30,7 @@ setup:
         instructions: "You are a test assistant."
         tools: [lookup@1, update_record@1]
         defaultProfile: default@1
-        allowedProfiles: [default@1, streamed@1]
+        allowedProfiles: [default@1]
         requiredHooks: [guard-response@1]
         model:
           provider: scripted-a

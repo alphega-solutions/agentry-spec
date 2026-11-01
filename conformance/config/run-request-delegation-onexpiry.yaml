@@ -2,11 +2,17 @@ schemaVersion: "0.1.0"
 id: cfg.run-request-delegation-onexpiry
 title: "`delegation.maxDepth` merges by `min` and `onExpiry` by `stricter` (close before reject) at the run-request layer"
 description: >-
-  strict@1 sets onExpiry reject and delegation.maxDepth 2. A run request may
-  move onExpiry to the stricter `close` and lower maxDepth to 1; both are
-  accepted and recorded on run.started. Raising maxDepth to 3 fails, as does
-  setting onExpiry `reject` on default@1, whose onExpiry defaults to the
-  stricter `close`.
+  strict@1 sets onExpiry reject and delegation.maxDepth 2. Both are
+  session-scoped fields, which only the run request that creates the session
+  may tighten (CFG-101 as amended 2026-11-01). The session-creating run
+  request moves onExpiry to the stricter `close` and lowers maxDepth to 1;
+  both are accepted and recorded on run.started. Raising maxDepth to 3
+  fails, as does setting onExpiry `reject` on default@1, whose onExpiry
+  defaults (after merging) to the stricter `close`. On the existing session,
+  a later run request may tighten a run-scoped field (`stepLimit`), but one
+  that sets `delegation.maxDepth` or `onExpiry` — even to a tighter value —
+  fails with `invalid_input`, `details.field` a JSON Pointer into the
+  profile, and appends nothing.
 requirements: [CFG-101, CFG-102]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -48,6 +54,8 @@ setup:
       responses:
         - parts: [{ type: text, text: "Hello." }]
           usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Hello again." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
 script:
   - action: run
     bind: $s
@@ -66,7 +74,7 @@ script:
     profile: strict@1
     overrides: { delegation: { maxDepth: 3 } }
     input: [{ type: text, text: "Hi" }]
-    expect: { ok: false, error: { category: invalid_input }, newEvents: 0 }
+    expect: { ok: false, error: { category: invalid_input, details: { field: /delegation/maxDepth } }, newEvents: 0 }
   - action: run
     bind: $x2
     tenant: t1
@@ -74,7 +82,30 @@ script:
     persona: assistant@1
     overrides: { onExpiry: reject }
     input: [{ type: text, text: "Hi" }]
-    expect: { ok: false, error: { category: invalid_input }, newEvents: 0 }
+    expect: { ok: false, error: { category: invalid_input, details: { field: /onExpiry } }, newEvents: 0 }
+  # Later run requests on the existing session: run-scoped fields may be tightened...
+  - action: run
+    session: $s
+    tenant: t1
+    principal: p1
+    overrides: { stepLimit: 4 }
+    input: [{ type: text, text: "Hi again" }]
+    expect: { ok: true, endReason: responded }
+  # ...session-scoped fields may not, even to a tighter value.
+  - action: run
+    session: $s
+    tenant: t1
+    principal: p1
+    overrides: { delegation: { maxDepth: 0 } }
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: false, error: { category: invalid_input, details: { field: /delegation/maxDepth } }, newEvents: 0 }
+  - action: run
+    session: $s
+    tenant: t1
+    principal: p1
+    overrides: { onExpiry: close }
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: false, error: { category: invalid_input, details: { field: /onExpiry } }, newEvents: 0 }
 expect:
   sessions:
     $s:
@@ -82,5 +113,8 @@ expect:
         mode: subsequence
         items:
           - { type: run.started, payload: { kind: run, overrides: { onExpiry: close, delegation: { maxDepth: 1 } } } }
+          - { type: run.started, payload: { kind: run, overrides: { stepLimit: 4 } } }
+      absentEvents:
+        - { type: run.started, payload: { overrides: { delegation: { maxDepth: 0 } } } }
   providerRequests:
-    scripted-a: { count: 1 }
+    scripted-a: { count: 2 }

@@ -23,7 +23,7 @@ script:
           id: org
           version: 1
           schemaVersion: "0.1.0"
-          instructions: "Follow organisational policy."
+          policyInstructions: "Follow organisational policy."
           defaultFallbackMessage: "I can't help with that request."
           trustedAttachmentSources: [upload, fax]
           sensitivityPolicies:
@@ -41,7 +41,7 @@ script:
           id: org
           version: 1
           schemaVersion: "0.1.0"
-          instructions: "Follow organisational policy."
+          policyInstructions: "Follow organisational policy."
           defaultFallbackMessage: "I can't help with that request."
           trustedAttachmentSources: [upload]
           sensitivityPolicies:
@@ -77,7 +77,7 @@ script:
           id: org
           version: 1
           schemaVersion: "0.1.0"
-          instructions: "Follow organisational policy."
+          policyInstructions: "Follow organisational policy."
           defaultFallbackMessage: "I can't help with that request."
           trustedAttachmentSources: [upload, email]
           sensitivityPolicies:

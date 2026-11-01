@@ -12,10 +12,16 @@ description: >-
   2. The policy bundle requires a blocking beforeResponse hook; the persona
      allows `streamed@1` (streamed + blocking output hook).
 
-  The same artifacts load once the persona allows only the buffered
-  profile. A configuration that fails is never frozen: the session created
-  at the end is pinned to the snapshot of the last accepted load.
-requirements: [CFG-040]
+  Semantic checks apply to each persona combined with each profile in its
+  `allowedProfiles` (not only its `defaultProfile`, which is the buffered
+  `default@1` throughout), with the full policy bundle stack (CFG-042 as
+  amended 2026-11-01). The same artifacts load once the persona allows only
+  the buffered profile: `streamed@1` is then reachable from no persona, so
+  it is checked on its own and the invalid combinations are never formed.
+  Allowing `streamed@1` again is rejected. A configuration that fails is
+  never frozen: the session created at the end is pinned to the snapshot of
+  the last accepted load.
+requirements: [CFG-040, CFG-042]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:
@@ -63,7 +69,7 @@ script:
           id: org
           version: 1
           schemaVersion: "0.1.0"
-          instructions: "Follow organisational policy."
+          policyInstructions: "Follow organisational policy."
           defaultFallbackMessage: "I can't help with that request."
           requiredHooks: [response-guard@1]
           sensitivityPolicies:
@@ -88,7 +94,7 @@ script:
           id: org
           version: 1
           schemaVersion: "0.1.0"
-          instructions: "Follow organisational policy."
+          policyInstructions: "Follow organisational policy."
           defaultFallbackMessage: "I can't help with that request."
           requiredHooks: [response-guard@1]
           sensitivityPolicies:

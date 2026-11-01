@@ -73,7 +73,7 @@ script:
   # trustedOutput in a tool.
   - load:
       artifacts:
-        - { kind: Tool, id: lookup, version: 1, schemaVersion: "0.1.0", description: Look up a record by key., input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }, effect: read, trustedOutput: true, binding: { kind: native, ref: test.lookup } }
+        - { kind: Tool, id: lookup, version: 1, schemaVersion: "0.1.0", description: Look up a record by key., input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }, effect: read, trustedOutput: true, binding: { kind: native, handler: test.lookup } }
     expect: { ok: false, error: { category: configuration } }
   # Grants in a persona.
   - load:
@@ -125,7 +125,7 @@ script:
           id: org
           version: 1
           schemaVersion: "0.1.0"
-          instructions: "Follow organisational policy."
+          policyInstructions: "Follow organisational policy."
           defaultFallbackMessage: "I can't help with that request."
           trustedTools: [search_docs@1]
           sensitivityPolicies:
@@ -138,7 +138,7 @@ script:
           id: org
           version: 1
           schemaVersion: "0.1.0"
-          instructions: "Follow organisational policy."
+          policyInstructions: "Follow organisational policy."
           defaultFallbackMessage: "I can't help with that request."
           trustedTools: [ask_helper@1]
           sensitivityPolicies:
@@ -152,7 +152,7 @@ script:
           id: org
           version: 1
           schemaVersion: "0.1.0"
-          instructions: "Follow organisational policy."
+          policyInstructions: "Follow organisational policy."
           defaultFallbackMessage: "I can't help with that request."
           trustedTools: [lookup@1]
           trustedAttachmentSources: [upload]

@@ -46,7 +46,7 @@ setup:
         id: org
         version: 1
         schemaVersion: "0.1.0"
-        instructions: "Follow organisational policy."
+        policyInstructions: "Follow organisational policy."
         defaultFallbackMessage: "I can't help with that request."
         trustedTools: [lookup@1, update_record@1]
         sensitivityPolicies:
@@ -60,7 +60,7 @@ setup:
         id: dept
         version: 1
         schemaVersion: "0.1.0"
-        instructions: "Follow department policy."
+        policyInstructions: "Follow department policy."
   tenants:
     - id: t1
       principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
@@ -106,7 +106,7 @@ script:
           id: dept
           version: 1
           schemaVersion: "0.1.0"
-          instructions: "Follow department policy."
+          policyInstructions: "Follow department policy."
           trustedTools: []
     expect: { ok: true }
   - action: run
@@ -122,7 +122,7 @@ script:
           id: dept
           version: 1
           schemaVersion: "0.1.0"
-          instructions: "Follow department policy."
+          policyInstructions: "Follow department policy."
           trustedTools: [update_record@1]
     expect: { ok: true }
   - action: run

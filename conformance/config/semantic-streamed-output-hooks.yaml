@@ -59,7 +59,7 @@ script:
   # Streamed + afterModelCall rewrite: rejected.
   - load:
       artifacts:
-        - { kind: Hook, id: amc-rewrite, version: 1, schemaVersion: "0.1.0", points: [afterModelCall], results: [rewrite], timeoutMs: 1000, source: { kind: remote, endpoint: "memory://hook-scanner" } }
+        - { kind: Hook, id: amc-rewrite, version: 1, schemaVersion: "0.1.0", points: [afterModelCall], results: [rewrite], timeoutMs: 1000, source: { kind: remote, endpoint: scanner } }
         - { kind: HarnessProfile, id: streamed, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, deliveryMode: streamed, requiredHooks: [amc-rewrite@1] }
     expect: { ok: false, error: { category: configuration } }
   # Streamed + beforeResponse block: rejected.
@@ -77,7 +77,7 @@ script:
   # Streamed + beforeResponse rewrite: rejected.
   - load:
       artifacts:
-        - { kind: Hook, id: br-rewrite, version: 1, schemaVersion: "0.1.0", points: [beforeResponse], results: [rewrite], timeoutMs: 1000, source: { kind: remote, endpoint: "memory://hook-scanner" } }
+        - { kind: Hook, id: br-rewrite, version: 1, schemaVersion: "0.1.0", points: [beforeResponse], results: [rewrite], timeoutMs: 1000, source: { kind: remote, endpoint: scanner } }
         - { kind: HarnessProfile, id: streamed, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, deliveryMode: streamed, requiredHooks: [br-rewrite@1] }
     expect: { ok: false, error: { category: configuration } }
   # Controls, accepted: advisory output hooks on the streamed profile; a blocking input hook on it; blocking output hooks on the buffered profile.
@@ -90,7 +90,7 @@ script:
   - load:
       artifacts:
         - { kind: Hook, id: amc-block, version: 1, schemaVersion: "0.1.0", points: [afterModelCall], results: [block], timeoutMs: 1000, source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-UNSAFE'))", then: { result: block, reasonCode: test.guard.blocked } } }
-        - { kind: Hook, id: br-rewrite, version: 1, schemaVersion: "0.1.0", points: [beforeResponse], results: [rewrite], timeoutMs: 1000, source: { kind: remote, endpoint: "memory://hook-scanner" } }
+        - { kind: Hook, id: br-rewrite, version: 1, schemaVersion: "0.1.0", points: [beforeResponse], results: [rewrite], timeoutMs: 1000, source: { kind: remote, endpoint: scanner } }
         - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, deliveryMode: buffered, requiredHooks: [amc-block@1, br-rewrite@1] }
     expect: { ok: true }
 expect: {}

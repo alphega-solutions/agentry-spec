@@ -28,7 +28,7 @@ setup:
         input: { type: object, additionalProperties: false, required: [text], properties: { text: { type: string } } }
         effect: read
         egress: true
-        binding: { kind: native, ref: test.send_note }
+        binding: { kind: native, handler: test.send_note }
       - { kind: Persona, id: writer, version: 1, schemaVersion: "0.1.0", instructions: "You update records.", tools: [update_record@1], defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a } }
       - { kind: Persona, id: mailer, version: 1, schemaVersion: "0.1.0", instructions: "You send notes.", tools: [send_note@1], defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a } }
   tenants:

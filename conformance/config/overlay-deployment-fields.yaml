@@ -2,11 +2,15 @@ schemaVersion: "0.1.0"
 id: cfg.overlay-deployment-fields
 title: Environment-specific deployment fields may change freely; behavioural values never come from the deployment
 description: >-
-  Reloads the deployment as it would look for another environment, with a
-  different endpoint, which loads; and shows that a behavioural value placed
-  at the deployment level is rejected. Overlay tightening is covered by
-  cfg.overlay-tighten-only.
-requirements: [CFG-112]
+  A `prod` environment overlay changes deployment fields — the providers'
+  endpoints — and loads. An overlay
+  whose deployment values carry a behavioural value (`stepLimit`) is
+  rejected: overlays apply to deployment fields, and behavioural values are
+  only tightened per artifact, never set at the deployment level. Overlay
+  tightening and deployment governance are covered by cfg.overlay-tighten-only;
+  behavioural values in the deployment artifact itself by
+  cfg.deployment-behavioural-layer-rejected.
+requirements: [CFG-021, CFG-112]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:
@@ -17,51 +21,23 @@ setup:
     - id: t1
       principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
 script:
-  # The same deployment for another environment, with a different endpoint: deployment fields change freely.
+  # A prod overlay changes environment-specific deployment fields: accepted.
   - load:
-      artifacts:
-        - kind: Deployment
-          id: test
-          version: 1
-          schemaVersion: "0.1.0"
-          environment: prod
-          policyBundles: [org@1]
-          attachmentSources: [upload, email]
+      overlay:
+        environment: prod
+        deployment:
           providers:
             - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a-prod", region: test-region, retainsData: false }
-            - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
-          ports:
-            eventLog: { adapter: memory, region: test-region }
-            checkpointStore: { adapter: memory, region: test-region }
-            idempotencyStore: { adapter: memory, region: test-region }
-            snapshotStore: { adapter: memory, region: test-region }
-            blobStore: { adapter: memory, region: test-region }
-            auditLog: { adapter: memory, region: test-region }
-            secrets: { adapter: memory, region: test-region }
-          retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+            - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b-prod", region: test-region, retainsData: false }
     expect: { ok: true }
-  # A deployment-level copy of a behavioural value is still rejected, whatever the environment.
+  # A behavioural value in the overlay's deployment values: rejected, whatever the environment.
   - load:
-      artifacts:
-        - kind: Deployment
-          id: test
-          version: 1
-          schemaVersion: "0.1.0"
-          environment: prod
-          policyBundles: [org@1]
-          attachmentSources: [upload, email]
-          stepLimit: 4
+      overlay:
+        environment: prod
+        deployment:
           providers:
             - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a-prod", region: test-region, retainsData: false }
-            - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
-          ports:
-            eventLog: { adapter: memory, region: test-region }
-            checkpointStore: { adapter: memory, region: test-region }
-            idempotencyStore: { adapter: memory, region: test-region }
-            snapshotStore: { adapter: memory, region: test-region }
-            blobStore: { adapter: memory, region: test-region }
-            auditLog: { adapter: memory, region: test-region }
-            secrets: { adapter: memory, region: test-region }
-          retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+            - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b-prod", region: test-region, retainsData: false }
+          stepLimit: 4
     expect: { ok: false, error: { category: configuration } }
 expect: {}

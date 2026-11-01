@@ -121,7 +121,7 @@ $defs:
           mcpServers: { type: object }
           httpEndpoints: { type: object }
           remoteHooks:
-            description: Scripted remote hook results, keyed by endpoint, consumed in order (HOOK-091).
+            description: Scripted remote hook results, keyed by the remote hook ID declared in the deployment, consumed in order (HOOK-091).
             type: object
             additionalProperties:
               type: array
@@ -291,6 +291,13 @@ $defs:
         additionalProperties: false
         properties:
           artifacts: { type: array, items: { type: object } }
+          raw:
+            description: >-
+              Artifacts as raw YAML text, parsed by the implementation exactly as its
+              config source would, for testing values that only exist in YAML
+              (dates, yes/no) — CFG amendment on JSON-compatible values.
+            type: array
+            items: { type: string }
           remove: { type: array, items: { type: string } }
           overlay:
             description: >-

@@ -7,7 +7,9 @@ description: >-
   - The bundle allows both; the persona narrows its own `allowedProviders`
     to scripted-a but selects scripted-b/model-b as its primary → rejected.
   - The bundle allows only scripted-a and a profile selects a model on
-    scripted-b for a persona that sets none → rejected.
+    scripted-b for a persona that sets none and allows only that profile →
+    rejected. Every persona × allowed profile combination has a model, so
+    the disallowed provider is the only error.
   - The bundle allows only scripted-a and the persona selects
     scripted-a/model-a without fallbacks → accepted.
 requirements: [CFG-042]
@@ -27,7 +29,7 @@ script:
           id: org
           version: 1
           schemaVersion: "0.1.0"
-          instructions: "Follow organisational policy."
+          policyInstructions: "Follow organisational policy."
           defaultFallbackMessage: "I can't help with that request."
           allowedProviders: [scripted-a]
           sensitivityPolicies:
@@ -44,13 +46,13 @@ script:
           id: org
           version: 1
           schemaVersion: "0.1.0"
-          instructions: "Follow organisational policy."
+          policyInstructions: "Follow organisational policy."
           defaultFallbackMessage: "I can't help with that request."
           allowedProviders: [scripted-a]
           sensitivityPolicies:
             pii: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
             phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
-        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1] }
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1] }
         - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, model: { provider: scripted-b, name: model-b } }
     expect: { ok: false, error: { category: configuration } }
   - load:
@@ -59,7 +61,7 @@ script:
           id: org
           version: 1
           schemaVersion: "0.1.0"
-          instructions: "Follow organisational policy."
+          policyInstructions: "Follow organisational policy."
           defaultFallbackMessage: "I can't help with that request."
           allowedProviders: [scripted-a]
           sensitivityPolicies:

@@ -18,8 +18,8 @@ description: >-
 
   A rejected load is not clamped to a permitted value and accepted: the
   session created at the end is pinned to the snapshot of the last accepted
-  load and calls scripted-a/model-a. (The error must also name the artifact,
-  field, and layer; the fixture format can assert only its category.)
+  load and calls scripted-a/model-a. Each rejection's details name the
+  artifact, the field (a JSON Pointer into that artifact) and the layer.
 requirements: [CFG-020, CFG-032]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -33,7 +33,7 @@ setup:
         id: org
         version: 1
         schemaVersion: "0.1.0"
-        instructions: "Follow organisational policy."
+        policyInstructions: "Follow organisational policy."
         defaultFallbackMessage: "I can't help with that request."
         allowedProviders: [scripted-a]
         model: { provider: scripted-a, name: model-a, params: { maxOutputTokens: 1000 } }
@@ -69,15 +69,15 @@ script:
   - load:
       artifacts:
         - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], allowedProviders: [scripted-a, scripted-b] }
-    expect: { ok: false, error: { category: configuration, details: { artifact: assistant@1, field: allowedProviders, layer: persona } } }
+    expect: { ok: false, error: { category: configuration, details: { artifact: assistant@1, field: /allowedProviders, layer: persona } } }
   - load:
       artifacts:
         - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], model: { provider: scripted-b, name: model-b } }
-    expect: { ok: false, error: { category: configuration, details: { artifact: assistant@1, field: model.provider, layer: persona } } }
+    expect: { ok: false, error: { category: configuration, details: { artifact: assistant@1, field: /model/provider, layer: persona } } }
   - load:
       artifacts:
         - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], model: { params: { maxOutputTokens: 2000 } } }
-    expect: { ok: false, error: { category: configuration, details: { artifact: assistant@1, field: model.params.maxOutputTokens, layer: persona } } }
+    expect: { ok: false, error: { category: configuration, details: { artifact: assistant@1, field: /model/params/maxOutputTokens, layer: persona } } }
   - load:
       artifacts:
         - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], model: { provider: scripted-a, name: model-a, params: { maxOutputTokens: 800 } } }
@@ -87,11 +87,11 @@ script:
   - load:
       artifacts:
         - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, model: { provider: scripted-b, name: model-b } }
-    expect: { ok: false, error: { category: configuration, details: { artifact: default@1, field: model.provider, layer: harnessProfile } } }
+    expect: { ok: false, error: { category: configuration, details: { artifact: default@1, field: /model/provider, layer: harnessProfile } } }
   - load:
       artifacts:
         - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, model: { params: { maxOutputTokens: 900 } } }
-    expect: { ok: false, error: { category: configuration, details: { artifact: default@1, field: model.params.maxOutputTokens, layer: harnessProfile } } }
+    expect: { ok: false, error: { category: configuration, details: { artifact: default@1, field: /model/params/maxOutputTokens, layer: harnessProfile } } }
   - load:
       artifacts:
         - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, model: { params: { maxOutputTokens: 500 } } }

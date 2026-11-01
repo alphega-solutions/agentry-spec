@@ -23,7 +23,7 @@ setup:
 script:
   - load:
       artifacts:
-        - { kind: Tool, id: card_lookup, version: 1, schemaVersion: "0.1.0", description: Look up a card record., input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }, effect: read, sensitivity: [pci], binding: { kind: native, ref: test.card_lookup } }
+        - { kind: Tool, id: card_lookup, version: 1, schemaVersion: "0.1.0", description: Look up a card record., input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }, effect: read, sensitivity: [pci], binding: { kind: native, handler: test.card_lookup } }
     expect: { ok: false, error: { category: configuration } }
   - load:
       artifacts:
@@ -36,7 +36,7 @@ script:
   # Controls: mapped labels in the same places.
   - load:
       artifacts:
-        - { kind: Tool, id: card_lookup, version: 1, schemaVersion: "0.1.0", description: Look up a card record., input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }, effect: read, sensitivity: [pii], binding: { kind: native, ref: test.card_lookup } }
+        - { kind: Tool, id: card_lookup, version: 1, schemaVersion: "0.1.0", description: Look up a card record., input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }, effect: read, sensitivity: [pii], binding: { kind: native, handler: test.card_lookup } }
         - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, defaultAttachmentLabels: [phi] }
         - { kind: Hook, id: tag-card, version: 1, schemaVersion: "0.1.0", points: [afterToolCall], results: [annotate], timeoutMs: 1000, source: { kind: rule, when: "tool.id == 'lookup'", then: { result: annotate, labels: [pii] } } }
     expect: { ok: true }
@@ -47,12 +47,12 @@ script:
           id: org
           version: 1
           schemaVersion: "0.1.0"
-          instructions: "Follow organisational policy."
+          policyInstructions: "Follow organisational policy."
           defaultFallbackMessage: "I can't help with that request."
           sensitivityPolicies:
             pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
             phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
             pci: { allowedProviders: [scripted-a], redaction: [{ mode: remove }] }
-        - { kind: Tool, id: card_lookup, version: 1, schemaVersion: "0.1.0", description: Look up a card record., input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }, effect: read, sensitivity: [pci], binding: { kind: native, ref: test.card_lookup } }
+        - { kind: Tool, id: card_lookup, version: 1, schemaVersion: "0.1.0", description: Look up a card record., input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }, effect: read, sensitivity: [pci], binding: { kind: native, handler: test.card_lookup } }
     expect: { ok: true }
 expect: {}

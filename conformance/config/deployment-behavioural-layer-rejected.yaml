@@ -8,9 +8,8 @@ description: >-
   changes only deployment fields (retention periods, an added attachment
   source) loads.
 
-  Environment overlays (CFG-021, second sentence) are not exercised: the
-  configuration schemas define no overlay artifact, so the fixture format
-  cannot express one.
+  Environment overlays (CFG-021, second sentence) are covered by
+  cfg.overlay-tighten-only and cfg.overlay-deployment-fields.
 requirements: [CFG-021]
 contract: ">=0.1.0 <1.0.0"
 features: []

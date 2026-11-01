@@ -46,7 +46,7 @@ setup:
         results: [block]
         failureMode: failClosed
         timeoutMs: 1000
-        source: { kind: remote, endpoint: "memory://hook-checker" }
+        source: { kind: remote, endpoint: checker }
       - kind: Persona
         id: assistant
         version: 1
@@ -56,7 +56,7 @@ setup:
         tools: [lookup@1, update_record@1]
         fallbackMessage: "This request was blocked."
         defaultProfile: default@1
-        allowedProfiles: [default@1, streamed@1]
+        allowedProfiles: [default@1]
         requiredHooks: [checker@1]
         model:
           provider: scripted-a
@@ -80,7 +80,7 @@ setup:
       lookup:
         - error: { category: not_found, code: test.lookup.missing }
     remoteHooks:
-      "memory://hook-checker":
+      checker:
         - error: { category: unavailable, code: test.hook.down }
 script:
   - action: run

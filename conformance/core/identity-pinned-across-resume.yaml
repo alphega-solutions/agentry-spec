@@ -28,7 +28,7 @@ setup:
         effect: mutating
         idempotent: false
         approval: always
-        binding: { kind: native, ref: test.update_record }
+        binding: { kind: native, handler: test.update_record }
   tenants:
     - id: t1
       principals:

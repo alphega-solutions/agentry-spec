@@ -5,8 +5,11 @@ description: >-
   A `prod` overlay changes a provider endpoint and lowers the default
   profile's token budget: it loads, and the next run is bound by the lower
   budget. A second overlay raises the budget above the profile's value and
-  is rejected with details naming the overlay layer; the previous snapshot
-  stays in force.
+  is rejected with details naming the overlay layer. Overlays also must not
+  loosen deployment governance: one that removes the policy bundle from the
+  stack, and one that adds an attachment source, are each rejected with
+  details naming the deployment field and the overlay layer. After every
+  rejection the previous snapshot stays in force.
 requirements: [CFG-021, CFG-032, CFG-112]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -43,7 +46,29 @@ script:
       ok: false
       error:
         category: configuration
-        details: { artifact: default@1, field: budget.tokens, layer: overlay }
+        details: { artifact: default@1, field: /budget/tokens, layer: overlay }
+  # Removing a policy bundle from the stack loosens deployment governance.
+  - load:
+      overlay:
+        environment: prod
+        deployment:
+          policyBundles: []
+    expect:
+      ok: false
+      error:
+        category: configuration
+        details: { artifact: test@1, field: /policyBundles, layer: overlay }
+  # Adding an attachment source loosens deployment governance (overlays may only remove them).
+  - load:
+      overlay:
+        environment: prod
+        deployment:
+          attachmentSources: [upload, email, fax]
+    expect:
+      ok: false
+      error:
+        category: configuration
+        details: { artifact: test@1, field: /attachmentSources, layer: overlay }
   - action: run
     bind: $s
     tenant: t1

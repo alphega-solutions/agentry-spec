@@ -31,7 +31,7 @@ setup:
           properties: { key: { type: string } }
         effect: read
         sensitivity: [pii]
-        binding: { kind: native, ref: test.lookup }
+        binding: { kind: native, handler: test.lookup }
       - kind: Tool
         id: update_record
         version: 1
@@ -46,7 +46,7 @@ setup:
             value: { type: string }
         effect: mutating
         idempotent: false
-        binding: { kind: native, ref: test.update_record }
+        binding: { kind: native, handler: test.update_record }
   tenants:
     - id: t1
       principals: [{ id: p1, subject: user-1, assurance: multi_factor }]

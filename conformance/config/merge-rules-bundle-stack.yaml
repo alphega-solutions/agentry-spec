@@ -6,15 +6,23 @@ description: >-
   with one change. Permitted changes load; forbidden ones fail with category
   configuration and are not clamped.
 
-  - union: dept adds instructions, a new sensitivity label (`pci`), and a
-    redaction rule to the existing `pii` key; an existing key's
+  - union: dept adds policy instructions, a new sensitivity label (`pci`),
+    and a redaction rule to the existing `pii` key; an existing key's
     `allowedProviders` narrows per key (map fields merge per key) — accepted.
+    A session run on that configuration shows both bundles' values in
+    effect: the model's system content holds org's and dept's policy
+    instructions, and the `pii` result of `lookup` is still masked in events
+    by org's redaction rule. An implementation that let dept override org
+    (replacing the instructions, or the `sensitivityPolicies` map or its
+    `pii` entry) fails these checks.
   - intersect: narrowing `allowedProviders` is accepted; adding a provider
     org does not allow is rejected; widening `phi.allowedProviders` inside
     the map is rejected; adding a tool to the `trustedTools` grant is
     rejected.
   - locked: restating org's `defaultFallbackMessage` unchanged is accepted;
-    a different message, or a different `dataResidency`, is rejected.
+    a different message is rejected. org sets `dataResidency` to two
+    regions; dept naming a superset, or a strict subset (which `intersect`
+    would accept), is rejected.
   - min: lowering `context.compaction.triggerPercent` is accepted; raising
     it is rejected.
 
@@ -54,11 +62,11 @@ setup:
         id: org
         version: 1
         schemaVersion: "0.1.0"
-        instructions: "Follow organisational policy."
+        policyInstructions: "Follow organisational policy."
         defaultFallbackMessage: "I can't help with that request."
         allowedProviders: [scripted-a, scripted-b]
         trustedTools: [lookup@1]
-        dataResidency: [test-region]
+        dataResidency: [test-region, other-region]
         context: { compaction: { triggerPercent: 80 } }
         sensitivityPolicies:
           pii:
@@ -71,7 +79,7 @@ setup:
         id: dept
         version: 1
         schemaVersion: "0.1.0"
-        instructions: "Follow department policy."
+        policyInstructions: "Follow department policy."
       - kind: Persona
         id: assistant
         version: 1
@@ -83,9 +91,35 @@ setup:
         defaultProfile: default@1
         allowedProfiles: [default@1, streamed@1]
         model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: lookup
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Look up a record by key.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        sensitivity: [pii]
+        binding: { kind: native, handler: test.lookup }
   tenants:
     - id: t1
       principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Found the record." }]
+          usage: { inputTokens: 30, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { name: "SYN-PII-NAME-JANE-ROE-0030" } }
+  limits:
+    inlinePayloadBytes: 65536
 script:
   # union, and per-key map merge.
   - load:
@@ -94,7 +128,7 @@ script:
           id: dept
           version: 1
           schemaVersion: "0.1.0"
-          instructions: "Follow department policy."
+          policyInstructions: "Follow SYN-DEPT-0030 department policy."
           sensitivityPolicies:
             pii:
               allowedProviders: [scripted-a]
@@ -103,6 +137,14 @@ script:
               allowedProviders: [scripted-a]
               redaction: [{ mode: remove }]
     expect: { ok: true }
+  # The union is observable: both bundles' values are in effect for a session.
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1" }]
+    expect: { ok: true, endReason: responded }
   # intersect.
   - load:
       artifacts:
@@ -137,7 +179,12 @@ script:
     expect: { ok: false, error: { category: configuration } }
   - load:
       artifacts:
-        - { kind: PolicyBundle, id: dept, version: 1, schemaVersion: "0.1.0", dataResidency: [test-region, other-region] }
+        - { kind: PolicyBundle, id: dept, version: 1, schemaVersion: "0.1.0", dataResidency: [test-region, other-region, eu-region] }
+    expect: { ok: false, error: { category: configuration } }
+  # A strict subset of org's regions: `intersect` would accept it, `locked` must not.
+  - load:
+      artifacts:
+        - { kind: PolicyBundle, id: dept, version: 1, schemaVersion: "0.1.0", dataResidency: [test-region] }
     expect: { ok: false, error: { category: configuration } }
   # min.
   - load:
@@ -148,4 +195,26 @@ script:
       artifacts:
         - { kind: PolicyBundle, id: dept, version: 1, schemaVersion: "0.1.0", context: { compaction: { triggerPercent: 90 } } }
     expect: { ok: false, error: { category: configuration } }
-expect: {}
+expect:
+  sessions:
+    $s:
+      events:
+        mode: contains
+        items:
+          - { type: tool.result, payload: { callId: c1 }, labels: { $contains: [pii] } }
+      absentEvents:
+        - type: tool.result
+          payload: { result: { ok: { output: { name: "SYN-PII-NAME-JANE-ROE-0030" } } } }
+  providerRequests:
+    scripted-a:
+      - messages:
+          $all:
+            - $contains:
+                - parts:
+                    $contains:
+                      - { type: text, text: { $regex: "Follow organisational policy\\." }, provenance: system }
+            - $contains:
+                - parts:
+                    $contains:
+                      - { type: text, text: { $regex: "Follow SYN-DEPT-0030 department policy\\." }, provenance: system }
+      - {}

@@ -5,8 +5,9 @@ description: >-
   Two loads each carry several valid changes — the persona switched to
   scripted-b/model-b, a new profile, a new tool — plus one invalid artifact:
   first a profile that fails its schema (no stepLimit), then a tool whose
-  sensitivity label has no policy (a semantic failure, caught after the
-  other artifacts have been parsed, resolved and merged). Both loads fail
+  sensitivity label `io.example:unmapped` is well formed but has no policy
+  (a semantic failure, caught after the other artifacts have been parsed,
+  resolved and merged). Both loads fail
   with category configuration. A session created afterwards is pinned to the
   original snapshot and calls scripted-a: no part of either load was
   applied.
@@ -38,14 +39,14 @@ script:
       artifacts:
         - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1, archive_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1, quick@1], model: { provider: scripted-b, name: model-b } }
         - { kind: HarnessProfile, id: quick, version: 1, schemaVersion: "0.1.0", idleTtl: PT1H, suspendedTtl: PT1H, stepLimit: 2 }
-        - { kind: Tool, id: archive_record, version: 1, schemaVersion: "0.1.0", description: Archive a record., input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }, effect: mutating, idempotent: true, binding: { kind: native, ref: test.archive_record } }
+        - { kind: Tool, id: archive_record, version: 1, schemaVersion: "0.1.0", description: Archive a record., input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }, effect: mutating, idempotent: true, binding: { kind: native, handler: test.archive_record } }
         - { kind: HarnessProfile, id: broken, version: 1, schemaVersion: "0.1.0", idleTtl: PT1H, suspendedTtl: PT1H }
     expect: { ok: false, error: { category: configuration } }
   - load:
       artifacts:
         - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1, archive_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1, quick@1], model: { provider: scripted-b, name: model-b } }
         - { kind: HarnessProfile, id: quick, version: 1, schemaVersion: "0.1.0", idleTtl: PT1H, suspendedTtl: PT1H, stepLimit: 2 }
-        - { kind: Tool, id: archive_record, version: 1, schemaVersion: "0.1.0", description: Archive a record., input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }, effect: mutating, idempotent: true, sensitivity: [unmapped-label], binding: { kind: native, ref: test.archive_record } }
+        - { kind: Tool, id: archive_record, version: 1, schemaVersion: "0.1.0", description: Archive a record., input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }, effect: mutating, idempotent: true, sensitivity: [io.example:unmapped], binding: { kind: native, handler: test.archive_record } }
     expect: { ok: false, error: { category: configuration } }
   - action: run
     bind: $s

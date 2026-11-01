@@ -17,6 +17,10 @@ description: >-
   | context.compaction.mode (profile) | truncate | none | summarize |
   | context.retrieval.auto (profile) | false | false | true |
 
+  org also sets `context.retrieval.source` (a vector store source the
+  deployment declares), so enabling automatic retrieval has an effective
+  source (CTX-101) and only the strictness order is under test.
+
   Delivery mode, checkpoint granularity, reasoning in traces, and onExpiry
   are profile-only fields; their orders are exercised against run requests
   in cfg.strictness-orders-run-request.
@@ -47,19 +51,20 @@ setup:
           blobStore: { adapter: memory, region: test-region }
           auditLog: { adapter: memory, region: test-region }
           secrets: { adapter: memory, region: test-region }
+          vectorStore: { adapter: memory, region: test-region, sources: [kb] }
         retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
       - kind: PolicyBundle
         id: org
         version: 1
         schemaVersion: "0.1.0"
-        instructions: "Follow organisational policy."
+        policyInstructions: "Follow organisational policy."
         defaultFallbackMessage: "I can't help with that request."
         toolTaintDefaults: { update_record@1: escalate }
         allowSelfApproval: { hook: false }
         guardrails: { requireDeterministic: true }
         context:
           compaction: { mode: truncate }
-          retrieval: { auto: false }
+          retrieval: { auto: false, source: kb }
         sensitivityPolicies:
           pii:
             allowedProviders: [scripted-a, scripted-b]
@@ -72,7 +77,7 @@ setup:
         id: dept
         version: 1
         schemaVersion: "0.1.0"
-        instructions: "Follow department policy."
+        policyInstructions: "Follow department policy."
   tenants:
     - id: t1
       principals: [{ id: p1, subject: user-1, assurance: multi_factor }]

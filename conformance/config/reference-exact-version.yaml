@@ -2,8 +2,9 @@ schemaVersion: "0.1.0"
 id: cfg.reference-exact-version
 title: References must be exact id@version; unversioned and ranged references are rejected
 description: >-
-  A new persona `probe@1` references its tool, profile, and hook in turn
-  without a version, with a range, or with a non-integer selector; a
+  A new persona `probe@1` references its tool without a version, with a
+  range, or with a non-integer selector (`latest`, `^1`); then its default
+  profile without a version, and its allowed profiles with a wildcard; a
   deployment names its policy bundle without a version. Each load fails with
   category configuration. The same persona with exact references loads.
 requirements: [CFG-010]

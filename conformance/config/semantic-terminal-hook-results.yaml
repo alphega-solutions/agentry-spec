@@ -47,7 +47,7 @@ script:
     expect: { ok: false, error: { category: configuration } }
   - load:
       artifacts:
-        - { kind: Hook, id: end-rewrite, version: 1, schemaVersion: "0.1.0", points: [sessionEnd], results: [rewrite], timeoutMs: 1000, source: { kind: remote, endpoint: "memory://hook-scanner" } }
+        - { kind: Hook, id: end-rewrite, version: 1, schemaVersion: "0.1.0", points: [sessionEnd], results: [rewrite], timeoutMs: 1000, source: { kind: remote, endpoint: scanner } }
     expect: { ok: false, error: { category: configuration } }
   - load:
       artifacts:
