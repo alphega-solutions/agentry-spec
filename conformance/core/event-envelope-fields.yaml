@@ -1,0 +1,99 @@
+schemaVersion: "0.1.0"
+id: core.event-envelope-fields
+title: Every persisted event carries the full envelope, with a principal reference only and runId absent only where permitted
+description: >-
+  The principal carries roles and attributes; only the reference (subject and
+  tenant) may appear in events. The session is closed with close() while idle,
+  so its session.closed occurs outside a run and carries no runId, as does
+  session.created. Every other event carries the run's ID.
+requirements: [CORE-150]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals:
+        - id: p1
+          subject: user-1
+          assurance: multi_factor
+          roles: [syn-role-envelope-check]
+          attributes: { badge: "SYN-ATTR-7731" }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - action: close
+    session: $s
+    expect: { ok: true }
+expect:
+  sessions:
+    $s:
+      state: closed
+      closeReason: completed
+      events:
+        mode: subsequence
+        items:
+          - type: session.created
+            schemaVersion: { $any: true }
+            eventId: { $any: true }
+            sessionId: $s
+            runId: { $absent: true }
+            seq: 1
+            timestamp: { $any: true }
+            tenantId: t1
+            principalRef: { subject: user-1, tenant: t1 }
+            snapshotHash: $snap
+            traceContext: { traceparent: { $any: true } }
+            payload: { persona: assistant@1 }
+          - type: run.started
+            eventId: { $any: true }
+            sessionId: $s
+            runId: $r1
+            seq: { $any: true }
+            tenantId: t1
+            principalRef: { subject: user-1, tenant: t1 }
+            snapshotHash: $snap
+            traceContext: { traceparent: { $any: true } }
+          - type: model.request
+            sessionId: $s
+            runId: $r1
+            turn: 1
+            step: 1
+            tenantId: t1
+            principalRef: { subject: user-1, tenant: t1 }
+            snapshotHash: $snap
+          - type: run.ended
+            sessionId: $s
+            runId: $r1
+            tenantId: t1
+            principalRef: { subject: user-1, tenant: t1 }
+            snapshotHash: $snap
+          - type: session.closed
+            sessionId: $s
+            runId: { $absent: true }
+            seq: { $any: true }
+            tenantId: t1
+            principalRef: { subject: user-1, tenant: t1 }
+            snapshotHash: $snap
+            traceContext: { traceparent: { $any: true } }
+            payload: { reason: completed }
+      absentEvents:
+        - { principalRef: { roles: { $any: true } } }
+        - { principalRef: { attributes: { $any: true } } }
+        - { principalRef: { assurance: { $any: true } } }
+  noPersistedContent:
+    - "SYN-ATTR-7731"
+    - "syn-role-envelope-check"
+  schemaValid: true

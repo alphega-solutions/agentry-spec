@@ -1,0 +1,73 @@
+schemaVersion: "0.1.0"
+id: core.event-payload-redaction
+title: Inline event payloads are redacted by the sensitivity policies in force
+description: >-
+  The lookup tool labels its results `pii`, whose policy masks content. The
+  inline view of the tool.result event must not hold the raw value, while the
+  model (an allowed provider for `pii`) still receives it. The raw value is
+  reachable for replay only through a blob reference.
+requirements: [CORE-154]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: lookup
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Look up a record by key.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        sensitivity: [pii]
+        binding: { kind: native, ref: test.lookup }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Found the record." }]
+          usage: { inputTokens: 30, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { name: "SYN-PII-NAME-JANE-ROE-0154" } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: contains
+        items:
+          - { type: tool.result, payload: { callId: c1 }, labels: { $contains: [pii] } }
+      absentEvents:
+        - type: tool.result
+          payload: { result: { ok: { output: { name: "SYN-PII-NAME-JANE-ROE-0154" } } } }
+  providerRequests:
+    scripted-a:
+      - {}
+      - messages:
+          $contains:
+            - role: tool
+              parts:
+                $contains:
+                  - type: tool_result
+                    callId: c1
+                    result: { ok: { output: { name: "SYN-PII-NAME-JANE-ROE-0154" } } }

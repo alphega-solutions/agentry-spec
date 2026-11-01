@@ -1,0 +1,55 @@
+schemaVersion: "0.1.0"
+id: core.event-payload-no-binary
+title: A tool result holding binary content is recorded in events by blob reference, never inline bytes
+requirements: [CORE-152]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { vision: true }
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: chart } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "That is a chart." }]
+          usage: { inputTokens: 60, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok:
+            blob: { id: blob-img-152, hash: "sha256:b90f814377690e8ffa53e62da6f359c86265d1a987260ad31001a7aec7d8ad33", mediaType: image/png, size: 20 }
+  ports:
+    blobStore:
+      t1:
+        - id: blob-img-152
+          hash: "sha256:b90f814377690e8ffa53e62da6f359c86265d1a987260ad31001a7aec7d8ad33"
+          mediaType: image/png
+          size: 20
+          data: "U1lOVEhFVElDLUlNQUdFLTAxNTI="
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Fetch the chart" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: contains
+        items:
+          - type: tool.result
+            payload:
+              callId: c1
+              result: { ok: { blob: { id: blob-img-152 } } }
+  noPersistedContent:
+    - "U1lOVEhFVElDLUlNQUdFLTAxNTI="
+    - "SYNTHETIC-IMAGE-0152"
