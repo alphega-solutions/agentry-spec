@@ -1,0 +1,134 @@
+schemaVersion: "0.1.0"
+id: tool.pipeline-untainted-normal-approval
+title: In an untainted session the taint rule does not act, and the call's normal approval policy decides
+description: >-
+  `update_record` has `approval: policy`; the persona's approval rule
+  matches the value `needs-review`.
+
+  - $sPass: untainted, value v1 → no taint decision, the rule does not
+    match, the call is dispatched without escalation.
+  - $sReview: untainted, value needs-review → escalation from the approval
+    stage only (`sources: [approval]`); no taint decision.
+  - $sTainted (contrast): an untrusted lookup result taints the session;
+    the same v1 call now escalates at stage 5 (`sources: [taint]`), before
+    approval is reached.
+requirements: [TOOL-030]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: policy
+        binding: { kind: native, handler: test.update_record }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        approvalRules: ["call.arguments.value == 'needs-review'"]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # $sPass
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sReview
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: needs-review } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sTainted
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+      lookup:
+        - ok: { output: { value: "synthetic untrusted value" } }
+script:
+  - action: run
+    bind: $sPass
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sReview
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to needs-review" }]
+    expect: { ok: true, endReason: escalated }
+  - action: run
+    bind: $sTainted
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1 then set it to v1" }]
+    expect: { ok: true, endReason: escalated }
+expect:
+  sessions:
+    $sPass:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1 } }
+          - { type: tool.result, payload: { callId: c1, result: { ok: { output: { updated: true } } } } }
+      absentEvents:
+        - { type: policy.decision }
+        - { type: escalation.raised }
+    $sReview:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - { type: escalation.raised, payload: { escalation: { sources: [approval], pendingActions: [{ callId: c1, source: approval }] } } }
+          - { type: run.ended, payload: { reason: escalated } }
+      absentEvents:
+        - { type: policy.decision }
+        - { type: tool.call }
+    $sTainted:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - { type: policy.decision, payload: { kind: taint, outcome: escalate, callId: c2 } }
+          - { type: escalation.raised, payload: { escalation: { sources: [taint], pendingActions: [{ callId: c2, source: taint }] } } }
+      absentEvents:
+        - { type: tool.call, payload: { callId: c2 } }
+  stubCalls:
+    update_record: [{ arguments: { key: k1, value: v1 } }]
+    lookup: { count: 1 }
