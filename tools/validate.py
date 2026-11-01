@@ -61,6 +61,37 @@ def check_placeholders(doc: dict) -> list[str]:
 
 
 CONFIG = "https://alphega.io/agentry/schemas/config"
+# Validator keywords whose default messages quote the offending value. Configuration may
+# hold credentials pasted in by mistake, so errors describe the constraint and never the
+# value: CI logs are public.
+VALUE_ECHOING = {"pattern", "enum", "const", "type", "format", "minimum", "maximum",
+                 "exclusiveMinimum", "exclusiveMaximum", "minLength", "maxLength",
+                 "multipleOf", "not", "oneOf", "anyOf", "if", "then", "else", "contains",
+                 "uniqueItems", "minItems", "maxItems", "propertyNames", "dependentRequired",
+                 "false"}
+
+
+def describe(err) -> str:
+    """A schema error message that names the constraint but never quotes the value."""
+    path = "/".join(map(str, err.absolute_path)) or "(root)"
+    kw = err.validator
+    if kw in ("required", "additionalProperties", "unevaluatedProperties"):
+        # These messages name property keys, not values.
+        return f"{path}: {err.message}"
+    if kw == "pattern":
+        return f"{path}: does not match pattern {err.validator_value}"
+    if kw == "enum":
+        return f"{path}: is not one of {err.validator_value}"
+    if kw == "const":
+        return f"{path}: must equal {err.validator_value!r}"
+    if kw == "type":
+        return f"{path}: must be of type {err.validator_value}"
+    if kw in ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum",
+              "minLength", "maxLength", "minItems", "maxItems", "multipleOf"):
+        return f"{path}: violates {kw} {err.validator_value}"
+    return f"{path}: fails `{kw}`"
+
+
 KIND_SCHEMAS = {
     "PolicyBundle": f"{CONFIG}/policy-bundle/v1.json",
     "Persona": f"{CONFIG}/persona/v1.json",
@@ -166,9 +197,9 @@ def _check_pending(art: dict) -> list[str]:
         if not isinstance(creds, dict):
             problems.append(f"{key}.credentials: must be a map of names to secret references")
         else:
-            for name, ref in creds.items():
-                if not (isinstance(ref, str) and SECRET_PATTERN.match(ref)):
-                    problems.append(f"{key}.credentials.{name}: not a secret reference (CFG-061)")
+            bad = sum(1 for ref in creds.values() if not (isinstance(ref, str) and SECRET_PATTERN.match(ref)))
+            if bad:
+                problems.append(f"{key}.credentials: {bad} entr{'y is' if bad == 1 else 'ies are'} not secret references (CFG-061)")
     if bkind == "rule" and isinstance(block.get("then"), dict):
         then = block["then"]
         result = then.get("result")
@@ -198,7 +229,7 @@ def check_shared_config(schemas: dict, reg) -> list[str]:
             continue
         v = Draft202012Validator(schemas[KIND_SCHEMAS[kind]], registry=reg, format_checker=FormatChecker())
         for err in v.iter_errors(doc):
-            errors.append(f"{rel}: {'/'.join(map(str, err.absolute_path))}: {err.message}")
+            errors.append(f"{rel}: {describe(err)}")
     return errors
 
 
@@ -376,7 +407,7 @@ def check_secret_annotations(schemas: dict) -> list[str]:
     def walk(sid: str, node, where: str) -> None:
         if isinstance(node, dict):
             if "x-agentry-secret" in node and node["x-agentry-secret"] is not True:
-                errors.append(f"secret: {where} has x-agentry-secret {node['x-agentry-secret']!r}; only `true` is allowed")
+                errors.append(f"secret: {where} has an x-agentry-secret value other than `true`")
             is_secret = SECRET_REF in _ref_chain(schemas, sid, node)
             marked = node.get("x-agentry-secret") is True
             if is_secret and not marked:
@@ -451,8 +482,7 @@ def check_inline_config(doc: dict, schemas: dict, reg) -> list[str]:
             return
         v = Draft202012Validator(schemas[KIND_SCHEMAS[kind]], registry=reg, format_checker=FormatChecker())
         for err in v.iter_errors(art):
-            path = "/".join(map(str, err.absolute_path))
-            problems.append(f"{where} {kind} {art.get('id')}@{art.get('version')}: {path}: {err.message}")
+            problems.append(f"{where} {kind} {art.get('id')}@{art.get('version')}: {describe(err)}")
 
     def refs_of(arts) -> set[str]:
         return {f"{a.get('id')}@{a.get('version')}" for a in arts or [] if isinstance(a, dict)}
@@ -528,7 +558,7 @@ def main() -> int:
         errs = list(v.iter_errors(instance))
         kind = ex.parent.name
         if kind == "valid" and errs:
-            errors.append(f"{ex}: expected valid, got: {errs[0].message}")
+            errors.append(f"{ex}: expected valid, got: {describe(errs[0])}")
         if kind == "invalid" and not errs:
             errors.append(f"{ex}: expected invalid, but it validated")
 
@@ -539,7 +569,7 @@ def main() -> int:
         doc = load_yaml(fx)
         target = CEL_ID if str(doc.get("id", "")).startswith("cel.") else FIXTURE_ID
         for err in validator(target).iter_errors(doc):
-            errors.append(f"{fx.relative_to(ROOT)}: {'/'.join(map(str, err.absolute_path))}: {err.message}")
+            errors.append(f"{fx.relative_to(ROOT)}: {describe(err)}")
         fid = doc.get("id")
         if fid in ids:
             errors.append(f"{fx.relative_to(ROOT)}: duplicate fixture id {fid}")
