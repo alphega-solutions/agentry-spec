@@ -1,0 +1,80 @@
+schemaVersion: "0.1.0"
+id: core.output-schema-correction-counts-steps
+title: Output corrections count toward the step limit
+description: >-
+  stepLimit is 2 and outputRetryLimit 3. Both responses fail validation; the
+  third model call (a second correction) would be step 3, so it is not made and
+  the run ends step_limit rather than failed.
+requirements: [CORE-132, CORE-083]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Persona
+        id: extractor
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test extractor
+        instructions: "Extract the order as JSON."
+        tools: []
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+        outputSchema:
+          type: object
+          additionalProperties: false
+          required: [item, quantity]
+          properties:
+            item: { type: string }
+            quantity: { type: integer, minimum: 1 }
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 2
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 3
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: structured, value: { item: widget } }]
+          usage: { inputTokens: 20, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: structured, value: { item: widget, quantity: -1 } }]
+          usage: { inputTokens: 20, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: extractor@1
+    input: [{ type: text, text: "Two widgets, please" }]
+    expect: { ok: true, endReason: step_limit }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, turn: 1, step: 1 }
+          - { type: model.request, turn: 1, step: 2 }
+          - { type: run.ended, payload: { reason: step_limit } }
+      absentEvents:
+        - { type: model.request, step: 3 }
+  providerRequests:
+    scripted-a: { count: 2 }

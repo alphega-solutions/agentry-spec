@@ -1,0 +1,2 @@
+schema: https://alphega.io/agentry/schemas/core/event/v1.json#/$defs/hookDecision
+instance: { hook: end@1, point: sessionEnd, result: block, reasonCode: test.blocked, inputHash: "sha256:0000000000000000000000000000000000000000000000000000000000000000" }

@@ -1,0 +1,13 @@
+schema: https://alphega.io/agentry/schemas/core/event/v1.json
+instance:
+  eventId: 0190a3c4-0000-7000-8000-000000000010
+  seq: 1
+  type: session.created
+  schemaVersion: "0.1.0"
+  sessionId: 0190a3c4-0000-7000-8000-000000000001
+  timestamp: "2026-01-01T00:00:00Z"
+  tenantId: t1
+  principalRef: { subject: user-1, tenant: t1 }
+  snapshotHash: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  traceContext: { traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" }
+  payload: { persona: assistant@1, profile: default@1 }

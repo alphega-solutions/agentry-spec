@@ -1,0 +1,57 @@
+schemaVersion: "0.1.0"
+id: core.error-other-tenant-not-found
+title: Operations on another tenant's session fail with `not_found`, never a distinct authorization error
+description: >-
+  A session belongs to t1. A principal of t2 calling run(), close(), or
+  cancel() on it receives `not_found`, never `unauthorized` or `conflict`.
+  The t1 session is unaffected.
+requirements: [CORE-193]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+    - id: t2
+      principals: [{ id: p2, subject: user-2, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $s
+    tenant: t2
+    principal: p2
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: false, error: { category: not_found } }
+  - action: close
+    session: $s
+    tenant: t2
+    principal: p2
+    expect: { ok: false, error: { category: not_found } }
+  - action: cancel
+    session: $s
+    tenant: t2
+    principal: p2
+    expect: { ok: false, error: { category: not_found } }
+expect:
+  sessions:
+    $s:
+      state: idle
+      absentEvents:
+        - { type: run.started, tenantId: t2 }
+        - { type: session.closed }
+  providerRequests:
+    scripted-a: { count: 1 }

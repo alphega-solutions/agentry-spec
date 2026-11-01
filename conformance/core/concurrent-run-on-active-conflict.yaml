@@ -1,0 +1,81 @@
+schemaVersion: "0.1.0"
+id: core.concurrent-run-on-active-conflict
+title: run() and resume() on an active session fail with `conflict` and leave the active run unaffected
+description: >-
+  The first concurrent run() calls lookup, which is delayed on the virtual
+  clock. The intruding run() and the resume() start
+  only once the first run's tool.call has been persisted (startAfter), so the
+  session is `active` when they arrive, independent of timing. Both are
+  refused; the first run completes normally and the model never sees the
+  refused input.
+requirements: [CORE-030, CORE-031]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: a } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "A is 1." }]
+          usage: { inputTokens: 40, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - { ok: { output: { value: "1" } }, delayMs: 1000 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - concurrently:
+      - action: run
+        session: $s
+        principal: p1
+        input: [{ type: text, text: "Look up a" }]
+        expect: { ok: true, endReason: responded }
+      - action: run
+        session: $s
+        principal: p1
+        input: [{ type: text, text: "SYNTHETIC-INTRUDER-0001" }]
+        startAfter: { type: tool.call, turn: 2, payload: { callId: c1 } }
+        expect: { ok: false, error: { category: conflict }, newEvents: 0 }
+      - action: resume
+        session: $s
+        reviewer: r1
+        decisions: []
+        startAfter: { type: tool.call, turn: 2, payload: { callId: c1 } }
+        expect: { ok: false, error: { category: conflict }, newEvents: 0 }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: run.started, runId: $r2, payload: { kind: run } }
+          - { type: turn.started, runId: $r2, turn: 2 }
+          - { type: tool.call, runId: $r2, payload: { callId: c1 } }
+          - { type: tool.result, runId: $r2, payload: { callId: c1, result: { ok: { output: { value: "1" } } } } }
+          - { type: run.ended, runId: $r2, payload: { reason: responded } }
+      absentEvents:
+        - { type: turn.started, turn: 3 }
+        - { type: run.started, payload: { kind: resume } }
+  providerRequests:
+    scripted-a: { count: 3 }
+  noPersistedContent: ["SYNTHETIC-INTRUDER-0001"]
+  delivered:
+    $s: { text: "A is 1." }

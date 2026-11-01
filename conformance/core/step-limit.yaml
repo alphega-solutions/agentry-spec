@@ -1,0 +1,64 @@
+schemaVersion: "0.1.0"
+id: core.step-limit
+title: Reaching the step limit ends the run `step_limit` without starting the next step
+requirements: [CORE-083]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 2
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: a } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: lookup, arguments: { key: b } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "A" } }
+        - ok: { output: { value: "B" } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Keep looking things up" }]
+    expect: { ok: true, endReason: step_limit }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, runId: $r1, turn: 1, step: 1 }
+          - { type: model.request, runId: $r1, turn: 1, step: 2 }
+          - { type: tool.result, runId: $r1, turn: 1, step: 2, payload: { callId: c2 } }
+          - { type: run.ended, runId: $r1, payload: { reason: step_limit } }
+      absentEvents:
+        - { type: model.request, step: 3 }
+  providerRequests:
+    scripted-a: { count: 2 }

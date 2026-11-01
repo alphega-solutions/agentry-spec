@@ -1,0 +1,64 @@
+schemaVersion: "0.1.0"
+id: core.concurrent-runs-separate-processes
+title: Two run() calls on one session from separate processes start exactly one run
+description: >-
+  Two processes sharing the same ports call run() on the same idle session at
+  once. Optimistic concurrency on the checkpoint version admits exactly one:
+  only one further turn exists and the provider receives exactly one more
+  request (a request beyond the script fails the test, EVAL-031). Which
+  process wins is not specified, so the outcomes are matched as an unordered
+  multiset: exactly one `responded` and exactly one `conflict`.
+requirements: [CORE-030, CORE-032]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Second." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - separateProcesses: true
+    concurrently:
+      - action: run
+        session: $s
+        principal: p1
+        input: [{ type: text, text: "From process A" }]
+      - action: run
+        session: $s
+        principal: p1
+        input: [{ type: text, text: "From process B" }]
+    expect:
+      outcomes:
+        - { ok: true, endReason: responded }
+        - { ok: false, error: { category: conflict }, newEvents: 0 }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: turn.started, runId: $r1, turn: 1 }
+          - { type: run.ended, runId: $r1, payload: { reason: responded } }
+          - { type: turn.started, runId: $r2, turn: 2 }
+          - { type: run.ended, runId: $r2, payload: { reason: responded } }
+      absentEvents:
+        - { type: turn.started, turn: 3 }
+  providerRequests:
+    scripted-a: { count: 2 }

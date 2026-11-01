@@ -1,0 +1,81 @@
+schemaVersion: "0.1.0"
+id: core.block-no-allowed-model
+title: When no allowed model exists for the content in context, no call is made and the run ends `blocked` with the fallback
+description: >-
+  The lookup result is labelled pci, whose sensitivity policy allows no
+  provider. The second model call cannot be made to any model.
+requirements: [CORE-180, CORE-181, PROV-052]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+          pci:
+            allowedProviders: []
+            redaction: [{ mode: mask }]
+      - kind: Tool
+        id: lookup
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Look up a record by key.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        sensitivity: [pci]
+        binding: { kind: native, ref: test.lookup }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b: { responses: [] }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "SYN-PCI-VALUE-0180" } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1" }]
+    expect: { ok: true, endReason: blocked }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: c1 } }
+          - { type: policy.decision, payload: { kind: routing, outcome: block } }
+          - { type: run.ended, payload: { reason: blocked } }
+      absentEvents:
+        - { type: model.request, step: 2 }
+  providerRequests:
+    scripted-a: { count: 1 }
+    scripted-b: { count: 0 }
+  delivered:
+    $s: { text: "This request was blocked.", fallback: true }

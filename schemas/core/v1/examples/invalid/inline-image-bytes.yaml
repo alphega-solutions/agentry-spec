@@ -1,0 +1,8 @@
+schema: https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/part
+instance:
+  type: image
+  mediaType: image/png
+  blob: { id: b1, hash: "sha256:0000000000000000000000000000000000000000000000000000000000000000", mediaType: image/png, size: 8 }
+  data: "iVBORw0KGgo="
+  provenance: "attachment:upload"
+  labels: []

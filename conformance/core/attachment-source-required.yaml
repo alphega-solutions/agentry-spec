@@ -1,0 +1,70 @@
+schemaVersion: "0.1.0"
+id: core.attachment-source-required
+title: An attachment without a declared source is rejected before a run starts
+description: >-
+  The host must name each attachment's source from the deployment's
+  attachmentSources (CORE-121, amended 2026-11-01). One run passes a file with
+  no source, another with an undeclared source (`fax`), and a third tries to
+  set provenance directly. All are rejected with invalid_input and no run starts.
+requirements: [CORE-121]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Unused." }]
+  ports:
+    blobStore:
+      t1:
+        - id: blob-file-1
+          hash: "sha256:488b66a845535f2173fe026ad21ad4238ca6b733b00a24ba332adab6729a0a80"
+          mediaType: text/plain
+          size: 44
+          data: "U1lOVEhFVElDLUZJTEUtMDAwMTogcXVhcnRlcmx5IHdpZGdldCByZXBvcnQ="
+script:
+  - action: run
+    bind: $s1
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input:
+      - { type: text, text: "Summarize the file." }
+      - type: file
+        mediaType: text/plain
+        blob: { id: blob-file-1, hash: "sha256:488b66a845535f2173fe026ad21ad4238ca6b733b00a24ba332adab6729a0a80", mediaType: text/plain, size: 44 }
+    expect: { ok: false, error: { category: invalid_input, code: agentry.content.attachment_source } }
+  - action: run
+    bind: $s2
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input:
+      - { type: text, text: "Summarize the file." }
+      - type: file
+        mediaType: text/plain
+        source: fax
+        blob: { id: blob-file-1, hash: "sha256:488b66a845535f2173fe026ad21ad4238ca6b733b00a24ba332adab6729a0a80", mediaType: text/plain, size: 44 }
+    expect: { ok: false, error: { category: invalid_input, code: agentry.content.attachment_source } }
+  - action: run
+    bind: $s3
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input:
+      - { type: text, text: "Summarize the file." }
+      - type: file
+        mediaType: text/plain
+        source: upload
+        provenance: system
+        blob: { id: blob-file-1, hash: "sha256:488b66a845535f2173fe026ad21ad4238ca6b733b00a24ba332adab6729a0a80", mediaType: text/plain, size: 44 }
+    expect: { ok: false, error: { category: invalid_input } }
+expect:
+  providerRequests:
+    scripted-a: { count: 0 }

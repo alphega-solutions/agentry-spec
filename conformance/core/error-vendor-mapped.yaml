@@ -1,0 +1,95 @@
+schemaVersion: "0.1.0"
+id: core.error-vendor-mapped
+title: Vendor-native provider errors are mapped into the agentry error shape, with vendor detail only in `details`
+description: >-
+  The scripted provider returns vendor-native errors: a vendor code and a
+  vendor category that are not agentry values. The adapter must map them per
+  PROV-080. Session 1: a vendor rate-limit error maps to
+  agentry.provider.unavailable (unavailable, retryable), so the harness
+  retries the same model (retry.unavailable is 2), which succeeds. Session 2: a vendor authentication
+  error maps to agentry.provider.auth (unavailable, not retryable), so the
+  harness fails over to scripted-b before the turn's first completed call.
+  Each error event carries the full error shape with source provider and the
+  agentry code; the vendor code appears nowhere except, optionally, in
+  `details`.
+requirements: [CORE-194, CORE-190, PROV-080]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - error: { category: rate_limit_error, code: vendor.rate_limited, retryable: true }
+        - parts: [{ type: text, text: "Hello after retry." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - error: { category: authentication_error, code: vendor.authentication_failed, retryable: false }
+    scripted-b:
+      responses:
+        - parts: [{ type: text, text: "Hello from the fallback." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $s1
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $s2
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi again" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s1:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, payload: { provider: scripted-a, role: primary } }
+          - type: error
+            payload:
+              error:
+                code: agentry.provider.unavailable
+                category: unavailable
+                retryable: true
+                source: provider
+                message: { $not: { $regex: "vendor\\.rate_limited|rate_limit_error" } }
+          - { type: model.request, payload: { provider: scripted-a, role: primary } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: error, payload: { error: { code: vendor.rate_limited } } }
+        - { type: error, payload: { error: { category: rate_limit_error } } }
+    $s2:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, payload: { provider: scripted-a, role: primary } }
+          - type: error
+            payload:
+              error:
+                code: agentry.provider.auth
+                category: unavailable
+                retryable: false
+                source: provider
+                message: { $not: { $regex: "vendor\\.authentication_failed|authentication_error" } }
+          - { type: model.request, payload: { provider: scripted-b, role: fallback, fallbackReason: failover } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: error, payload: { error: { code: vendor.authentication_failed } } }
+        - { type: error, payload: { error: { category: authentication_error } } }
+  providerRequests:
+    scripted-a: { count: 3 }
+    scripted-b: { count: 1 }
+  delivered:
+    $s1: { text: "Hello after retry." }
+    $s2: { text: "Hello from the fallback." }
+  schemaValid: true

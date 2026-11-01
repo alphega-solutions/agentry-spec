@@ -1,0 +1,50 @@
+schemaVersion: "0.1.0"
+id: core.idle-ttl-expiry
+title: An idle session whose idleTtl elapses is closed `expired`
+description: >-
+  The baseline profile sets idleTtl PT24H. After the virtual clock advances
+  past it, the session is reported closed (`expired`) even if expiry is
+  detected lazily, and a further run() is refused with `conflict`.
+requirements: [CORE-020, CORE-021, CORE-041]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - clock: { advance: PT24H }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Still there?" }]
+    expect: { ok: false, error: { category: conflict } }
+expect:
+  sessions:
+    $s:
+      state: closed
+      closeReason: expired
+      events:
+        mode: subsequence
+        items:
+          - { type: run.ended, payload: { reason: responded } }
+          - { type: session.closed, runId: { $absent: true }, payload: { reason: expired } }
+      absentEvents:
+        - { type: turn.started, turn: 2 }
+  providerRequests:
+    scripted-a: { count: 1 }

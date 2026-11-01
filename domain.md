@@ -274,3 +274,7 @@ Provenance gains one value: **`reviewer`** — content supplied by a reviewer in
 - **Port** list (§9): "trace sink" is replaced by the **event log** (the persisted, ordered events — the system of record) and an optional **telemetry exporter** (observability spans, never a system of record). The **snapshot store** is added. Every storing port is tenant-scoped, encrypted at rest, and never deduplicates across tenants.
 - New term — **Legal hold**: a deployment-placed hold on a tenant or session that suspends retention deletion.
 
+## Amendment 2026-11-01 — from Phase 4 review
+
+Provenance gains **`attachment:<source>`** — an image or file supplied with a request, through the channel the host declares. Untrusted unless the source is listed in `trustedAttachmentSources` (CORE-121).
+

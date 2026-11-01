@@ -1,0 +1,12 @@
+kind: HarnessProfile
+id: streamed
+version: 1
+schemaVersion: "0.1.0"
+idleTtl: PT24H
+suspendedTtl: PT72H
+stepLimit: 8
+deliveryMode: streamed
+budget: { tokens: 100000 }
+timeouts: { run: PT5M, tool: PT30S }
+retry: { unavailable: 2 }
+limits: { partSize: 1048576, sessionSize: 10485760 }

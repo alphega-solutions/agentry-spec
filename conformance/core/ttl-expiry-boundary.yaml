@@ -1,0 +1,133 @@
+schemaVersion: "0.1.0"
+id: core.ttl-expiry-boundary
+title: A TTL has elapsed when the current time equals the expiry time, and not one second before
+description: >-
+  Per the 2026-11-01 amendment (CORE-040/041), a TTL has elapsed when the
+  current time is equal to or later than the expiry time. Idle sessions $a
+  and $b become idle one second apart ($b later). The clock is then advanced
+  so that it equals $a's idle expiry exactly, which is one second before
+  $b's. $a must be reported closed (expired), so run() on it is refused;
+  $b must still be idle and accept a run() (turn 2 responds). The same is
+  checked for suspendedTtl: at exactly $c's suspended expiry, $c is closed
+  (expired) and $d, one second younger, is still suspended. ($b's own idle
+  TTL lapses later in the script; its final state is not asserted.)
+requirements: [CORE-040, CORE-041]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, ref: test.update_record }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Hello A." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Hello B." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Still here." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: k2, value: v2 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  # Idle TTL (PT24H).
+  - action: run
+    bind: $a
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - clock: { advance: PT1S }
+  - action: run
+    bind: $b
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  # Now exactly at $a's idle expiry; $b has one second left.
+  - clock: { set: "2026-01-02T00:00:00Z" }
+  - action: run
+    session: $a
+    principal: p1
+    input: [{ type: text, text: "Too late" }]
+    expect: { ok: false, error: { category: conflict } }
+  - action: run
+    session: $b
+    principal: p1
+    input: [{ type: text, text: "Still there?" }]
+    expect: { ok: true, endReason: responded }
+  # Suspended TTL (PT72H).
+  - action: run
+    bind: $c
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    expect: { ok: true, endReason: escalated }
+  - clock: { advance: PT1S }
+  - action: run
+    bind: $d
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k2 to v2" }]
+    expect: { ok: true, endReason: escalated }
+  # Now exactly at $c's suspended expiry; $d has one second left.
+  - clock: { set: "2026-01-05T00:00:00Z" }
+expect:
+  sessions:
+    $a:
+      state: closed
+      closeReason: expired
+      events:
+        mode: subsequence
+        items:
+          - { type: run.ended, payload: { reason: responded } }
+          - { type: session.closed, runId: { $absent: true }, payload: { reason: expired } }
+      absentEvents:
+        - { type: turn.started, turn: 2 }
+    $b:
+      events:
+        mode: subsequence
+        items:
+          - { type: turn.started, turn: 2 }
+          - { type: run.ended, payload: { reason: responded } }
+    $c:
+      state: closed
+      closeReason: expired
+      events:
+        mode: subsequence
+        items:
+          - { type: run.ended, payload: { reason: escalated } }
+          - { type: session.closed, runId: { $absent: true }, payload: { reason: expired } }
+    $d:
+      state: suspended
+      absentEvents:
+        - { type: session.closed }
+  providerRequests:
+    scripted-a: { count: 5 }

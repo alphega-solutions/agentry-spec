@@ -1,0 +1,25 @@
+schemaVersion: "0.1.0"
+id: core.session-without-principal-rejected
+title: Creating a session without a principal fails with `invalid_input`
+requirements: [CORE-011]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses: []
+script:
+  - action: run
+    tenant: t1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: false, error: { category: invalid_input } }
+expect:
+  providerRequests:
+    scripted-a: { count: 0 }

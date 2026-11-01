@@ -136,16 +136,16 @@ A session is in exactly one state.
 
 - **CORE-110** The part types above are the complete set. Implementations **MUST** reject any other part type with error category `invalid_input`. Adapter-specific data **MUST** be placed in `extensions`.
 - **CORE-111** Every part **MUST** carry a provenance and a (possibly empty) set of sensitivity labels.
-- **CORE-112** `image` and `file` parts **MUST** carry a media type and a blob reference, and **MUST NOT** carry inline binary data.
+- **CORE-112** `image` and `file` parts **MUST** carry a media type and a blob reference, and **MUST NOT** carry inline binary data. A part that violates this **MUST** be rejected with error category `invalid_input`.
 - **CORE-113** A blob reference **MUST** include an ID, content hash, media type, and size, and **MUST** be scoped to the session's tenant. Resolving a blob reference from another tenant **MUST** fail with error category `not_found`.
-- **CORE-114** A part **MUST NOT** reference an external URL for retrieval. Hosts ingest content into the BlobStore first.
+- **CORE-114** A part **MUST NOT** reference an external URL for retrieval; such a part **MUST** be rejected with error category `invalid_input`. Hosts ingest content into the BlobStore first.
 - **CORE-115** A part exceeding the profile's per-part size limit, or a part that would take the session's total content size over the per-session limit, **MUST** be rejected with error category `invalid_input`.
 
 ### 7.3 Provenance of content
 
 - **CORE-119** Content from persona and policy instructions **MUST** have provenance `system` and is trusted.
 - **CORE-120** Text typed by the principal **MUST** have provenance `principal`. It is trusted as a request, never as policy.
-- **CORE-121** `image` and `file` parts supplied with a request (attachments) **MUST** be untrusted, regardless of who supplied them, unless a policy bundle marks their source trusted.
+- **CORE-121** `image` and `file` parts supplied with a request (attachments) **MUST** carry provenance `attachment:<source>`, where `<source>` is the channel the host declares (e.g. `upload`). They **MUST** be untrusted, regardless of who supplied them, unless a policy bundle lists their source in `trustedAttachmentSources`.
 - **CORE-122** Content derived from a part (for example, text extracted from a file) **MUST** inherit that part's provenance and labels.
 - **CORE-123** Until a hook labels it, an attachment **MUST** carry the harness profile's default attachment labels.
 - **CORE-124** Parts produced by a tool **MUST** have provenance `tool:<name>` and carry the tool's sensitivity labels; they are untrusted unless a policy bundle marks the tool `trustedOutput: true`.
@@ -163,7 +163,7 @@ The consequences of provenance and taint for tool calls are specified in Area 5.
 ### 8.1 Structured output
 
 - **CORE-130** When the persona or harness profile declares an output schema, a `responded` run's final assistant message **MUST** contain a `structured` part that validates against it. It **MAY** also contain `text` parts.
-- **CORE-131** A profile that declares an output schema and `streamed` delivery is a configuration error.
+- **CORE-131** A profile that declares an output schema and `streamed` delivery **MUST** be rejected as a configuration error.
 - **CORE-132** If the model's output fails validation, the implementation **MUST** request a correction, up to the profile's retry limit. Each correction is a step and counts toward the step limit and budget.
 - **CORE-133** If the retry limit is reached, the run **MUST** end `failed` with error code `agentry.output.schema_mismatch` (category `fatal`).
 - **CORE-134** Schema validation **MUST** complete before `beforeResponse` hooks run, and those hooks **MUST** receive the validated value.
@@ -205,7 +205,7 @@ The consequences of provenance and taint for tool calls are specified in Area 5.
 ### 9.2 Ordering and persistence
 
 - **CORE-160** Every persisted event **MUST** have a sequence number (`seq`) that is unique, strictly increasing, and gap-free within its session, across all runs.
-- **CORE-161** Events are immutable once persisted.
+- **CORE-161** Persisted events **MUST NOT** be modified.
 - **CORE-162** Ephemeral events (`model.delta`) **MUST** carry the envelope without `seq` and **MUST NOT** be persisted, traced, or checkpointed.
 - **CORE-163** If `model.delta` events are emitted for a model response, their concatenated content **MUST** equal the content of the corresponding `model.response`.
 
@@ -249,7 +249,7 @@ When a hook or policy decision blocks, the effect depends on where it occurs. Ho
 | `afterToolCall` | The result is withheld; the model receives a `policy` error as that tool's result and the turn may continue |
 | `beforeResponse` | The response is withheld; the run ends `blocked` |
 
-- **CORE-182** Hooks at `onError` and `sessionEnd` cannot change a run's outcome. A hook definition at these points that declares `rewrite`, `block`, or `escalate` is a configuration error.
+- **CORE-182** Hooks at `onError` and `sessionEnd` cannot change a run's outcome. A hook definition at these points that declares `rewrite`, `block`, or `escalate` **MUST** be rejected as a configuration error.
 - **CORE-181** When a run ends `blocked`, the principal **MUST** receive the fallback message declared in the persona, or the policy bundle default if the persona declares none. The fallback message **MUST NOT** be generated by a model.
 
 ## 11. Errors
@@ -390,4 +390,18 @@ These requirements went beyond the settled notes and ADRs and were approved with
 
 - **CORE-001–003**: implementations obtain time and IDs (including UUIDv7 time components) from an injectable clock and seedable ID generator (EVAL-034).
 - All areas: a requirement may be annotated *(untestable)* with a reason; every other normative requirement must be covered by a conformance fixture (EVAL-010).
+
+## Amendment 2026-11-01 — from Phase 4 review (approved with the Phase 4 Area 1 pull request)
+
+Writing schemas and fixtures for this area exposed these gaps. Requirement text above has been edited where noted.
+
+- **CORE-112, CORE-114** now name their error category: `invalid_input`.
+- **CORE-121** attachments carry a new provenance value, `attachment:<source>`, which `trustedAttachmentSources` matches. This adds one value to the provenance list in `domain.md` §7.
+- **CORE-121 — declaring the source.** The host **MUST** state the source of each attachment it passes to `run()`, as a channel name (e.g. `upload`, `email`). Channel names **MUST** be declared in the deployment's `attachmentSources` list *(extends CFG-110)*. An attachment with no source, or an undeclared one, **MUST** be rejected with `invalid_input` (`agentry.content.attachment_source`) before a run starts. The implementation sets the part's provenance to `attachment:<source>`; a host cannot supply any other provenance.
+- **CORE-131, CORE-161, CORE-182** reworded with **MUST**, so they are normative and covered by fixtures.
+- **CORE-191** `unauthorized` covers the principal lacking rights in the host's authorization; a principal below a tool's `minAssurance` produces `policy` (CORE-180, TOOL pipeline stage 4). The table's "or assurance" is withdrawn.
+- **CORE-191** `not_found` and `conflict` errors returned by a **tool** are delivered to the model as tool results, like `invalid_input`; "returned to the caller" applies to host operations only.
+- **CORE-020** `close()` on an `active` session **MUST** fail with error category `conflict`.
+- **CORE-040/041** a TTL has elapsed when the current time is equal to or later than the expiry time.
+- **CORE-150/170** `model.response` is persisted after `afterModelCall` hooks, and records the response as those hooks left it, with any labels they added (consistent with TOOL-073 for tool results).
 

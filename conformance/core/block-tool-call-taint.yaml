@@ -1,0 +1,71 @@
+schemaVersion: "0.1.0"
+id: core.block-tool-call-taint
+title: A taint-rule block on a mutating call skips the tool and returns a `policy` error to the model; the turn continues
+description: >-
+  The lookup result is untrusted (lookup is not in trustedTools), so the
+  session is tainted. update_record declares onTainted: block, so its call is
+  stopped by the taint rule.
+requirements: [CORE-180]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        onTainted: block
+        binding: { kind: native, ref: test.update_record }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: k1, value: v2 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Update refused." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "synthetic untrusted value" } }
+      update_record: []
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1 then update it" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: c1 } }
+          - { type: policy.decision, payload: { kind: taint, outcome: block, callId: c2 } }
+          - { type: tool.result, payload: { callId: c2, result: { error: { category: policy } } } }
+          - { type: model.request, step: 3 }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call, payload: { callId: c2 } }
+  stubCalls:
+    lookup: { count: 1 }
+    update_record: { count: 0 }

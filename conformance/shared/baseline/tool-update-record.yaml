@@ -1,0 +1,13 @@
+kind: Tool
+id: update_record
+version: 1
+schemaVersion: "0.1.0"
+description: Update a record.
+input:
+  type: object
+  additionalProperties: false
+  required: [key, value]
+  properties: { key: { type: string }, value: { type: string } }
+effect: mutating
+idempotent: false
+binding: { kind: native, ref: test.update_record }

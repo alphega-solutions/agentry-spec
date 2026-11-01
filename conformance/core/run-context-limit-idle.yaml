@@ -1,0 +1,80 @@
+schemaVersion: "0.1.0"
+id: core.run-context-limit-idle
+title: Context that cannot fit after compaction ends the run `context_limit` and leaves the session `idle`
+description: >-
+  Both scripted models declare contextLimit 200 and maxOutputTokens 20, and
+  the profile compacts by truncate. The first input is about 3,000
+  characters, far over the space available; the current turn's principal
+  message cannot be dropped (CTX-060), so context cannot fit after
+  compaction. No model call is made, an error event (limit,
+  agentry.context.overflow) is emitted, and the run ends context_limit. The
+  session is idle, so a later run() with a short input is accepted:
+  truncation drops the earlier turn and the run responds.
+requirements: [CORE-020, CORE-060, CORE-061]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+        context: { compaction: { mode: truncate } }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { contextLimit: 200, maxOutputTokens: 20 }
+      responses:
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      capabilities: { contextLimit: 200, maxOutputTokens: 20 }
+      responses: []
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYNTHETIC-FILLER-0000 SYNTHETIC-FILLER-0001 SYNTHETIC-FILLER-0002 SYNTHETIC-FILLER-0003 SYNTHETIC-FILLER-0004 SYNTHETIC-FILLER-0005 SYNTHETIC-FILLER-0006 SYNTHETIC-FILLER-0007 SYNTHETIC-FILLER-0008 SYNTHETIC-FILLER-0009 SYNTHETIC-FILLER-0010 SYNTHETIC-FILLER-0011 SYNTHETIC-FILLER-0012 SYNTHETIC-FILLER-0013 SYNTHETIC-FILLER-0014 SYNTHETIC-FILLER-0015 SYNTHETIC-FILLER-0016 SYNTHETIC-FILLER-0017 SYNTHETIC-FILLER-0018 SYNTHETIC-FILLER-0019 SYNTHETIC-FILLER-0020 SYNTHETIC-FILLER-0021 SYNTHETIC-FILLER-0022 SYNTHETIC-FILLER-0023 SYNTHETIC-FILLER-0024 SYNTHETIC-FILLER-0025 SYNTHETIC-FILLER-0026 SYNTHETIC-FILLER-0027 SYNTHETIC-FILLER-0028 SYNTHETIC-FILLER-0029 SYNTHETIC-FILLER-0030 SYNTHETIC-FILLER-0031 SYNTHETIC-FILLER-0032 SYNTHETIC-FILLER-0033 SYNTHETIC-FILLER-0034 SYNTHETIC-FILLER-0035 SYNTHETIC-FILLER-0036 SYNTHETIC-FILLER-0037 SYNTHETIC-FILLER-0038 SYNTHETIC-FILLER-0039 SYNTHETIC-FILLER-0040 SYNTHETIC-FILLER-0041 SYNTHETIC-FILLER-0042 SYNTHETIC-FILLER-0043 SYNTHETIC-FILLER-0044 SYNTHETIC-FILLER-0045 SYNTHETIC-FILLER-0046 SYNTHETIC-FILLER-0047 SYNTHETIC-FILLER-0048 SYNTHETIC-FILLER-0049 SYNTHETIC-FILLER-0050 SYNTHETIC-FILLER-0051 SYNTHETIC-FILLER-0052 SYNTHETIC-FILLER-0053 SYNTHETIC-FILLER-0054 SYNTHETIC-FILLER-0055 SYNTHETIC-FILLER-0056 SYNTHETIC-FILLER-0057 SYNTHETIC-FILLER-0058 SYNTHETIC-FILLER-0059 SYNTHETIC-FILLER-0060 SYNTHETIC-FILLER-0061 SYNTHETIC-FILLER-0062 SYNTHETIC-FILLER-0063 SYNTHETIC-FILLER-0064 SYNTHETIC-FILLER-0065 SYNTHETIC-FILLER-0066 SYNTHETIC-FILLER-0067 SYNTHETIC-FILLER-0068 SYNTHETIC-FILLER-0069 SYNTHETIC-FILLER-0070 SYNTHETIC-FILLER-0071 SYNTHETIC-FILLER-0072 SYNTHETIC-FILLER-0073 SYNTHETIC-FILLER-0074 SYNTHETIC-FILLER-0075 SYNTHETIC-FILLER-0076 SYNTHETIC-FILLER-0077 SYNTHETIC-FILLER-0078 SYNTHETIC-FILLER-0079 SYNTHETIC-FILLER-0080 SYNTHETIC-FILLER-0081 SYNTHETIC-FILLER-0082 SYNTHETIC-FILLER-0083 SYNTHETIC-FILLER-0084 SYNTHETIC-FILLER-0085 SYNTHETIC-FILLER-0086 SYNTHETIC-FILLER-0087 SYNTHETIC-FILLER-0088 SYNTHETIC-FILLER-0089 SYNTHETIC-FILLER-0090 SYNTHETIC-FILLER-0091 SYNTHETIC-FILLER-0092 SYNTHETIC-FILLER-0093 SYNTHETIC-FILLER-0094 SYNTHETIC-FILLER-0095 SYNTHETIC-FILLER-0096 SYNTHETIC-FILLER-0097 SYNTHETIC-FILLER-0098 SYNTHETIC-FILLER-0099 SYNTHETIC-FILLER-0100 SYNTHETIC-FILLER-0101 SYNTHETIC-FILLER-0102 SYNTHETIC-FILLER-0103 SYNTHETIC-FILLER-0104 SYNTHETIC-FILLER-0105 SYNTHETIC-FILLER-0106 SYNTHETIC-FILLER-0107 SYNTHETIC-FILLER-0108 SYNTHETIC-FILLER-0109 SYNTHETIC-FILLER-0110 SYNTHETIC-FILLER-0111 SYNTHETIC-FILLER-0112 SYNTHETIC-FILLER-0113 SYNTHETIC-FILLER-0114 SYNTHETIC-FILLER-0115 SYNTHETIC-FILLER-0116 SYNTHETIC-FILLER-0117 SYNTHETIC-FILLER-0118 SYNTHETIC-FILLER-0119 SYNTHETIC-FILLER-0120 SYNTHETIC-FILLER-0121 SYNTHETIC-FILLER-0122 SYNTHETIC-FILLER-0123 SYNTHETIC-FILLER-0124 SYNTHETIC-FILLER-0125 SYNTHETIC-FILLER-0126 SYNTHETIC-FILLER-0127 SYNTHETIC-FILLER-0128 SYNTHETIC-FILLER-0129 SYNTHETIC-FILLER-0130 SYNTHETIC-FILLER-0131 SYNTHETIC-FILLER-0132 SYNTHETIC-FILLER-0133 SYNTHETIC-FILLER-0134 SYNTHETIC-FILLER-0135 SYNTHETIC-FILLER-0136 SYNTHETIC-FILLER-0137 SYNTHETIC-FILLER-0138 SYNTHETIC-FILLER-0139 SYNTHETIC-FILLER-0140 SYNTHETIC-FILLER-0141 SYNTHETIC-FILLER-0142 SYNTHETIC-FILLER-0143 SYNTHETIC-FILLER-0144 SYNTHETIC-FILLER-0145 SYNTHETIC-FILLER-0146 SYNTHETIC-FILLER-0147 SYNTHETIC-FILLER-0148 SYNTHETIC-FILLER-0149" }]
+    expect: { ok: true, endReason: context_limit }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: turn.started, runId: $r1, turn: 1 }
+          - { type: error, runId: $r1, payload: { error: { category: limit, code: agentry.context.overflow } } }
+          - { type: run.ended, runId: $r1, payload: { reason: context_limit } }
+          - { type: turn.started, runId: $r2, turn: 2 }
+          - { type: model.request, runId: $r2, turn: 2, step: 1 }
+          - { type: run.ended, runId: $r2, payload: { reason: responded } }
+      absentEvents:
+        - { type: model.request, turn: 1 }
+        - { type: session.closed }
+  providerRequests:
+    scripted-a: { count: 1 }
+    scripted-b: { count: 0 }

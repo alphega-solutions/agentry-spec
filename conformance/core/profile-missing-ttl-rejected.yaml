@@ -1,0 +1,33 @@
+schemaVersion: "0.1.0"
+id: core.profile-missing-ttl-rejected
+title: A harness profile without idleTtl or without suspendedTtl is a configuration error
+requirements: [CORE-040]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  - load:
+      artifacts:
+        - kind: HarnessProfile
+          id: no-idle-ttl
+          version: 1
+          schemaVersion: "0.1.0"
+          suspendedTtl: PT72H
+          stepLimit: 8
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - kind: HarnessProfile
+          id: no-suspended-ttl
+          version: 1
+          schemaVersion: "0.1.0"
+          idleTtl: PT24H
+          stepLimit: 8
+    expect: { ok: false, error: { category: configuration } }
+expect: {}

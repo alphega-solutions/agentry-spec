@@ -1,0 +1,72 @@
+schemaVersion: "0.1.0"
+id: core.part-size-limits
+title: A part over the per-part limit, or one taking the session over its total limit, is rejected with `invalid_input`
+description: >-
+  partSize is 64 bytes and sessionSize 100 bytes. Text parts are synthetic
+  strings of known length. A 70-byte part exceeds partSize. A 40-byte part is
+  accepted (at most 97 bytes even if system content and the 3-byte response
+  are counted). A further 62-byte part takes principal content alone to 102
+  bytes, over sessionSize.
+requirements: [CORE-115]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 64, sessionSize: 100 }
+        defaultAttachmentLabels: []
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "OK." }]
+          usage: { inputTokens: 30, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  # 70-byte part: over partSize.
+  - action: run
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }]
+    expect: { ok: false, error: { category: invalid_input } }
+  # 40-byte part: within both limits.
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }]
+    expect: { ok: true, endReason: responded }
+  # A second 62-byte part: within partSize, but the session total exceeds 100.
+  - action: run
+    session: $s
+    tenant: t1
+    principal: p1
+    input: [{ type: text, text: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" }]
+    expect: { ok: false, error: { category: invalid_input } }
+expect:
+  sessions:
+    $s:
+      state: idle
+  providerRequests:
+    scripted-a: { count: 1 }
+  noPersistedContent:
+    - "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    - "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"

@@ -1,0 +1,103 @@
+schemaVersion: "0.1.0"
+id: core.error-category-drives-handling
+title: Handling follows the error category, never the message or code text
+description: >-
+  Session 1: lookup fails with category invalid_input, but a message and
+  code that name other categories. The error is returned to the model and the
+  turn continues to `responded`. Session 2: lookup fails with category fatal,
+  but a message and code suggesting a correctable input problem. The run ends
+  `failed` and the session closes. Session 3: lookup fails with category
+  cancelled and a message suggesting success; the run ends `cancelled`.
+requirements: [CORE-191, CORE-192]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Please give a valid key." }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: lookup, arguments: { key: k2 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c3, tool: lookup, arguments: { key: k3 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - error:
+            category: invalid_input
+            code: test.fatal.unavailable_cancelled
+            retryable: false
+            message: "fatal: service unavailable, run cancelled, timeout limit reached"
+        - error:
+            category: fatal
+            code: test.invalid_input.retry
+            retryable: false
+            message: "invalid input; please correct the key and retry"
+        - error:
+            category: cancelled
+            code: test.ok.completed
+            retryable: false
+            message: "ok: completed successfully"
+script:
+  - action: run
+    bind: $s1
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $s2
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k2" }]
+    expect: { ok: true, endReason: failed }
+  - action: run
+    bind: $s3
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k3" }]
+    expect: { ok: true, endReason: cancelled }
+expect:
+  sessions:
+    $s1:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: c1, result: { error: { category: invalid_input } } } }
+          - { type: model.request, step: 2 }
+          - { type: run.ended, payload: { reason: responded } }
+    $s2:
+      state: closed
+      closeReason: failed
+      events:
+        mode: subsequence
+        items:
+          - { type: run.ended, payload: { reason: failed } }
+      absentEvents:
+        - { type: model.request, step: 2 }
+    $s3:
+      state: closed
+      closeReason: cancelled
+      events:
+        mode: subsequence
+        items:
+          - { type: run.ended, payload: { reason: cancelled } }
+      absentEvents:
+        - { type: model.request, step: 2 }
+  stubCalls:
+    lookup: { count: 3 }
+  providerRequests:
+    scripted-a: { count: 4 }

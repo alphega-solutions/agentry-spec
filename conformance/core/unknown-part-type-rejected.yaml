@@ -1,0 +1,45 @@
+schemaVersion: "0.1.0"
+id: core.unknown-part-type-rejected
+title: A part type outside the closed set is rejected with `invalid_input`
+requirements: [CORE-110]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Hello.", extensions: { "vendor.example": { tag: x } } }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: audio, data: "c3ludGhldGlj" }]
+    expect: { ok: false, error: { category: invalid_input } }
+  - action: run
+    bind: $s2
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s2:
+      events:
+        mode: contains
+        items:
+          - type: model.response
+            payload:
+              message:
+                parts: [{ type: text, text: "Hello.", extensions: { "vendor.example": { tag: x } } }]
+  providerRequests:
+    scripted-a: { count: 1 }

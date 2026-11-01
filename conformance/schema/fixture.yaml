@@ -1,0 +1,467 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://alphega.io/agentry/schemas/conformance/fixture/v1.json
+title: Conformance fixture
+description: >-
+  Format of a conformance fixture (EVAL-001–004). Values beginning with "$"
+  followed by an identifier are placeholders that bind on first match and must
+  match consistently afterwards (EVAL-002). Write "$$" for a literal "$".
+  Matcher objects may appear anywhere in expectations: {"$any": true},
+  {"$absent": true}, {"$regex": "..."}, {"$len": n}, {"$contains": [...]},
+  {"$not": <value or matcher>}, {"$every": <matcher applied to each array
+  element>}, {"$gte": n}, {"$lte": n}, {"$all": [<matchers that must all
+  hold>]}. Placeholders may be bound in `expect`
+  or by a step's `capture`; a placeholder used in a step must be bound by an
+  earlier step's capture. Arrays in expectations match exactly — same
+  length, same order — unless wrapped in {"$contains": [...]}; objects match
+  partially. `delayMs` and timeouts are measured on the virtual clock.
+  Scripted provider `capabilities` are merged over defaults in which every
+  boolean capability is true and limits are 1,000,000 tokens.
+type: object
+additionalProperties: false
+required: [schemaVersion, id, title, requirements, contract, setup, script, expect]
+properties:
+  schemaVersion: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/contractVersion" }
+  id:
+    type: string
+    pattern: "^[a-z0-9]+(\\.[a-z0-9-]+)+$"
+  title: { type: string, minLength: 1 }
+  description: { type: string }
+  requirements:
+    type: array
+    minItems: 1
+    uniqueItems: true
+    items: { type: string, pattern: "^[A-Z]+-[0-9]{3}$" }
+  contract:
+    description: Contract version range, e.g. ">=0.1.0 <1.0.0".
+    type: string
+  features:
+    description: Optional features required; empty means mandatory behaviour (EVAL-022).
+    type: array
+    items: { type: string, pattern: "^[a-z0-9]+(\\.[a-z0-9_-]+)*$" }
+  setup: { $ref: "#/$defs/setup" }
+  script:
+    type: array
+    minItems: 1
+    items: { $ref: "#/$defs/step" }
+  expect: { $ref: "#/$defs/expect" }
+
+$defs:
+  placeholder:
+    type: string
+    pattern: "^\\$[A-Za-z_][A-Za-z0-9_]*$"
+
+  setup:
+    type: object
+    additionalProperties: false
+    required: [clock, idSeed, config, tenants]
+    properties:
+      clock: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/timestamp" }
+      idSeed: { type: integer, minimum: 0 }
+      config:
+        type: object
+        additionalProperties: false
+        required: [base]
+        properties:
+          base:
+            description: Shared configuration set under conformance/shared/.
+            type: string
+          artifacts:
+            description: Artifacts added to, or replacing (same kind, id, version), the base set.
+            type: array
+            items: { type: object, required: [kind, id, version] }
+          remove:
+            description: Artifact references to remove from the base set.
+            type: array
+            items: { type: string }
+      tenants:
+        type: array
+        minItems: 1
+        items:
+          type: object
+          additionalProperties: false
+          required: [id, principals]
+          properties:
+            id: { type: string }
+            principals:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [id, subject]
+                properties:
+                  id: { type: string }
+                  subject: { type: string }
+                  roles: { type: array, items: { type: string } }
+                  attributes: { type: object }
+                  assurance: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/assuranceLevel" }
+                  human: { type: boolean, default: true }
+                  service: { type: boolean, default: false }
+      providers:
+        description: Scripted providers (EVAL-031), keyed by provider ID in the deployment.
+        type: object
+        additionalProperties:
+          type: object
+          additionalProperties: false
+          required: [responses]
+          properties:
+            capabilities: { type: object }
+            responses:
+              type: array
+              items: { $ref: "#/$defs/scriptedResponse" }
+      stubs:
+        description: Scripted stand-ins (EVAL-032).
+        type: object
+        additionalProperties: false
+        properties:
+          tools:
+            type: object
+            additionalProperties:
+              type: array
+              items: { $ref: "#/$defs/toolBehaviour" }
+          mcpServers: { type: object }
+          httpEndpoints: { type: object }
+          remoteHooks:
+            description: Scripted remote hook results, keyed by endpoint, consumed in order (HOOK-091).
+            type: object
+            additionalProperties:
+              type: array
+              items: { $ref: "#/$defs/hookBehaviour" }
+      ports:
+        description: Initial contents of in-memory ports, keyed by port name.
+        type: object
+      secrets:
+        description: Synthetic secret values served by the in-memory secrets provider, keyed by secret reference.
+        type: object
+        additionalProperties: { type: string }
+      limits:
+        description: Implementation limits the runner configures for this fixture.
+        type: object
+        additionalProperties: false
+        properties:
+          inlinePayloadBytes:
+            description: Payloads larger than this are stored in the BlobStore and referenced (CORE-154, TOOL-072).
+            type: integer
+            minimum: 1
+
+  scriptedResponse:
+    type: object
+    additionalProperties: false
+    properties:
+      parts:
+        description: Content parts the model returns; provenance and labels may be omitted (the harness assigns them).
+        type: array
+        items: { type: object, required: [type] }
+      deltas:
+        description: Deltas to emit before the final response, when streaming.
+        type: array
+        items: { type: string }
+      usage: { type: object }
+      error:
+        type: object
+        required: [category]
+        properties:
+          category: { type: string }
+          code: { type: string }
+          retryable: { type: boolean }
+      failAfterDeltas:
+        description: Emit the deltas, then fail with `error`.
+        type: boolean
+    oneOf:
+      - required: [parts]
+      - required: [error]
+
+  toolBehaviour:
+    type: object
+    additionalProperties: false
+    properties:
+      ok: { type: object, properties: { output: {} } }
+      error:
+        type: object
+        required: [category]
+        properties:
+          category: { type: string }
+          code: { type: string }
+          retryable: { type: boolean }
+          message: { type: string }
+      delayMs: { type: integer, minimum: 0 }
+      hang: { type: boolean, description: Never completes unless cancelled. }
+
+  hookBehaviour:
+    type: object
+    additionalProperties: false
+    oneOf:
+      - required: [result]
+      - required: [error]
+    properties:
+      result: { enum: [continue, annotate, rewrite, block, escalate] }
+      reasonCode: { type: string }
+      labels:
+        description: For annotate — labels to add, per part index.
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [part, labels]
+          properties:
+            part: { type: integer, minimum: 0 }
+            labels: { type: array, items: { type: string } }
+      parts:
+        description: For rewrite — replacement parts.
+        type: array
+        items: { type: object, required: [type] }
+      error:
+        description: The hook fails instead of answering.
+        type: object
+      delayMs: { type: integer, minimum: 0 }
+
+  capture:
+    description: >-
+      Binds placeholders from events persisted by the step, so later steps can use
+      them. `event` selects the first matching event in the step's session;
+      `bind` maps dotted paths in that event to placeholders.
+    type: object
+    additionalProperties: false
+    required: [event, bind]
+    properties:
+      session: { $ref: "#/$defs/placeholder" }
+      event: { type: object }
+      bind:
+        type: object
+        additionalProperties: { $ref: "#/$defs/placeholder" }
+
+  step:
+    type: object
+    oneOf:
+      - $ref: "#/$defs/actionStep"
+      - $ref: "#/$defs/clockStep"
+      - $ref: "#/$defs/crashStep"
+      - $ref: "#/$defs/restartStep"
+      - $ref: "#/$defs/abandonStep"
+      - $ref: "#/$defs/concurrentStep"
+      - $ref: "#/$defs/loadStep"
+
+  actionStep:
+    type: object
+    additionalProperties: false
+    required: [action]
+    properties:
+      action: { enum: [run, resume, decide, close, cancel] }
+      bind:
+        description: Placeholder bound to the session the action creates or targets.
+        $ref: "#/$defs/placeholder"
+      session: { $ref: "#/$defs/placeholder" }
+      tenant: { type: string }
+      principal: { type: string }
+      persona: { type: string }
+      profile: { type: string }
+      input:
+        description: Parts of the principal's message.
+        type: array
+        items: { type: object, required: [type] }
+      runtimeScope:
+        type: array
+        items: { type: string }
+      overrides: { type: object }
+      reviewer: { type: string, description: Principal ID of the reviewer for decide/resume. }
+      decisions: { type: array, items: { type: object } }
+      capture:
+        type: array
+        items: { $ref: "#/$defs/capture" }
+      startAfter:
+        description: Inside `concurrently` only — start this action once an event matching this pattern has been persisted.
+        type: object
+      expect: { $ref: "#/$defs/stepOutcome" }
+
+  loadStep:
+    description: Load (or reload) configuration; used by configuration fixtures.
+    type: object
+    additionalProperties: false
+    required: [load]
+    properties:
+      load:
+        type: object
+        additionalProperties: false
+        properties:
+          artifacts: { type: array, items: { type: object } }
+          remove: { type: array, items: { type: string } }
+      bind: { $ref: "#/$defs/placeholder" }
+      expect: { $ref: "#/$defs/stepOutcome" }
+
+  clockStep:
+    type: object
+    additionalProperties: false
+    required: [clock]
+    properties:
+      clock:
+        type: object
+        additionalProperties: false
+        oneOf:
+          - required: [advance]
+          - required: [set]
+        properties:
+          advance: { type: string, description: ISO 8601 duration, e.g. PT1H. }
+          set:
+            description: Set the virtual clock, possibly backwards, to test that order never depends on timestamps (CORE-003).
+            $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/timestamp"
+
+  crashStep:
+    type: object
+    additionalProperties: false
+    required: [crash]
+    properties:
+      crash:
+        type: object
+        additionalProperties: false
+        required: [at]
+        properties:
+          at:
+            description: Named crash points (EVAL-035).
+            enum: [after_started_record, after_dispatch, after_event_append]
+          session: { $ref: "#/$defs/placeholder" }
+
+  restartStep:
+    type: object
+    additionalProperties: false
+    required: [restart]
+    properties:
+      restart:
+        type: object
+        additionalProperties: false
+        properties:
+          ports:
+            description: Port contents to replace before restarting, keyed by port name; an empty object empties the port.
+            type: object
+
+  abandonStep:
+    type: object
+    additionalProperties: false
+    required: [abandon]
+    properties:
+      abandon:
+        type: object
+        additionalProperties: false
+        required: [session]
+        properties:
+          session: { $ref: "#/$defs/placeholder" }
+          afterEvents: { type: integer, minimum: 0 }
+
+  concurrentStep:
+    type: object
+    additionalProperties: false
+    required: [concurrently]
+    properties:
+      concurrently:
+        description: Actions started in listed order, each after the previous has begun and before it completes.
+        type: array
+        minItems: 2
+        items: { $ref: "#/$defs/actionStep" }
+      separateProcesses: { type: boolean }
+      expect:
+        type: object
+        additionalProperties: false
+        properties:
+          outcomes:
+            description: Matched against the actions' outcomes as an unordered multiset.
+            type: array
+            items: { $ref: "#/$defs/stepOutcome" }
+
+  stepOutcome:
+    type: object
+    additionalProperties: false
+    properties:
+      ok:
+        description: The host operation was accepted (no error returned to the host), whatever the run's end reason.
+        type: boolean
+      error:
+        type: object
+        additionalProperties: false
+        required: [category]
+        properties:
+          category: { type: string }
+          code: { type: string }
+      endReason: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/runEndReason" }
+      sameAs:
+        description: Index of an earlier step whose outcome this one must equal.
+        type: integer
+        minimum: 0
+      newEvents:
+        description: Number of events persisted as a result of this step (0 = none).
+        type: integer
+        minimum: 0
+
+  eventPattern:
+    type: object
+    additionalProperties: false
+    required: [mode, items]
+    properties:
+      mode: { enum: [sequence, subsequence, unordered, contains] }
+      items:
+        type: array
+        items: { type: object, description: Partial match on event fields. }
+
+  expect:
+    type: object
+    additionalProperties: false
+    properties:
+      sessions:
+        type: object
+        additionalProperties:
+          type: object
+          additionalProperties: false
+          properties:
+            state: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/sessionState" }
+            closeReason: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/closeReason" }
+            events: { $ref: "#/$defs/eventPattern" }
+            absentEvents:
+              type: array
+              items: { type: object }
+            eventCount: { type: integer, minimum: 0 }
+            checkpoint:
+              description: Partial match on checkpoint contents, using the field names of PORT-030.
+              type: object
+      providerRequests:
+        description: Requests captured by scripted providers, matched in order (partial match).
+        type: object
+        additionalProperties:
+          oneOf:
+            - type: array
+              items: { type: object }
+            - type: object
+              properties: { count: { type: integer, minimum: 0 } }
+      stubCalls:
+        description: >-
+          Calls recorded by stubs, keyed by tool ID, endpoint, or server. Each
+          record has `arguments`, `context` (tool context), `cancelled` (whether
+          the cancellation signal was received), and `completed`.
+        type: object
+        additionalProperties:
+          oneOf:
+            - type: array
+              items: { type: object }
+            - type: object
+              properties: { count: { type: integer, minimum: 0 } }
+      ports:
+        description: >-
+          Expected port contents (partial match), keyed by port name, then
+          tenant, then record key — e.g. eventLog: {t1: {$s: [events]}},
+          auditLog: {t1: [records]}, idempotencyStore: {t1: {<key>: record}}.
+        type: object
+      delivered:
+        description: What the host received, per session.
+        type: object
+        additionalProperties:
+          type: object
+          additionalProperties: false
+          properties:
+            text: {}
+            parts: {}
+            deltas:
+              description: Ephemeral deltas received, in order.
+            fallback: { type: boolean, description: The response was the fixed fallback message. }
+      noPersistedContent:
+        description: Strings that must not appear anywhere in persisted events, checkpoints, or audit records.
+        type: array
+        items: { type: string }
+      schemaValid:
+        description: Every emitted event validates against the event schema. Implicitly true.
+        type: boolean

@@ -1,0 +1,127 @@
+schemaVersion: "0.1.0"
+id: core.seq-gap-free-across-runs
+title: Sequence numbers are unique, increasing, and gap-free within a session across runs and a resume
+description: >-
+  Three runs (run, resume, run) and a close() persist at least 22 events
+  (21 before session.closed); the exact number depends on how many
+  checkpoint.saved events the implementation emits, so the fixture does not
+  fix it. session.closed is the last event (CORE-021); its seq is captured
+  as $n. The persisted log must have exactly $n events, every one with a seq
+  in 1..$n; seq 1..21 must appear in log order, followed later by
+  session.closed with seq $n. So numbering starts at 1, never restarts per
+  run (run.started of a later run is never seq 1), and the count equals the
+  highest seq, which together with the range check leaves no room for a gap
+  unless a duplicate fills it, and no room for a duplicate unless a gap
+  exists. Ephemeral events carry no seq and are never persisted.
+requirements: [CORE-160]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, ref: test.update_record }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "You're welcome." }]
+          usage: { inputTokens: 40, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $esc, payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000160", escalationId: $esc, actionId: $act, type: approve }
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $s
+    tenant: t1
+    principal: p1
+    input: [{ type: text, text: "Thanks" }]
+    expect: { ok: true, endReason: responded }
+  - action: close
+    session: $s
+    capture:
+      - event: { type: session.closed }
+        bind: { seq: $n }
+    expect: { ok: true }
+expect:
+  sessions:
+    $s:
+      state: closed
+      closeReason: completed
+      events:
+        mode: subsequence
+        items:
+          - { seq: 1, type: session.created }
+          - { seq: 2 }
+          - { seq: 3 }
+          - { seq: 4 }
+          - { seq: 5 }
+          - { seq: 6 }
+          - { seq: 7 }
+          - { seq: 8 }
+          - { seq: 9 }
+          - { seq: 10 }
+          - { seq: 11 }
+          - { seq: 12 }
+          - { seq: 13 }
+          - { seq: 14 }
+          - { seq: 15 }
+          - { seq: 16 }
+          - { seq: 17 }
+          - { seq: 18 }
+          - { seq: 19 }
+          - { seq: 20 }
+          - { seq: 21 }
+          - { seq: $n, type: session.closed }
+      absentEvents:
+        - { seq: { $absent: true } }
+        - { type: run.started, payload: { kind: resume }, seq: 1 }
+        - { type: run.started, payload: { kind: run }, seq: 1 }
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $all:
+            - { $len: $n }
+            - $every:
+                seq: { $all: [{ $gte: 1 }, { $lte: $n }] }

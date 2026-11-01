@@ -1,0 +1,44 @@
+schemaVersion: "0.1.0"
+id: core.blob-reference-other-tenant
+title: Resolving a blob reference that belongs to another tenant fails with `not_found`
+requirements: [CORE-113]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+    - id: t2
+      principals: [{ id: p2, subject: user-2, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { vision: true }
+      responses: []
+  ports:
+    blobStore:
+      t2:
+        - id: blob-t2-img
+          hash: "sha256:3ca865795af4739e8f740b9bd739cf13a0872e39fdfa6769a9eb8b3801a8d0c4"
+          mediaType: image/png
+          size: 23
+          data: "U1lOVEhFVElDLUlNQUdFLVQyLTAwMDE="
+script:
+  - action: run
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input:
+      - { type: text, text: "Describe this" }
+      - type: image
+        mediaType: image/png
+        source: upload
+        blob: { id: blob-t2-img, hash: "sha256:3ca865795af4739e8f740b9bd739cf13a0872e39fdfa6769a9eb8b3801a8d0c4", mediaType: image/png, size: 23 }
+    expect: { ok: false, error: { category: not_found } }
+expect:
+  providerRequests:
+    scripted-a: { count: 0 }
+  noPersistedContent:
+    - "U1lOVEhFVElDLUlNQUdFLVQyLTAwMDE="

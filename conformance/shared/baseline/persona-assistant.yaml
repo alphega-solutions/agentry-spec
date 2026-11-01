@@ -1,0 +1,15 @@
+kind: Persona
+id: assistant
+version: 1
+schemaVersion: "0.1.0"
+displayName: Test assistant
+instructions: "You are a test assistant."
+tools: [lookup@1, update_record@1]
+fallbackMessage: "This request was blocked."
+defaultProfile: default@1
+allowedProfiles: [default@1, streamed@1]
+model:
+  provider: scripted-a
+  name: model-a
+  fallbacks:
+    - { provider: scripted-b, name: model-b }

@@ -1,0 +1,346 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://alphega.io/agentry/schemas/core/event/v1.json
+title: Event
+description: >-
+  Event envelope and payloads (Area 1 §9, as amended by Areas 6–9).
+  The event catalog is closed (CORE-170).
+type: object
+unevaluatedProperties: false
+required: [schemaVersion, eventId, sessionId, type, timestamp, tenantId, principalRef, snapshotHash, traceContext, payload]
+properties:
+  schemaVersion: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/contractVersion" }
+  eventId: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+  sessionId: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+  runId: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+  seq: { type: integer, minimum: 1 }
+  turn: { type: integer, minimum: 1 }
+  step: { type: integer, minimum: 1 }
+  type:
+    enum:
+      - session.created
+      - session.closed
+      - run.started
+      - run.ended
+      - turn.started
+      - turn.completed
+      - model.request
+      - model.response
+      - model.delta
+      - tool.call
+      - tool.result
+      - hook.decision
+      - policy.decision
+      - checkpoint.saved
+      - escalation.raised
+      - escalation.resolved
+      - error
+      - context.retrieved
+      - context.compacted
+  timestamp: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/timestamp" }
+  tenantId: { type: string, minLength: 1 }
+  principalRef: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/principalRef" }
+  snapshotHash: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/sha256" }
+  traceContext: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/traceContext" }
+  provenances:
+    description: Union of provenances of content in the payload (CORE-151).
+    $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/provenances"
+  labels:
+    description: Union of sensitivity labels of content in the payload (CORE-151).
+    $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/labels"
+  payload: { type: object }
+  extensions: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/extensions" }
+
+allOf:
+  # seq: required on every persisted event, absent on ephemeral deltas (CORE-160, CORE-162)
+  - if: { properties: { type: { const: model.delta } } }
+    then: { not: { required: [seq] } }
+    else: { required: [seq] }
+  # runId: absent only on session.created, and on session.closed outside a run (CORE-150, amended)
+  - if:
+      properties: { type: { not: { enum: [session.created, session.closed] } } }
+    then: { required: [runId] }
+  - if: { properties: { type: { const: session.created } } }
+    then: { not: { required: [runId] } }
+  # position: turn on turn events; turn and step on model and tool events
+  - if: { properties: { type: { enum: [turn.started, turn.completed] } } }
+    then: { required: [turn] }
+  - if: { properties: { type: { enum: [model.request, model.response, tool.call, tool.result] } } }
+    then: { required: [turn, step] }
+  # events that carry content carry its provenance and labels (CORE-151)
+  - if: { properties: { type: { enum: [model.response, tool.result, context.retrieved, context.compacted] } } }
+    then: { required: [provenances, labels] }
+
+  - if: { properties: { type: { const: session.created } } }
+    then: { properties: { payload: { $ref: "#/$defs/sessionCreated" } } }
+  - if: { properties: { type: { const: session.closed } } }
+    then: { properties: { payload: { $ref: "#/$defs/sessionClosed" } } }
+  - if: { properties: { type: { const: run.started } } }
+    then: { properties: { payload: { $ref: "#/$defs/runStarted" } } }
+  - if: { properties: { type: { const: run.ended } } }
+    then: { properties: { payload: { $ref: "#/$defs/runEnded" } } }
+  - if: { properties: { type: { enum: [turn.started, turn.completed] } } }
+    then: { properties: { payload: { $ref: "#/$defs/empty" } } }
+  - if: { properties: { type: { const: model.request } } }
+    then: { properties: { payload: { $ref: "#/$defs/modelRequest" } } }
+  - if: { properties: { type: { const: model.response } } }
+    then: { properties: { payload: { $ref: "#/$defs/modelResponse" } } }
+  - if: { properties: { type: { const: model.delta } } }
+    then: { properties: { payload: { $ref: "#/$defs/modelDelta" } } }
+  - if: { properties: { type: { const: tool.call } } }
+    then: { properties: { payload: { $ref: "#/$defs/toolCall" } } }
+  - if: { properties: { type: { const: tool.result } } }
+    then: { properties: { payload: { $ref: "#/$defs/toolResultEvent" } } }
+  - if: { properties: { type: { const: hook.decision } } }
+    then: { properties: { payload: { $ref: "#/$defs/hookDecision" } } }
+  - if: { properties: { type: { const: policy.decision } } }
+    then: { properties: { payload: { $ref: "#/$defs/policyDecision" } } }
+  - if: { properties: { type: { const: checkpoint.saved } } }
+    then: { properties: { payload: { $ref: "#/$defs/checkpointSaved" } } }
+  - if: { properties: { type: { const: escalation.raised } } }
+    then: { properties: { payload: { $ref: "#/$defs/escalationRaised" } } }
+  - if: { properties: { type: { const: escalation.resolved } } }
+    then: { properties: { payload: { $ref: "#/$defs/escalationResolved" } } }
+  - if: { properties: { type: { const: error } } }
+    then: { properties: { payload: { $ref: "#/$defs/errorEvent" } } }
+  - if: { properties: { type: { const: context.retrieved } } }
+    then: { properties: { payload: { $ref: "#/$defs/contextRetrieved" } } }
+  - if: { properties: { type: { const: context.compacted } } }
+    then: { properties: { payload: { $ref: "#/$defs/contextCompacted" } } }
+
+$defs:
+  empty: { type: object, additionalProperties: false, properties: {} }
+
+  sessionCreated:
+    type: object
+    additionalProperties: false
+    required: [persona, profile]
+    properties:
+      persona: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/artifactRef" }
+      profile: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/artifactRef" }
+      parent:
+        description: Present for child sessions (ORCH-004).
+        type: object
+        additionalProperties: false
+        required: [sessionId, runId, callId, tool, depth]
+        properties:
+          sessionId: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+          runId: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+          callId: { type: string, minLength: 1 }
+          tool: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/toolId" }
+          depth: { type: integer, minimum: 1 }
+
+  sessionClosed:
+    type: object
+    additionalProperties: false
+    required: [reason]
+    properties:
+      reason: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/closeReason" }
+
+  runStarted:
+    type: object
+    additionalProperties: false
+    required: [kind]
+    properties:
+      kind: { enum: [run, resume] }
+      overrides:
+        description: Run-request values that tightened the profile (CFG-102).
+        type: object
+
+  runEnded:
+    type: object
+    additionalProperties: false
+    required: [reason]
+    properties:
+      reason: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/runEndReason" }
+      error: { $ref: "https://alphega.io/agentry/schemas/core/error/v1.json" }
+    if: { properties: { reason: { const: failed } } }
+    then: { required: [error] }
+
+  modelRequest:
+    type: object
+    additionalProperties: false
+    required: [provider, model, role]
+    properties:
+      provider: { type: string, minLength: 1 }
+      model: { type: string, minLength: 1 }
+      role: { enum: [primary, fallback] }
+      fallbackReason: { enum: [routing, capability, failover] }
+      context:
+        description: Reference to the full assembled context, stored in the BlobStore (CORE-154).
+        $ref: "https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/blobRef"
+    if: { properties: { role: { const: fallback } } }
+    then: { required: [fallbackReason] }
+
+  modelResponse:
+    type: object
+    additionalProperties: false
+    required: [provider, model, message, usage]
+    properties:
+      provider: { type: string, minLength: 1 }
+      model: { type: string, minLength: 1 }
+      message:
+        allOf:
+          - $ref: "https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/message"
+          - properties: { role: { const: assistant } }
+      usage: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/usage" }
+
+  modelDelta:
+    type: object
+    additionalProperties: false
+    required: [text]
+    properties:
+      text: { type: string }
+
+  toolCall:
+    type: object
+    additionalProperties: false
+    required: [callId, tool, arguments]
+    properties:
+      callId: { type: string, minLength: 1 }
+      tool: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/toolId" }
+      arguments: { type: object }
+      childSessionId:
+        description: For agent-bound tools (ORCH-080).
+        $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7"
+
+  toolResultEvent:
+    type: object
+    additionalProperties: false
+    required: [callId, tool, result]
+    properties:
+      callId: { type: string, minLength: 1 }
+      tool: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/toolId" }
+      result: { $ref: "https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/toolResult" }
+
+  hookDecision:
+    type: object
+    additionalProperties: false
+    required: [hook, point, result, inputHash]
+    properties:
+      hook: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/artifactRef" }
+      point: { enum: [sessionStart, beforeModelCall, afterModelCall, beforeToolCall, afterToolCall, beforeResponse, onError, sessionEnd] }
+      result: { enum: [annotate, rewrite, block, escalate] }
+      reasonCode: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/errorCode" }
+      labelsAdded: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/labels" }
+      inputHash: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/sha256" }
+      usage: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/usage" }
+    allOf:
+      - if: { properties: { result: { enum: [block, escalate] } } }
+        then: { required: [reasonCode] }
+      - if: { properties: { point: { enum: [onError, sessionEnd] } } }
+        then: { properties: { result: { const: annotate } } }
+
+  policyDecision:
+    type: object
+    additionalProperties: false
+    required: [kind, outcome]
+    properties:
+      kind: { enum: [taint, assurance, scope, routing, depth, summarizer] }
+      outcome: { enum: [allow, escalate, block, switch] }
+      callId: { type: string }
+      tool: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/toolId" }
+      provenances: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/provenances" }
+      details: { type: object }
+
+  checkpointSaved:
+    type: object
+    additionalProperties: false
+    required: [version]
+    properties:
+      version: { type: integer, minimum: 1 }
+
+  escalationRaised:
+    description: Escalation record (HITL-010); refined further in the Area 6 schemas.
+    type: object
+    additionalProperties: false
+    required: [escalation]
+    properties:
+      escalation:
+        type: object
+        additionalProperties: false
+        required: [id, step, sources, pendingActions, createdAt, expiresAt]
+        properties:
+          id: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+          step: { type: integer, minimum: 1 }
+          sources:
+            type: array
+            minItems: 1
+            items: { enum: [taint, approval, hook, recovery] }
+          reasonCodes:
+            type: array
+            items: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/errorCode" }
+          taintProvenances: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/provenances" }
+          reviewerRequirements:
+            type: object
+            additionalProperties: false
+            properties:
+              requiredApprovals: { type: integer, minimum: 1 }
+              selfApprovalAllowed: { type: boolean }
+          pendingActions:
+            type: array
+            minItems: 1
+            items:
+              type: object
+              additionalProperties: false
+              required: [id, kind, source, allowedDecisions]
+              properties:
+                id: { type: string, minLength: 1 }
+                kind: { enum: [tool_call, content, recovery] }
+                source: { enum: [taint, approval, hook, recovery] }
+                delegated: { type: boolean }
+                chain:
+                  type: array
+                  items: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+                reasonCode: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/errorCode" }
+                callId: { type: string }
+                tool: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/toolId" }
+                point: { enum: [sessionStart, beforeModelCall, afterModelCall, beforeToolCall, afterToolCall, beforeResponse] }
+                allowedDecisions:
+                  type: array
+                  minItems: 1
+                  items: { enum: [approve, reject, edit, confirm] }
+          createdAt: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/timestamp" }
+          expiresAt: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/timestamp" }
+
+  escalationResolved:
+    type: object
+    additionalProperties: false
+    required: [escalationId]
+    properties:
+      escalationId: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+      decisions:
+        type: array
+        items: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+
+  errorEvent:
+    type: object
+    additionalProperties: false
+    required: [error]
+    properties:
+      error: { $ref: "https://alphega.io/agentry/schemas/core/error/v1.json" }
+
+  contextRetrieved:
+    type: object
+    additionalProperties: false
+    required: [source, query, results]
+    properties:
+      source: { type: string, minLength: 1 }
+      query: { type: string }
+      results:
+        type: array
+        items: { $ref: "https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/blobRef" }
+
+  contextCompacted:
+    type: object
+    additionalProperties: false
+    required: [mode, fromTurn, toTurn, provenances, labels]
+    properties:
+      mode: { enum: [truncate, summarize] }
+      fromTurn: { type: integer, minimum: 1 }
+      toTurn: { type: integer, minimum: 1 }
+      summary: { $ref: "https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/blobRef" }
+      provenances: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/provenances" }
+      labels: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/labels" }
+      usage: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/usage" }
+    if: { properties: { mode: { const: summarize } } }
+    then: { required: [summary] }

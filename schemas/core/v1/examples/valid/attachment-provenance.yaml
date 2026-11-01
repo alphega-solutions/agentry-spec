@@ -1,0 +1,7 @@
+schema: https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/part
+instance:
+  type: file
+  mediaType: application/pdf
+  blob: { id: b2, hash: "sha256:1111111111111111111111111111111111111111111111111111111111111111", mediaType: application/pdf, size: 2048 }
+  provenance: "attachment:upload"
+  labels: [phi]

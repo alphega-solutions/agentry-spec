@@ -1,0 +1,92 @@
+schemaVersion: "0.1.0"
+id: core.close-idle-and-suspended
+title: close() closes an idle session as `completed` and a suspended one as `cancelled`
+description: >-
+  After session.closed, the refused follow-up operations must persist no
+  event (newEvents: 0).
+requirements: [CORE-020, CORE-021]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, ref: test.update_record }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Done." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $a
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $b
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    expect: { ok: true, endReason: escalated }
+  - action: close
+    session: $a
+    expect: { ok: true }
+  - action: close
+    session: $b
+    expect: { ok: true }
+  - action: cancel
+    session: $a
+    expect: { ok: false, error: { category: conflict }, newEvents: 0 }
+  - action: close
+    session: $b
+    expect: { ok: false, error: { category: conflict }, newEvents: 0 }
+expect:
+  sessions:
+    $a:
+      state: closed
+      closeReason: completed
+      events:
+        mode: subsequence
+        items:
+          - { type: run.ended, payload: { reason: responded } }
+          - { type: session.closed, runId: { $absent: true }, payload: { reason: completed } }
+      absentEvents:
+        - { type: session.closed, payload: { reason: cancelled } }
+    $b:
+      state: closed
+      closeReason: cancelled
+      events:
+        mode: subsequence
+        items:
+          - { type: run.ended, payload: { reason: escalated } }
+          - { type: session.closed, runId: { $absent: true }, payload: { reason: cancelled } }
+      absentEvents:
+        - { type: session.closed, payload: { reason: completed } }
+  providerRequests:
+    scripted-a: { count: 2 }

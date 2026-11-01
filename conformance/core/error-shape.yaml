@@ -1,0 +1,130 @@
+schemaVersion: "0.1.0"
+id: core.error-shape
+title: Tool, harness, and hook errors all carry code, category, retryable, source, and message
+description: >-
+  Step 1: the model sends lookup an invalid argument, so the harness produces
+  `agentry.tool.invalid_arguments` (source harness). Step 2: the lookup stub
+  fails with a tool error that supplies only a category and a code; the
+  implementation completes the shape (source tool, retryable, message).
+  Step 3 runs a failClosed remote hook that errors at beforeResponse; its
+  error event has source hook. Every error must validate against the error
+  schema (schemaValid).
+requirements: [CORE-190, CORE-191]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        remoteHooks:
+          - { id: checker, endpoint: "memory://hook-checker", region: test-region }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: Hook
+        id: checker
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeResponse]
+        results: [block]
+        failureMode: failClosed
+        timeoutMs: 1000
+        source: { kind: remote, endpoint: "memory://hook-checker" }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [checker@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: 42 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "The lookup failed." }]
+          usage: { inputTokens: 40, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - error: { category: not_found, code: test.lookup.missing }
+    remoteHooks:
+      "memory://hook-checker":
+        - error: { category: unavailable, code: test.hook.down }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1" }]
+    expect: { ok: true, endReason: blocked }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - type: tool.result
+            payload:
+              callId: c1
+              result:
+                error:
+                  code: agentry.tool.invalid_arguments
+                  category: invalid_input
+                  retryable: { $any: true }
+                  source: harness
+                  message: { $any: true }
+          - type: tool.result
+            payload:
+              callId: c2
+              result:
+                error:
+                  code: test.lookup.missing
+                  category: not_found
+                  retryable: { $any: true }
+                  source: tool
+                  message: { $any: true }
+          - type: error
+            payload:
+              error:
+                code: { $any: true }
+                category: { $any: true }
+                retryable: { $any: true }
+                source: hook
+                message: { $any: true }
+          - { type: run.ended, payload: { reason: blocked } }
+  stubCalls:
+    lookup: { count: 1 }
+  schemaValid: true

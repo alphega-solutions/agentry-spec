@@ -1,0 +1,84 @@
+schemaVersion: "0.1.0"
+id: core.event-catalog-closed
+title: Only catalog event types are emitted, across tool calls, hook decisions, failover errors, and checkpoints
+description: >-
+  The run exercises a primary-provider failure with failover, a tool call, and
+  an annotating hook, so that error, hook.decision, tool.call, and tool.result
+  events are all produced. Every emitted event must validate against the event
+  schema, whose type enum is the closed catalog (as amended) and whose
+  envelope admits additional data only in `extensions`. No persisted event
+  may have a type outside the persisted catalog (model.delta is ephemeral).
+requirements: [CORE-170]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Hook
+        id: label-lookup
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [afterToolCall]
+        results: [annotate]
+        timeoutMs: 1000
+        source: { kind: rule, when: "tool.id == 'lookup'", then: { result: annotate, labels: [pii] } }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [label-lookup@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - error: { category: unavailable, code: agentry.provider.auth, retryable: false }
+    scripted-b:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Found it." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "synthetic-value" } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: contains
+        items:
+          - { type: run.started, payload: { kind: run } }
+          - { type: error }
+          - { type: tool.call, payload: { callId: c1 } }
+          - { type: tool.result, payload: { callId: c1 } }
+          - { type: hook.decision, payload: { hook: label-lookup@1, point: afterToolCall, result: annotate } }
+      absentEvents:
+        - type:
+            $not:
+              $regex: "^(session\\.created|session\\.closed|run\\.started|run\\.ended|turn\\.started|turn\\.completed|model\\.request|model\\.response|tool\\.call|tool\\.result|hook\\.decision|policy\\.decision|checkpoint\\.saved|escalation\\.raised|escalation\\.resolved|error|context\\.retrieved|context\\.compacted)$"
+  schemaValid: true

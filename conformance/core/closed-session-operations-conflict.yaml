@@ -1,0 +1,70 @@
+schemaVersion: "0.1.0"
+id: core.closed-session-operations-conflict
+title: Every operation on a closed session fails with `conflict` and emits nothing
+description: >-
+  Each refused operation after close() must persist no event (newEvents: 0).
+requirements: [CORE-021, CORE-022]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Done." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - action: close
+    session: $s
+    expect: { ok: true }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Again" }]
+    expect: { ok: false, error: { category: conflict }, newEvents: 0 }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions: []
+    expect: { ok: false, error: { category: conflict }, newEvents: 0 }
+  - action: decide
+    session: $s
+    reviewer: r1
+    decisions: []
+    expect: { ok: false, error: { category: conflict }, newEvents: 0 }
+  - action: close
+    session: $s
+    expect: { ok: false, error: { category: conflict }, newEvents: 0 }
+  - action: cancel
+    session: $s
+    expect: { ok: false, error: { category: conflict }, newEvents: 0 }
+expect:
+  sessions:
+    $s:
+      state: closed
+      closeReason: completed
+      events:
+        mode: subsequence
+        items:
+          - { type: run.ended, payload: { reason: responded } }
+          - { type: session.closed, payload: { reason: completed } }
+      absentEvents:
+        - { type: run.started, payload: { kind: resume } }
+        - { type: turn.started, turn: 2 }
+        - { type: session.closed, payload: { reason: cancelled } }
+  providerRequests:
+    scripted-a: { count: 1 }

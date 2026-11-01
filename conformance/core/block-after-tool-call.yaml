@@ -1,0 +1,86 @@
+schemaVersion: "0.1.0"
+id: core.block-after-tool-call
+title: A block at afterToolCall withholds the result, returns a `policy` error to the model, and the turn continues
+description: >-
+  The tool runs, but the rule hook blocks its result. The model receives a
+  policy error in its place, and the withheld output never reaches the model
+  or the event log.
+requirements: [CORE-180]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Hook
+        id: guard-result
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [afterToolCall]
+        results: [block]
+        timeoutMs: 1000
+        source: { kind: rule, when: "tool.id == 'lookup'", then: { result: block, reasonCode: test.guard.blocked } }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [guard-result@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "That result was withheld." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "SYN-WITHHELD-RESULT-0180" } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1 } }
+          - { type: hook.decision, payload: { hook: guard-result@1, point: afterToolCall, result: block } }
+          - { type: tool.result, payload: { callId: c1, result: { error: { category: policy } } } }
+          - { type: model.request, step: 2 }
+          - { type: run.ended, payload: { reason: responded } }
+  stubCalls:
+    lookup: { count: 1 }
+  providerRequests:
+    scripted-a:
+      - {}
+      - messages:
+          $contains:
+            - role: tool
+              parts:
+                $contains:
+                  - { type: tool_result, callId: c1, result: { error: { category: policy } } }
+  noPersistedContent:
+    - "SYN-WITHHELD-RESULT-0180"

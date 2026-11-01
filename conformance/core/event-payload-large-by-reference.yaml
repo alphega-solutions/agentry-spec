@@ -1,0 +1,75 @@
+schemaVersion: "0.1.0"
+id: core.event-payload-large-by-reference
+title: A payload larger than the inline limit is stored in the BlobStore and referenced from the event
+description: >-
+  The inline limit is 256 bytes. The lookup stub returns an output of about
+  1 KiB of synthetic text, well under the profile's partSize, so it is not
+  rejected. The tool.result event must reference the result through a blob
+  reference in the session's tenant rather than hold it inline, and the
+  referenced blob must exist in the BlobStore. The large text must not
+  appear inline in any event payload.
+requirements: [CORE-154]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: big } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Got it." }]
+          usage: { inputTokens: 300, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok:
+            output:
+              text: >-
+                SYN-LARGE-PAYLOAD-0154 lorem ipsum dolor sit amet consectetur adipiscing
+                elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua ut
+                enim ad minim veniam quis nostrud exercitation ullamco laboris nisi ut
+                aliquip ex ea commodo consequat duis aute irure dolor in reprehenderit in
+                voluptate velit esse cillum dolore eu fugiat nulla pariatur excepteur sint
+                occaecat cupidatat non proident sunt in culpa qui officia deserunt mollit
+                anim id est laborum SYN-LARGE-PAYLOAD-0154 lorem ipsum dolor sit amet
+                consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et
+                dolore magna aliqua ut enim ad minim veniam quis nostrud exercitation
+                ullamco laboris nisi ut aliquip ex ea commodo consequat duis aute irure
+                dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat
+                nulla pariatur excepteur sint occaecat cupidatat non proident sunt in
+                culpa qui officia deserunt mollit anim id est laborum SYN-LARGE-PAYLOAD-END
+  limits:
+    inlinePayloadBytes: 256
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up big" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: contains
+        items:
+          - type: tool.result
+            payload:
+              callId: c1
+              result:
+                ok:
+                  blob: { id: $big, hash: { $regex: "^sha256:[0-9a-f]{64}$" }, mediaType: { $any: true }, size: { $gte: 257 } }
+      absentEvents:
+        - { type: tool.result, payload: { result: { ok: { output: { $any: true } } } } }
+  ports:
+    blobStore:
+      t1:
+        $contains:
+          - { id: $big }

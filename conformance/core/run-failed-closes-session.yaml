@@ -1,0 +1,38 @@
+schemaVersion: "0.1.0"
+id: core.run-failed-closes-session
+title: A run that ends `failed` closes the session `failed`
+requirements: [CORE-020, CORE-060, CORE-061]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - error: { category: fatal, code: agentry.provider.bad_request, retryable: false }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: failed }
+expect:
+  sessions:
+    $s:
+      state: closed
+      closeReason: failed
+      events:
+        mode: subsequence
+        items:
+          - { type: run.started, runId: $r1 }
+          - { type: run.ended, runId: $r1, payload: { reason: failed } }
+          - { type: session.closed, payload: { reason: failed } }
+      absentEvents:
+        - { type: run.ended, payload: { reason: responded } }

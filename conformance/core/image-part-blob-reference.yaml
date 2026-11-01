@@ -1,0 +1,99 @@
+schemaVersion: "0.1.0"
+id: core.image-part-blob-reference
+title: Image and file parts carry a media type and blob reference, never inline bytes; every part has provenance and labels
+description: >-
+  The attachment blobs hold synthetic bytes. Their base64 encodings must not
+  appear anywhere in persisted events; the parts must reference the blobs.
+requirements: [CORE-111, CORE-112, CORE-113, CORE-152]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { vision: true, documents: true }
+      responses:
+        - parts: [{ type: text, text: "I see a chart and a report." }]
+          usage: { inputTokens: 200, outputTokens: 8, cachedInputTokens: 0, reasoningTokens: 0 }
+  ports:
+    blobStore:
+      t1:
+        - id: blob-img-1
+          hash: "sha256:82e0d9513a9797c3e32e35d6fff5c8648db4b0a8c74ffea2be6d5b827d3c7aa7"
+          mediaType: image/png
+          size: 20
+          data: "U1lOVEhFVElDLUlNQUdFLTAwMDE="
+        - id: blob-file-1
+          hash: "sha256:488b66a845535f2173fe026ad21ad4238ca6b733b00a24ba332adab6729a0a80"
+          mediaType: text/plain
+          size: 44
+          data: "U1lOVEhFVElDLUZJTEUtMDAwMTogcXVhcnRlcmx5IHdpZGdldCByZXBvcnQ="
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input:
+      - { type: text, text: "Describe these" }
+      - type: image
+        mediaType: image/png
+        source: upload
+        blob: { id: blob-img-1, hash: "sha256:82e0d9513a9797c3e32e35d6fff5c8648db4b0a8c74ffea2be6d5b827d3c7aa7", mediaType: image/png, size: 20 }
+      - type: file
+        mediaType: text/plain
+        source: upload
+        name: report.txt
+        blob: { id: blob-file-1, hash: "sha256:488b66a845535f2173fe026ad21ad4238ca6b733b00a24ba332adab6729a0a80", mediaType: text/plain, size: 44 }
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $s2
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input:
+      - type: image
+        mediaType: image/png
+        source: upload
+        data: "U1lOVEhFVElDLUlNQUdFLTAwMDE="
+    expect: { ok: false, error: { category: invalid_input } }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: contains
+        items:
+          - type: model.response
+            payload:
+              message:
+                parts:
+                  - { type: text, provenance: model, labels: { $any: true } }
+  providerRequests:
+    scripted-a:
+      - messages:
+          $contains:
+            - role: principal
+              parts:
+                - { type: text, provenance: principal, labels: { $any: true } }
+                - type: image
+                  mediaType: image/png
+                  provenance: "attachment:upload"
+                  labels: { $any: true }
+                  blob: { id: blob-img-1, hash: "sha256:82e0d9513a9797c3e32e35d6fff5c8648db4b0a8c74ffea2be6d5b827d3c7aa7", mediaType: image/png, size: 20 }
+                  data: { $absent: true }
+                - type: file
+                  mediaType: text/plain
+                  provenance: "attachment:upload"
+                  labels: { $any: true }
+                  blob: { id: blob-file-1, hash: "sha256:488b66a845535f2173fe026ad21ad4238ca6b733b00a24ba332adab6729a0a80", mediaType: text/plain, size: 44 }
+                  data: { $absent: true }
+  noPersistedContent:
+    - "U1lOVEhFVElDLUlNQUdFLTAwMDE="
+    - "U1lOVEhFVElDLUZJTEUtMDAwMTogcXVhcnRlcmx5IHdpZGdldCByZXBvcnQ="
+    - "SYNTHETIC-IMAGE-0001"
+    - "SYNTHETIC-FILE-0001"

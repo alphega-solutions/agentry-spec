@@ -1,0 +1,55 @@
+schemaVersion: "0.1.0"
+id: core.model-delta-ephemeral
+title: Streamed deltas are unsequenced, never persisted, and concatenate to the model response
+description: >-
+  Under streamed@1 the scripted provider emits three deltas before its final
+  response. The deltas are delivered to the host with the envelope but no
+  seq; no model.delta appears in the persisted log; the persisted
+  model.response holds exactly the concatenated text.
+requirements: [CORE-162, CORE-163]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { streaming: true }
+      responses:
+        - deltas: ["Synthetic ", "streamed ", "reply."]
+          parts: [{ type: text, text: "Synthetic streamed reply." }]
+          usage: { inputTokens: 20, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    profile: streamed@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: contains
+        items:
+          - type: model.response
+            runId: $r1
+            step: 1
+            payload:
+              message:
+                parts: [{ type: text, text: "Synthetic streamed reply." }]
+      absentEvents:
+        - { type: model.delta }
+  delivered:
+    $s:
+      text: "Synthetic streamed reply."
+      deltas:
+        - { type: model.delta, sessionId: $s, runId: $r1, seq: { $absent: true }, tenantId: t1, payload: { text: "Synthetic " } }
+        - { type: model.delta, sessionId: $s, runId: $r1, seq: { $absent: true }, tenantId: t1, payload: { text: "streamed " } }
+        - { type: model.delta, sessionId: $s, runId: $r1, seq: { $absent: true }, tenantId: t1, payload: { text: "reply." } }

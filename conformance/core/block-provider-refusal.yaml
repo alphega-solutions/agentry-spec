@@ -1,0 +1,58 @@
+schemaVersion: "0.1.0"
+id: core.block-provider-refusal
+title: A vendor safety refusal returned as an error is mapped to `policy` and ends the run `blocked` with the fallback
+description: >-
+  The scripted provider returns a vendor-native safety-refusal error (vendor
+  code and vendor category). The adapter must map it to
+  agentry.provider.refused (category policy, not retryable, source provider)
+  per PROV-080. The harness does not retry or fail over; the run ends
+  blocked and the principal receives the persona's fallback message.
+requirements: [CORE-180, CORE-181, PROV-080, PROV-081]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - error: { category: content_filtered, code: vendor.safety_refusal, retryable: false }
+    scripted-b: { responses: [] }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: blocked }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, step: 1 }
+          - type: error
+            payload:
+              error:
+                code: agentry.provider.refused
+                category: policy
+                retryable: false
+                source: provider
+          - { type: run.ended, payload: { reason: blocked } }
+      absentEvents:
+        - { type: error, payload: { error: { code: vendor.safety_refusal } } }
+        - { type: model.request, step: 2 }
+        - { type: model.response }
+  providerRequests:
+    scripted-a: { count: 1 }
+    scripted-b: { count: 0 }
+  delivered:
+    $s: { text: "This request was blocked.", fallback: true }

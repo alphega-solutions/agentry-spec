@@ -1,0 +1,3 @@
+# Requirement prefixes whose fixtures are complete. Coverage is enforced for these (EVAL-010).
+enforced:
+  - CORE

@@ -1,0 +1,73 @@
+schemaVersion: "0.1.0"
+id: core.output-schema-met
+title: With a persona output schema, a responded run ends with a structured part that validates; text parts may accompany it
+description: >-
+  The model returns a text part and a valid structured value in one response.
+requirements: [CORE-130]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Persona
+        id: extractor
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test extractor
+        instructions: "Extract the order as JSON."
+        tools: []
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+        outputSchema:
+          type: object
+          additionalProperties: false
+          required: [item, quantity]
+          properties:
+            item: { type: string }
+            quantity: { type: integer, minimum: 1 }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts:
+            - { type: text, text: "Here is the order." }
+            - { type: structured, value: { item: widget, quantity: 2 } }
+          usage: { inputTokens: 20, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: extractor@1
+    input: [{ type: text, text: "Two widgets, please" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: model.response
+            payload:
+              message:
+                role: assistant
+                parts:
+                  $contains:
+                    - { type: text, text: "Here is the order." }
+                    - { type: structured, value: { item: widget, quantity: 2 } }
+          - { type: run.ended, payload: { reason: responded } }
+  providerRequests:
+    scripted-a: { count: 1 }
+  delivered:
+    $s:
+      parts:
+        $contains:
+          - { type: structured, value: { item: widget, quantity: 2 } }
