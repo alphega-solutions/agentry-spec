@@ -49,12 +49,12 @@ script:
         session: $s
         principal: p1
         input: [{ type: text, text: "SYNTHETIC-INTRUDER-0001" }]
-        expect: { ok: false, error: { category: conflict } }
+        expect: { ok: false, error: { category: conflict }, newEvents: 0 }
       - action: resume
         session: $s
         reviewer: r1
         decisions: []
-        expect: { ok: false, error: { category: conflict } }
+        expect: { ok: false, error: { category: conflict }, newEvents: 0 }
 expect:
   sessions:
     $s:

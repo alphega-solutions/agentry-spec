@@ -99,8 +99,6 @@ expect:
           - { seq: 20 }
           - { seq: 21 }
       absentEvents:
-        - { type: session.created, seq: { $absent: true } }
-        - { type: run.started, seq: { $absent: true } }
-        - { type: run.ended, seq: { $absent: true } }
+        - { seq: { $absent: true } }
         - { type: run.started, payload: { kind: resume }, seq: 1 }
         - { type: run.started, payload: { kind: run }, seq: 1 }

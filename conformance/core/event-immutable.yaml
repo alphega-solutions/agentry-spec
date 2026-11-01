@@ -1,0 +1,70 @@
+schemaVersion: "0.1.0"
+id: core.event-immutable
+title: Persisted events never change after later runs, a restart, and close()
+description: >-
+  The first run's captures read its persisted events (session.created,
+  run.started, model.response, run.ended) from the event log as they were
+  first stored. The implementation then restarts against the same port
+  contents, a second run appends further events, and the session is closed.
+  The event log must still hold each captured event with every captured
+  field unchanged: same eventId, seq, timestamp, snapshot hash, trace context,
+  and payload.
+requirements: [CORE-161]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "First reply." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Second reply." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "First" }]
+    capture:
+      - event: { type: session.created }
+        bind: { eventId: $e1, seq: $q1, timestamp: $t1, snapshotHash: $h1, traceContext: $tc1, payload: $p1 }
+      - event: { type: run.started }
+        bind: { eventId: $e2, seq: $q2, runId: $r1, timestamp: $t2, traceContext: $tc2, payload: $p2 }
+      - event: { type: model.response }
+        bind: { eventId: $e3, seq: $q3, timestamp: $t3, traceContext: $tc3, payload: $p3 }
+      - event: { type: run.ended }
+        bind: { eventId: $e4, seq: $q4, timestamp: $t4, traceContext: $tc4, payload: $p4 }
+    expect: { ok: true, endReason: responded }
+  - restart: {}
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Second" }]
+    expect: { ok: true, endReason: responded }
+  - action: close
+    session: $s
+    expect: { ok: true }
+expect:
+  sessions:
+    $s:
+      state: closed
+      closeReason: completed
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $contains:
+            - { eventId: $e1, seq: $q1, type: session.created, timestamp: $t1, snapshotHash: $h1, traceContext: $tc1, payload: $p1 }
+            - { eventId: $e2, seq: $q2, type: run.started, runId: $r1, timestamp: $t2, snapshotHash: $h1, traceContext: $tc2, payload: $p2 }
+            - { eventId: $e3, seq: $q3, type: model.response, runId: $r1, timestamp: $t3, snapshotHash: $h1, traceContext: $tc3, payload: $p3 }
+            - { eventId: $e4, seq: $q4, type: run.ended, runId: $r1, timestamp: $t4, snapshotHash: $h1, traceContext: $tc4, payload: $p4 }
+  providerRequests:
+    scripted-a: { count: 2 }

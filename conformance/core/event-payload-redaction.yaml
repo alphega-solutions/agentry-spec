@@ -5,7 +5,9 @@ description: >-
   The lookup tool labels its results `pii`, whose policy masks content. The
   inline view of the tool.result event must not hold the raw value, while the
   model (an allowed provider for `pii`) still receives it. The raw value is
-  reachable for replay only through a blob reference.
+  reachable for replay only through a blob reference. The inline limit is set
+  well above the payload size, so the inline view is redacted rather than
+  moved to the BlobStore (that case: core.event-payload-large-by-reference).
 requirements: [CORE-154]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -42,6 +44,8 @@ setup:
     tools:
       lookup:
         - ok: { output: { name: "SYN-PII-NAME-JANE-ROE-0154" } }
+  limits:
+    inlinePayloadBytes: 65536
 script:
   - action: run
     bind: $s

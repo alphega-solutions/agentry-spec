@@ -6,8 +6,8 @@ description: >-
   an annotating hook, so that error, hook.decision, tool.call, and tool.result
   events are all produced. Every emitted event must validate against the event
   schema, whose type enum is the closed catalog (as amended) and whose
-  envelope admits additional data only in `extensions`. A few plausible
-  non-catalog types are also asserted absent.
+  envelope admits additional data only in `extensions`. No persisted event
+  may have a type outside the persisted catalog (model.delta is ephemeral).
 requirements: [CORE-170]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -78,10 +78,7 @@ expect:
           - { type: tool.result, payload: { callId: c1 } }
           - { type: hook.decision, payload: { hook: label-lookup@1, point: afterToolCall, result: annotate } }
       absentEvents:
-        - { type: hook.continue }
-        - { type: model.retry }
-        - { type: model.failover }
-        - { type: tool.started }
-        - { type: tool.error }
-        - { type: run.failed }
+        - type:
+            $not:
+              $regex: "^(session\\.created|session\\.closed|run\\.started|run\\.ended|turn\\.started|turn\\.completed|model\\.request|model\\.response|tool\\.call|tool\\.result|hook\\.decision|policy\\.decision|checkpoint\\.saved|escalation\\.raised|escalation\\.resolved|error|context\\.retrieved|context\\.compacted)$"
   schemaValid: true

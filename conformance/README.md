@@ -20,7 +20,11 @@ A fixture has three parts:
 2. **`script`** — ordered steps: host actions (`run`, `resume`, `decide`, `close`, `cancel`), configuration loads, clock advances, crashes, restarts, abandoned streams, concurrent actions.
 3. **`expect`** — event patterns per session, session states, step outcomes, captured provider requests and stub calls, port contents, and content that must never be persisted.
 
-Placeholders (`$session`, `$run1`) bind on first match and must match consistently. Matchers: `{"$any": true}`, `{"$absent": true}`, `{"$regex": "..."}`, `{"$len": n}`, `{"$contains": [...]}`.
+Placeholders (`$session`, `$run1`) bind on first match in `expect`, or through a step's `capture`, and must match consistently. A placeholder used in a step must be captured by an earlier step.
+
+Matchers: `{"$any": true}`, `{"$absent": true}`, `{"$regex": "..."}`, `{"$len": n}`, `{"$contains": [...]}`, `{"$not": m}`, `{"$every": m}`, `{"$gte": n}`, `{"$lte": n}`, `{"$all": [m1, m2]}`.
+
+Port expectations are keyed by port name, then tenant, then record key (for example `eventLog: {t1: {$s: [...]}}`).
 
 Rules:
 

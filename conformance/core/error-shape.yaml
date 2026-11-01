@@ -81,8 +81,7 @@ setup:
         - error: { category: not_found, code: test.lookup.missing }
     remoteHooks:
       "memory://hook-checker":
-        - result: continue
-          error: { category: unavailable, code: test.hook.down }
+        - error: { category: unavailable, code: test.hook.down }
 script:
   - action: run
     bind: $s

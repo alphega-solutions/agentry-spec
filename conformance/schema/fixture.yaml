@@ -8,7 +8,8 @@ description: >-
   Matcher objects may appear anywhere in expectations: {"$any": true},
   {"$absent": true}, {"$regex": "..."}, {"$len": n}, {"$contains": [...]},
   {"$not": <value or matcher>}, {"$every": <matcher applied to each array
-  element>}, {"$gte": n}, {"$lte": n}. Placeholders may be bound in `expect`
+  element>}, {"$gte": n}, {"$lte": n}, {"$all": [<matchers that must all
+  hold>]}. Placeholders may be bound in `expect`
   or by a step's `capture`; a placeholder used in a step must be bound by an
   earlier step's capture.
 type: object
@@ -184,7 +185,9 @@ $defs:
   hookBehaviour:
     type: object
     additionalProperties: false
-    required: [result]
+    oneOf:
+      - required: [result]
+      - required: [error]
     properties:
       result: { enum: [continue, annotate, rewrite, block, escalate] }
       reasonCode: { type: string }
@@ -424,7 +427,10 @@ $defs:
             - type: object
               properties: { count: { type: integer, minimum: 0 } }
       ports:
-        description: Expected port contents (partial match), keyed by port name.
+        description: >-
+          Expected port contents (partial match), keyed by port name, then
+          tenant, then record key — e.g. eventLog: {t1: {$s: [events]}},
+          auditLog: {t1: [records]}, idempotencyStore: {t1: {<key>: record}}.
         type: object
       delivered:
         description: What the host received, per session.
