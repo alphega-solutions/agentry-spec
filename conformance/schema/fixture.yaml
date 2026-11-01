@@ -294,10 +294,16 @@ $defs:
           remove: { type: array, items: { type: string } }
           overlay:
             description: >-
-              Environment overlay (CFG-021, CFG-112): `deployment` replaces
-              deployment fields freely; `tighten` maps artifact references
-              (id@version) to partial field values applied after all layers,
-              which must only tighten under each field's merge rule.
+              Environment overlay (CFG-021, CFG-112 as amended 2026-11-01).
+              `deployment` gives partial deployment values: it may change
+              endpoints, adapters, regions (subject to `dataResidency`) and
+              port bindings, but must not loosen deployment governance — it
+              may only append to `policyBundles`, only remove
+              `attachmentSources`, only add `legalHolds`, and only lengthen
+              `retention` periods. `tighten` maps artifact references
+              (id@version) to partial behavioural field values applied last,
+              after all layers, which must only tighten under each field's
+              merge rule.
             type: object
             additionalProperties: false
             required: [environment]
@@ -403,8 +409,22 @@ $defs:
           category: { type: string }
           code: { type: string }
           details:
-            description: Partial match on the error's structured `details` (e.g. artifact, field, layer for CFG-032).
+            description: >-
+              Partial match on the error's structured `details`. For a
+              configuration error (CFG-032 as amended 2026-11-01): `artifact`
+              (id@version), `field` — a JSON Pointer (RFC 6901) into that
+              artifact, e.g. `/budget/tokens` — and `layer` (`policyBundle`,
+              `persona`, `harnessProfile` or `overlay`). For a run-request
+              violation (CFG-101, `invalid_input`): `field`, a JSON Pointer
+              into the profile.
             type: object
+            properties:
+              artifact: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/artifactRef" }
+              field:
+                description: JSON Pointer (RFC 6901).
+                type: string
+                pattern: "^(/([^~/]|~[01])*)*$"
+              layer: { enum: [policyBundle, persona, harnessProfile, overlay] }
       endReason: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/runEndReason" }
       sameAs:
         description: Index of an earlier step whose outcome this one must equal.

@@ -270,7 +270,10 @@ $defs:
       extensions: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/extensions" }
 
   sensitivityPolicies:
-    description: Label → sensitivity policy (CFG-070). Lower layers may add labels; existing labels merge per field.
+    description: >-
+      Label → sensitivity policy (CFG-070). The referencing field is annotated
+      `union`: any layer may add labels; a label a higher layer set merges per
+      field, each by its own rule (CFG-030 as amended 2026-11-01).
     type: object
     propertyNames: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/label" }
     additionalProperties: { $ref: "#/$defs/sensitivityPolicy" }
@@ -292,8 +295,9 @@ $defs:
 
   reviewerRules:
     description: >-
-      Escalation source → reviewer rules (HITL-021). Merged by `union`: a
-      reviewer must satisfy every applicable rule.
+      Escalation source → reviewer rules (HITL-021). The referencing field
+      is annotated `union` (any layer may add sources), and each value is
+      `union`: a reviewer must satisfy every applicable rule.
     type: object
     propertyNames: { $ref: "#/$defs/escalationSource" }
     additionalProperties:

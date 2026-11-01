@@ -25,13 +25,23 @@ description: >-
   parameters (PROV-022).
   A field whose value is a block of named fields (for example `budget`,
   `model`, `context`) carries no rule itself; each of its fields carries one.
-  A map-valued field carries the rule for its keys, and its value schema the
-  rules for each key's value.
+  A map-valued field is annotated `union` — any layer may add keys — and its
+  value schema (`additionalProperties`, or each named property) carries the
+  rule for each key's value, which a key set by a higher layer keeps
+  (CFG-030 as amended 2026-11-01). A field path has the same rule in every
+  kind that declares it.
 
 
   Secret fields carry `x-agentry-secret: true` and accept only a secret
   reference `secret://<provider>/<name>` (CFG-060, CFG-061). `Deployment`
   is not a behavioural layer and carries no merge annotations (CFG-021).
+
+
+  Values are JSON-compatible only: strings, booleans, null, arrays, objects
+  and numbers within the I-JSON range (RFC 7493). Implicit YAML types such as
+  timestamps or `yes`/`no` booleans are configuration errors (CFG amendment
+  2026-11-01). The schemas use only JSON Schema types; durations and times
+  are strings.
 type: object
 required: [kind, id, version, schemaVersion]
 properties:

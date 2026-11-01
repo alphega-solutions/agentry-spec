@@ -1,0 +1,9 @@
+# CFG-070 as amended 2026-11-01: the bundle field is `policyInstructions`;
+# `instructions` is a persona field (locked) and is not accepted here.
+schema: https://alphega.io/agentry/schemas/config/policy-bundle/v1.json
+instance:
+  kind: PolicyBundle
+  id: org
+  version: 1
+  schemaVersion: "0.1.0"
+  instructions: "Follow organisational policy."

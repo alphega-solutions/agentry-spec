@@ -9,4 +9,4 @@ input:
   required: [key]
   properties: { key: { type: string } }
 effect: read
-binding: { kind: native, ref: test.lookup }
+binding: { kind: native, handler: test.lookup }

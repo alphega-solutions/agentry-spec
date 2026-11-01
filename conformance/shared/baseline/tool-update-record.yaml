@@ -10,4 +10,4 @@ input:
   properties: { key: { type: string }, value: { type: string } }
 effect: mutating
 idempotent: false
-binding: { kind: native, ref: test.update_record }
+binding: { kind: native, handler: test.update_record }
