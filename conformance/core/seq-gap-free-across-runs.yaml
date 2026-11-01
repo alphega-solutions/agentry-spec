@@ -2,10 +2,17 @@ schemaVersion: "0.1.0"
 id: core.seq-gap-free-across-runs
 title: Sequence numbers are unique, increasing, and gap-free within a session across runs and a resume
 description: >-
-  Three runs (run, resume, run) produce at least 21 persisted events. The
-  first 21 sequence numbers must all be present, in log order, with no gap,
-  so numbering neither restarts per run nor skips. Ephemeral events carry no
-  seq, so none of them is matched here.
+  Three runs (run, resume, run) and a close() persist at least 22 events
+  (21 before session.closed); the exact number depends on how many
+  checkpoint.saved events the implementation emits, so the fixture does not
+  fix it. session.closed is the last event (CORE-021); its seq is captured
+  as $n. The persisted log must have exactly $n events, every one with a seq
+  in 1..$n; seq 1..21 must appear in log order, followed later by
+  session.closed with seq $n. So numbering starts at 1, never restarts per
+  run (run.started of a later run is never seq 1), and the count equals the
+  highest seq, which together with the range check leaves no room for a gap
+  unless a duplicate fills it, and no room for a duplicate unless a gap
+  exists. Ephemeral events carry no seq and are never persisted.
 requirements: [CORE-160]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -70,10 +77,17 @@ script:
     principal: p1
     input: [{ type: text, text: "Thanks" }]
     expect: { ok: true, endReason: responded }
+  - action: close
+    session: $s
+    capture:
+      - event: { type: session.closed }
+        bind: { seq: $n }
+    expect: { ok: true }
 expect:
   sessions:
     $s:
-      state: idle
+      state: closed
+      closeReason: completed
       events:
         mode: subsequence
         items:
@@ -98,7 +112,16 @@ expect:
           - { seq: 19 }
           - { seq: 20 }
           - { seq: 21 }
+          - { seq: $n, type: session.closed }
       absentEvents:
         - { seq: { $absent: true } }
         - { type: run.started, payload: { kind: resume }, seq: 1 }
         - { type: run.started, payload: { kind: run }, seq: 1 }
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $all:
+            - { $len: $n }
+            - $every:
+                seq: { $all: [{ $gte: 1 }, { $lte: $n }] }

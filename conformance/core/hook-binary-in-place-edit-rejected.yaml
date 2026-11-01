@@ -2,11 +2,14 @@ schemaVersion: "0.1.0"
 id: core.hook-binary-in-place-edit-rejected
 title: A hook rewrite that modifies binary content in place is rejected; the blob is unchanged
 description: >-
-  The fail-closed remote hook at beforeModelCall returns a rewrite that keeps
-  the image part's blob ID but supplies different bytes, a different hash and
-  a different size (an in-place modification). The result is invalid, so the
-  hook has failed and blocks: no model call, the blob is unchanged, and the
-  substituted bytes are never persisted.
+  The fail-closed remote hook at sessionStart returns a rewrite whose image
+  part is a well-formed blob reference with no inline data (so CORE-112
+  holds), but keeps the original blob ID while claiming a different hash and
+  size: an in-place modification of the binary content. Removing or
+  replacing the part with a different blob would be allowed; this is not.
+  The result is invalid, so the hook has failed and, being failClosed,
+  blocks: no model call, no rewrite decision, the stored blob is unchanged,
+  and the substituted hash is never persisted.
 requirements: [CORE-126]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -40,7 +43,7 @@ setup:
         id: scanner
         version: 1
         schemaVersion: "0.1.0"
-        points: [beforeModelCall]
+        points: [sessionStart]
         results: [rewrite, block]
         purpose: guardrail
         failureMode: failClosed
@@ -90,7 +93,6 @@ setup:
             - type: image
               mediaType: image/png
               blob: { id: blob-img-1, hash: "sha256:4977272cf888ce6f517bbabbd62ea59e9c231c9d17e7d70dd5dd822a60e5eb67", mediaType: image/png, size: 27 }
-              data: "U1lOVEhFVElDLUlNQUdFLTAwMDItRURJVEVE"
 script:
   - action: run
     bind: $s
@@ -99,7 +101,7 @@ script:
     persona: assistant@1
     input:
       - { type: text, text: "Describe this" }
-      - { type: image, mediaType: image/png, blob: { id: blob-img-1, hash: "sha256:82e0d9513a9797c3e32e35d6fff5c8648db4b0a8c74ffea2be6d5b827d3c7aa7", mediaType: image/png, size: 20 } }
+      - { type: image, mediaType: image/png, provenance: "attachment:upload", blob: { id: blob-img-1, hash: "sha256:82e0d9513a9797c3e32e35d6fff5c8648db4b0a8c74ffea2be6d5b827d3c7aa7", mediaType: image/png, size: 20 } }
     expect: { ok: true, endReason: blocked }
 expect:
   sessions:
@@ -113,12 +115,25 @@ expect:
       absentEvents:
         - { type: model.request }
         - { type: hook.decision, payload: { result: rewrite } }
+  stubCalls:
+    "memory://hook-scanner":
+      - arguments:
+          point: sessionStart
+          content:
+            - { type: text, text: "Describe this" }
+            - { type: image, blob: { id: blob-img-1, hash: "sha256:82e0d9513a9797c3e32e35d6fff5c8648db4b0a8c74ffea2be6d5b827d3c7aa7", mediaType: image/png, size: 20 }, data: { $absent: true } }
   providerRequests:
     scripted-a: { count: 0 }
   ports:
     blobStore:
       t1:
-        - { id: blob-img-1, hash: "sha256:82e0d9513a9797c3e32e35d6fff5c8648db4b0a8c74ffea2be6d5b827d3c7aa7", size: 20, data: "U1lOVEhFVElDLUlNQUdFLTAwMDE=" }
+        $all:
+          - $contains:
+              - { id: blob-img-1, hash: "sha256:82e0d9513a9797c3e32e35d6fff5c8648db4b0a8c74ffea2be6d5b827d3c7aa7", size: 20, data: "U1lOVEhFVElDLUlNQUdFLTAwMDE=" }
+          - $not:
+              $contains:
+                - { hash: "sha256:4977272cf888ce6f517bbabbd62ea59e9c231c9d17e7d70dd5dd822a60e5eb67" }
+  delivered:
+    $s: { text: "This request was blocked.", fallback: true }
   noPersistedContent:
-    - "U1lOVEhFVElDLUlNQUdFLTAwMDItRURJVEVE"
     - "sha256:4977272cf888ce6f517bbabbd62ea59e9c231c9d17e7d70dd5dd822a60e5eb67"

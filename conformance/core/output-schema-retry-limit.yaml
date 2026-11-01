@@ -3,8 +3,9 @@ id: core.output-schema-retry-limit
 title: When the output retry limit is reached, the run ends failed with agentry.output.schema_mismatch
 description: >-
   outputRetryLimit is 2: the initial response and two corrections all fail
-  validation, so no fourth call is made. The run ends failed with category
-  fatal, and the session closes (failed).
+  validation, so no fourth call is made. The host's run() is accepted (ok),
+  the run ends failed with error code agentry.output.schema_mismatch
+  (category fatal) on run.ended, and the session closes (failed).
 requirements: [CORE-133]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -51,7 +52,7 @@ script:
     principal: p1
     persona: extractor@1
     input: [{ type: text, text: "Two widgets, please" }]
-    expect: { ok: false, endReason: failed, error: { category: fatal, code: agentry.output.schema_mismatch } }
+    expect: { ok: true, endReason: failed }
 expect:
   sessions:
     $s:

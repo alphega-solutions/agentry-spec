@@ -3,8 +3,9 @@ id: core.cancel-active-in-flight-tool
 title: cancel() during an in-flight tool call signals the tool, records its outcome, and ends the run `cancelled`
 description: >-
   The lookup stub hangs until it is cancelled; its call record must show it
-  received the cancellation signal. cancel() is issued after the run has
-  dispatched the call (actions start in listed order). The tool outcome is
+  received the cancellation signal. cancel() starts only once the run's
+  tool.call for c1 has been persisted (startAfter), so the call is in
+  flight when cancellation occurs, independent of timing. The tool outcome is
   recorded before run.ended, no further model call is made, a checkpoint is
   persisted, and the session closes `cancelled`.
 requirements: [CORE-020, CORE-061, CORE-070, CORE-072]
@@ -44,6 +45,7 @@ script:
         expect: { ok: true, endReason: cancelled }
       - action: cancel
         session: $s
+        startAfter: { type: tool.call, turn: 2, payload: { callId: c1 } }
         expect: { ok: true }
 expect:
   sessions:

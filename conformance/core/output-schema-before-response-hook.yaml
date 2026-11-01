@@ -105,8 +105,9 @@ expect:
       state: idle
   stubCalls:
     "memory://hook-scanner":
-      - point: beforeResponse
-        content:
-          - { type: structured, value: { item: widget, quantity: 2 } }
+      - arguments:
+          point: beforeResponse
+          content:
+            - { type: structured, value: { item: widget, quantity: 2 } }
   providerRequests:
     scripted-a: { count: 2 }

@@ -43,9 +43,11 @@ script:
       - { type: text, text: "Describe these" }
       - type: image
         mediaType: image/png
+        provenance: "attachment:upload"
         blob: { id: blob-img-1, hash: "sha256:82e0d9513a9797c3e32e35d6fff5c8648db4b0a8c74ffea2be6d5b827d3c7aa7", mediaType: image/png, size: 20 }
       - type: file
         mediaType: text/plain
+        provenance: "attachment:upload"
         name: report.txt
         blob: { id: blob-file-1, hash: "sha256:488b66a845535f2173fe026ad21ad4238ca6b733b00a24ba332adab6729a0a80", mediaType: text/plain, size: 44 }
     expect: { ok: true, endReason: responded }
@@ -57,6 +59,7 @@ script:
     input:
       - type: image
         mediaType: image/png
+        provenance: "attachment:upload"
         data: "U1lOVEhFVElDLUlNQUdFLTAwMDE="
     expect: { ok: false, error: { category: invalid_input } }
 expect:
@@ -79,13 +82,13 @@ expect:
                 - { type: text, provenance: principal, labels: { $any: true } }
                 - type: image
                   mediaType: image/png
-                  provenance: { $any: true }
+                  provenance: "attachment:upload"
                   labels: { $any: true }
                   blob: { id: blob-img-1, hash: "sha256:82e0d9513a9797c3e32e35d6fff5c8648db4b0a8c74ffea2be6d5b827d3c7aa7", mediaType: image/png, size: 20 }
                   data: { $absent: true }
                 - type: file
                   mediaType: text/plain
-                  provenance: { $any: true }
+                  provenance: "attachment:upload"
                   labels: { $any: true }
                   blob: { id: blob-file-1, hash: "sha256:488b66a845535f2173fe026ad21ad4238ca6b733b00a24ba332adab6729a0a80", mediaType: text/plain, size: 44 }
                   data: { $absent: true }

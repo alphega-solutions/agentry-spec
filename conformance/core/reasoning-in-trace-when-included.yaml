@@ -3,10 +3,14 @@ id: core.reasoning-in-trace-when-included
 title: With trace.includeReasoning, reasoning parts appear in traces, labelled and redacted like other content
 description: >-
   The profile sets trace.includeReasoning true. A remote afterModelCall hook
-  annotates the reasoning part (index 0) with pii. The persisted
-  model.response carries the reasoning part with provenance model and label
-  pii, and its inline view is redacted under the pii policy (mask), so the
-  raw reasoning text never appears in the event. The checkpoint keeps it.
+  sees the model's output and annotates the reasoning part (index 0) with
+  pii. Per the 2026-11-01 amendment (CORE-150/170), model.response is
+  persisted after afterModelCall hooks and records the response as they left
+  it: the hook.decision precedes model.response, and model.response carries
+  the reasoning part with provenance model and the hook-added label pii
+  (also in the event's labels). Its inline view is redacted under the pii
+  policy (mask), so the raw reasoning text never appears in the event. The
+  checkpoint keeps it unredacted (CORE-140).
 requirements: [CORE-143]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -91,9 +95,13 @@ expect:
   sessions:
     $s:
       events:
-        mode: contains
+        mode: subsequence
         items:
+          - { type: model.request, step: 1 }
+          - type: hook.decision
+            payload: { hook: scanner@1, point: afterModelCall, result: annotate, labelsAdded: [pii] }
           - type: model.response
+            step: 1
             labels: { $contains: [pii] }
             payload:
               message:
@@ -107,6 +115,17 @@ expect:
               parts:
                 $contains:
                   - { type: reasoning, data: "SYNTHETIC-REASONING-PII-7781" }
+      checkpoint:
+        reasoning:
+          $contains:
+            - { type: reasoning, provider: scripted-a, data: "SYNTHETIC-REASONING-PII-7781" }
+  stubCalls:
+    "memory://hook-scanner":
+      - arguments:
+          point: afterModelCall
+          content:
+            - { type: reasoning, provider: scripted-a, provenance: model, labels: [] }
+            - { type: text, text: "Hello.", provenance: model, labels: [] }
   delivered:
     $s:
       parts: [{ type: text, text: "Hello." }]

@@ -2,7 +2,8 @@ schemaVersion: "0.1.0"
 id: core.abandoned-stream-cancels-run
 title: Abandoning a run's event stream is treated as cancel()
 description: >-
-  The abandon step arms the runner to stop consuming the event stream of the
+  Both runs use the streamed@1 profile, so the host consumes a live event
+  stream. The abandon step arms the runner to stop consuming the event stream of the
   next run on $s after one event (run.started). The run's lookup call hangs
   unless cancelled, so the run cannot finish on its own. The run must end
   `cancelled` exactly as for cancel(): no further model call, a persisted
@@ -41,8 +42,9 @@ script:
   - action: run
     session: $s
     principal: p1
+    profile: streamed@1
     input: [{ type: text, text: "Look up a" }]
-    expect: { endReason: cancelled }
+    expect: { ok: true, endReason: cancelled }
 expect:
   sessions:
     $s:

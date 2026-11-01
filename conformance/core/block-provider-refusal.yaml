@@ -1,7 +1,13 @@
 schemaVersion: "0.1.0"
 id: core.block-provider-refusal
-title: A provider safety refusal returned as an error ends the run `blocked` with the fallback
-requirements: [CORE-180, CORE-181, PROV-081]
+title: A vendor safety refusal returned as an error is mapped to `policy` and ends the run `blocked` with the fallback
+description: >-
+  The scripted provider returns a vendor-native safety-refusal error (vendor
+  code and vendor category). The adapter must map it to
+  agentry.provider.refused (category policy, not retryable, source provider)
+  per PROV-080. The harness does not retry or fail over; the run ends
+  blocked and the principal receives the persona's fallback message.
+requirements: [CORE-180, CORE-181, PROV-080, PROV-081]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:
@@ -15,7 +21,7 @@ setup:
   providers:
     scripted-a:
       responses:
-        - error: { category: policy, code: agentry.provider.refused, retryable: false }
+        - error: { category: content_filtered, code: vendor.safety_refusal, retryable: false }
     scripted-b: { responses: [] }
 script:
   - action: run
@@ -33,7 +39,18 @@ expect:
         mode: subsequence
         items:
           - { type: model.request, step: 1 }
+          - type: error
+            payload:
+              error:
+                code: agentry.provider.refused
+                category: policy
+                retryable: false
+                source: provider
           - { type: run.ended, payload: { reason: blocked } }
+      absentEvents:
+        - { type: error, payload: { error: { code: vendor.safety_refusal } } }
+        - { type: model.request, step: 2 }
+        - { type: model.response }
   providerRequests:
     scripted-a: { count: 1 }
     scripted-b: { count: 0 }

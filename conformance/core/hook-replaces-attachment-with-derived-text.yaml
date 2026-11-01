@@ -2,10 +2,13 @@ schemaVersion: "0.1.0"
 id: core.hook-replaces-attachment-with-derived-text
 title: A hook receives an attachment as a blob reference and replaces it with extracted text that inherits its provenance and labels
 description: >-
-  The required remote hook at beforeModelCall sees the file part as a blob
-  reference (no bytes) and rewrites it, replacing the file part with text
-  extracted from it. The text reaches the model with the file part's
-  provenance and default attachment label (pii), not `principal`.
+  The required remote hook at sessionStart sees the principal's first input:
+  the text part and the file part as a blob reference (no bytes), with
+  provenance attachment:upload and the default attachment label pii. It
+  rewrites the input, replacing the file part with text extracted from it.
+  The extracted text reaches the model with the file part's provenance
+  (attachment:upload) and labels ([pii]), not principal, and no file part
+  reaches the model.
 requirements: [CORE-122, CORE-125, CORE-126]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -39,7 +42,7 @@ setup:
         id: scanner
         version: 1
         schemaVersion: "0.1.0"
-        points: [beforeModelCall]
+        points: [sessionStart]
         results: [annotate, rewrite]
         purpose: guardrail
         failureMode: failClosed
@@ -97,7 +100,7 @@ script:
     persona: assistant@1
     input:
       - { type: text, text: "Summarise this" }
-      - { type: file, mediaType: text/plain, name: report.txt, blob: { id: blob-file-1, hash: "sha256:488b66a845535f2173fe026ad21ad4238ca6b733b00a24ba332adab6729a0a80", mediaType: text/plain, size: 44 } }
+      - { type: file, mediaType: text/plain, name: report.txt, provenance: "attachment:upload", blob: { id: blob-file-1, hash: "sha256:488b66a845535f2173fe026ad21ad4238ca6b733b00a24ba332adab6729a0a80", mediaType: text/plain, size: 44 } }
     expect: { ok: true, endReason: responded }
 expect:
   sessions:
@@ -105,18 +108,18 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: hook.decision, payload: { hook: scanner@1, point: beforeModelCall, result: rewrite } }
+          - { type: hook.decision, payload: { hook: scanner@1, point: sessionStart, result: rewrite } }
           - { type: model.request }
   stubCalls:
     "memory://hook-scanner":
-      - point: beforeModelCall
-        content:
-          $contains:
-            - { type: text, text: "Summarise this", provenance: principal }
+      - arguments:
+          point: sessionStart
+          content:
+            - { type: text, text: "Summarise this", provenance: principal, labels: [] }
             - type: file
               mediaType: text/plain
               blob: { id: blob-file-1, hash: "sha256:488b66a845535f2173fe026ad21ad4238ca6b733b00a24ba332adab6729a0a80", mediaType: text/plain, size: 44 }
-              provenance: $fileProv
+              provenance: "attachment:upload"
               labels: [pii]
               data: { $absent: true }
   providerRequests:
@@ -126,8 +129,9 @@ expect:
             - role: principal
               parts:
                 - { type: text, text: "Summarise this" }
-                - { type: text, text: "SYNTHETIC-FILE-0001: quarterly widget report", provenance: $fileProv, labels: [pii] }
+                - { type: text, text: "SYNTHETIC-FILE-0001: quarterly widget report", provenance: "attachment:upload", labels: [pii] }
   ports:
     blobStore:
       t1:
-        - { id: blob-file-1, hash: "sha256:488b66a845535f2173fe026ad21ad4238ca6b733b00a24ba332adab6729a0a80", size: 44 }
+        $contains:
+          - { id: blob-file-1, hash: "sha256:488b66a845535f2173fe026ad21ad4238ca6b733b00a24ba332adab6729a0a80", size: 44 }

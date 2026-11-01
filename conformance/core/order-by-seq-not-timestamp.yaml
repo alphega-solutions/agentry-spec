@@ -1,15 +1,17 @@
 schemaVersion: "0.1.0"
 id: core.order-by-seq-not-timestamp
-title: Events with identical timestamps are ordered by seq alone
+title: Events are ordered by seq alone, even when timestamps run backwards
 description: >-
-  The virtual clock is never advanced, so every event across two runs carries
-  the same timestamp. Event order (and the second run's continuation) must
-  follow seq only.
+  The first run happens at 12:00. The virtual clock is then set back to 06:00
+  before the second run, so every event of the second run has an earlier
+  timestamp than every event of the first, yet a higher seq. Log order, seq
+  numbering, and turn numbering must follow seq: the second run is turn 2 and its events
+  follow the first run's in the log.
 requirements: [CORE-003]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:
-  clock: "2026-01-01T00:00:00Z"
+  clock: "2026-01-01T12:00:00Z"
   idSeed: 1
   config: { base: baseline }
   tenants:
@@ -30,6 +32,7 @@ script:
     persona: assistant@1
     input: [{ type: text, text: "First" }]
     expect: { ok: true, endReason: responded }
+  - clock: { set: "2026-01-01T06:00:00Z" }
   - action: run
     session: $s
     principal: p1
@@ -42,12 +45,15 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: session.created, seq: 1, timestamp: $t }
-          - { type: run.started, runId: $r1, timestamp: $t }
-          - { type: turn.started, runId: $r1, turn: 1, timestamp: $t }
-          - { type: run.ended, runId: $r1, timestamp: $t }
-          - { type: run.started, runId: $r2, timestamp: $t }
-          - { type: turn.started, runId: $r2, turn: 2, timestamp: $t }
-          - { type: run.ended, runId: $r2, timestamp: $t }
+          - { type: session.created, seq: 1, timestamp: { $regex: "^2026-01-01T12:" } }
+          - { type: run.started, runId: $r1, timestamp: { $regex: "^2026-01-01T12:" } }
+          - { type: turn.started, runId: $r1, turn: 1, timestamp: { $regex: "^2026-01-01T12:" } }
+          - { type: run.ended, runId: $r1, timestamp: { $regex: "^2026-01-01T12:" } }
+          - { type: run.started, runId: $r2, timestamp: { $regex: "^2026-01-01T06:" } }
+          - { type: turn.started, runId: $r2, turn: 2, timestamp: { $regex: "^2026-01-01T06:" } }
+          - { type: run.ended, runId: $r2, timestamp: { $regex: "^2026-01-01T06:" } }
+      absentEvents:
+        - { runId: $r2, turn: 1 }
+        - { type: turn.started, turn: 3 }
   providerRequests:
     scripted-a: { count: 2 }

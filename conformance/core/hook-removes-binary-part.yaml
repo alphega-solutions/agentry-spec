@@ -2,9 +2,11 @@ schemaVersion: "0.1.0"
 id: core.hook-removes-binary-part
 title: A hook rewrite may remove a binary part; the model never receives it
 description: >-
-  The remote hook at beforeModelCall receives the image as a blob reference
-  and returns a rewrite that drops it. The model request contains only the
-  text part.
+  The remote hook at sessionStart receives the principal's first input, with
+  the image as a blob reference and no bytes, and returns a rewrite that
+  keeps the text part and drops the image. The model request's principal
+  message contains only the text part, and the image bytes are never
+  persisted.
 requirements: [CORE-125, CORE-126]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -38,7 +40,7 @@ setup:
         id: scanner
         version: 1
         schemaVersion: "0.1.0"
-        points: [beforeModelCall]
+        points: [sessionStart]
         results: [rewrite]
         purpose: guardrail
         failureMode: failClosed
@@ -95,7 +97,7 @@ script:
     persona: assistant@1
     input:
       - { type: text, text: "Describe this" }
-      - { type: image, mediaType: image/png, blob: { id: blob-img-1, hash: "sha256:82e0d9513a9797c3e32e35d6fff5c8648db4b0a8c74ffea2be6d5b827d3c7aa7", mediaType: image/png, size: 20 } }
+      - { type: image, mediaType: image/png, provenance: "attachment:upload", blob: { id: blob-img-1, hash: "sha256:82e0d9513a9797c3e32e35d6fff5c8648db4b0a8c74ffea2be6d5b827d3c7aa7", mediaType: image/png, size: 20 } }
     expect: { ok: true, endReason: responded }
 expect:
   sessions:
@@ -103,13 +105,15 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: hook.decision, payload: { hook: scanner@1, point: beforeModelCall, result: rewrite } }
+          - { type: hook.decision, payload: { hook: scanner@1, point: sessionStart, result: rewrite } }
           - { type: model.request }
   stubCalls:
     "memory://hook-scanner":
-      - content:
-          $contains:
-            - { type: image, blob: { id: blob-img-1, hash: "sha256:82e0d9513a9797c3e32e35d6fff5c8648db4b0a8c74ffea2be6d5b827d3c7aa7", mediaType: image/png, size: 20 }, data: { $absent: true } }
+      - arguments:
+          point: sessionStart
+          content:
+            - { type: text, text: "Describe this" }
+            - { type: image, mediaType: image/png, blob: { id: blob-img-1, hash: "sha256:82e0d9513a9797c3e32e35d6fff5c8648db4b0a8c74ffea2be6d5b827d3c7aa7", mediaType: image/png, size: 20 }, data: { $absent: true } }
   providerRequests:
     scripted-a:
       - messages:

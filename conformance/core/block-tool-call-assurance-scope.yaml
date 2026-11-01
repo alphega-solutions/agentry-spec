@@ -3,10 +3,11 @@ id: core.block-tool-call-assurance-scope
 title: A failed assurance or scope check skips the tool and returns a `policy` error to the model; the turn continues
 description: >-
   Session 1: update_record requires phishing_resistant assurance; the
-  principal has multi_factor. Session 2: the host's runtime scope omits
+  principal has multi_factor. Per the 2026-11-01 amendment to CORE-191, this
+  produces `policy` (agentry.tool.assurance), never `unauthorized`. Session 2: the host's runtime scope omits
   lookup. In both, the tool is not called and the turn goes on to a second
   model call.
-requirements: [CORE-180]
+requirements: [CORE-180, CORE-191]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:
@@ -70,11 +71,13 @@ expect:
         mode: subsequence
         items:
           - { type: policy.decision, payload: { kind: assurance, outcome: block, callId: c1 } }
-          - { type: tool.result, payload: { callId: c1, result: { error: { category: policy } } } }
+          - { type: tool.result, payload: { callId: c1, result: { error: { category: policy, code: agentry.tool.assurance } } } }
           - { type: model.request, step: 2 }
           - { type: run.ended, payload: { reason: responded } }
       absentEvents:
         - { type: tool.call }
+        - { payload: { result: { error: { category: unauthorized } } } }
+        - { type: error, payload: { error: { category: unauthorized } } }
     $s2:
       events:
         mode: subsequence

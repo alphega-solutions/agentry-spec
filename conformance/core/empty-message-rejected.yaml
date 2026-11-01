@@ -23,7 +23,7 @@ script:
     principal: p1
     persona: assistant@1
     input: []
-    expect: { ok: false, error: { category: invalid_input } }
+    expect: { ok: false, error: { category: invalid_input }, newEvents: 0 }
   - action: run
     bind: $s2
     tenant: t1
@@ -44,5 +44,4 @@ expect:
     scripted-a:
       - messages:
           $contains:
-            - { role: system, parts: [{ type: text }] }
             - { role: principal, parts: [{ type: text, text: "Hi" }] }

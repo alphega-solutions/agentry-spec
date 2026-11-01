@@ -1,0 +1,131 @@
+schemaVersion: "0.1.0"
+id: core.attachment-trusted-source
+title: An attachment from a source listed in `trustedAttachmentSources` is trusted, so it does not taint the session
+description: >-
+  Same request as core.attachment-untrusted, but the policy bundle lists
+  `upload` in trustedAttachmentSources. The file part still carries
+  provenance attachment:upload, but it is trusted: the session is not
+  tainted, so the mutating call proceeds with no taint decision (a tainted
+  session would have to record one, HOOK-124). A
+  second session supplies the same file through a different channel
+  (`email`), which is not listed, so that session is tainted and the
+  mutating call escalates.
+requirements: [CORE-121]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        trustedAttachmentSources: [upload]
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { documents: true }
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Done." }]
+          usage: { inputTokens: 50, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+  ports:
+    blobStore:
+      t1:
+        - id: blob-file-1
+          hash: "sha256:488b66a845535f2173fe026ad21ad4238ca6b733b00a24ba332adab6729a0a80"
+          mediaType: text/plain
+          size: 44
+          data: "U1lOVEhFVElDLUZJTEUtMDAwMTogcXVhcnRlcmx5IHdpZGdldCByZXBvcnQ="
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input:
+      - { type: text, text: "Apply the attached instructions" }
+      - type: file
+        mediaType: text/plain
+        name: instructions.txt
+        provenance: "attachment:upload"
+        blob: { id: blob-file-1, hash: "sha256:488b66a845535f2173fe026ad21ad4238ca6b733b00a24ba332adab6729a0a80", mediaType: text/plain, size: 44 }
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $s2
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input:
+      - { type: text, text: "Apply the attached instructions" }
+      - type: file
+        mediaType: text/plain
+        name: instructions.txt
+        provenance: "attachment:email"
+        blob: { id: blob-file-1, hash: "sha256:488b66a845535f2173fe026ad21ad4238ca6b733b00a24ba332adab6729a0a80", mediaType: text/plain, size: 44 }
+    expect: { ok: true, endReason: escalated }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: update_record } }
+          - { type: tool.result, payload: { callId: c1, result: { ok: { output: { updated: true } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: policy.decision, payload: { kind: taint } }
+        - { type: escalation.raised }
+    $s2:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - type: policy.decision
+            payload:
+              kind: taint
+              outcome: escalate
+              callId: c2
+              provenances: { $contains: ["attachment:email"] }
+          - { type: escalation.raised }
+      absentEvents:
+        - { type: tool.call, payload: { callId: c2 } }
+  providerRequests:
+    scripted-a:
+      - messages:
+          $contains:
+            - role: principal
+              parts:
+                - { type: text, text: "Apply the attached instructions", provenance: principal }
+                - { type: file, blob: { id: blob-file-1 }, provenance: "attachment:upload" }
+      - {}
+      - messages:
+          $contains:
+            - role: principal
+              parts:
+                - { type: text, text: "Apply the attached instructions", provenance: principal }
+                - { type: file, blob: { id: blob-file-1 }, provenance: "attachment:email" }
+  stubCalls:
+    update_record: { count: 1 }

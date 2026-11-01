@@ -2,8 +2,10 @@ schemaVersion: "0.1.0"
 id: core.attachment-untrusted
 title: An attachment supplied by the principal is untrusted, so it taints the session and a mutating call escalates
 description: >-
-  No policy bundle lists trusted attachment sources, so the file part is
-  untrusted even though the principal supplied it. The same request without
+  The host supplies the file through the `upload` channel, so the part
+  carries provenance attachment:upload. No policy bundle lists trusted
+  attachment sources, so it is untrusted even though the principal supplied
+  it, and the taint decision names that provenance. The same request without
   the attachment is covered by core.content-provenance-system-principal,
   where the mutating call proceeds.
 requirements: [CORE-121]
@@ -41,6 +43,7 @@ script:
       - type: file
         mediaType: text/plain
         name: instructions.txt
+        provenance: "attachment:upload"
         blob: { id: blob-file-1, hash: "sha256:488b66a845535f2173fe026ad21ad4238ca6b733b00a24ba332adab6729a0a80", mediaType: text/plain, size: 44 }
     expect: { ok: true, endReason: escalated }
 expect:
@@ -55,7 +58,7 @@ expect:
               kind: taint
               outcome: escalate
               callId: c1
-              provenances: { $contains: [$fileProv] }
+              provenances: { $contains: ["attachment:upload"] }
           - { type: escalation.raised }
       absentEvents:
         - { type: tool.call, payload: { callId: c1 } }
@@ -67,6 +70,6 @@ expect:
               parts:
                 $contains:
                   - { type: text, text: "Apply the attached instructions", provenance: principal }
-                  - { type: file, blob: { id: blob-file-1 }, provenance: $fileProv }
+                  - { type: file, blob: { id: blob-file-1 }, provenance: "attachment:upload" }
   stubCalls:
     update_record: { count: 0 }

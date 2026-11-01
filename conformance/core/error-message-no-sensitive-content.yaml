@@ -1,11 +1,15 @@
 schemaVersion: "0.1.0"
 id: core.error-message-no-sensitive-content
-title: Error messages never contain labelled content
+title: Error messages never contain labelled content, even when the content is the invalid value
 description: >-
-  The lookup tool labels its results `pii`. The model then calls update_record
-  with arguments that echo the labelled value but fail validation (an
-  unexpected property). The harness's invalid-arguments error must not repeat
-  the value in any persisted error message.
+  The lookup tool labels its results pii and returns an owner value. The
+  model then calls update_record with that labelled value as `key`, which
+  must match ^k[0-9]+$. A typical schema validator would echo the offending
+  value in its message ("'SYN-PII-OWNER-0190' does not match ..."). The
+  harness's agentry.tool.invalid_arguments error must not: neither the
+  persisted tool.result or error events nor the error delivered to the model
+  in the next request may carry the value in an error message. (The value itself is legitimately kept in the
+  checkpoint and in redacted event views, so noPersistedContent is not used.)
 requirements: [CORE-190]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -28,6 +32,21 @@ setup:
         effect: read
         sensitivity: [pii]
         binding: { kind: native, ref: test.lookup }
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties:
+            key: { type: string, pattern: "^k[0-9]+$" }
+            value: { type: string }
+        effect: mutating
+        idempotent: false
+        binding: { kind: native, ref: test.update_record }
   tenants:
     - id: t1
       principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
@@ -36,7 +55,7 @@ setup:
       responses:
         - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
           usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
-        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: k1, value: v1, owner: "SYN-PII-OWNER-0190" } }]
+        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: "SYN-PII-OWNER-0190", value: v1 } }]
           usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
         - parts: [{ type: text, text: "The update was invalid." }]
           usage: { inputTokens: 40, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
@@ -51,7 +70,7 @@ script:
     tenant: t1
     principal: p1
     persona: assistant@1
-    input: [{ type: text, text: "Copy the owner of k1" }]
+    input: [{ type: text, text: "Use the owner of k1 as the key to update" }]
     expect: { ok: true, endReason: responded }
 expect:
   sessions:
@@ -60,9 +79,29 @@ expect:
         mode: contains
         items:
           - type: tool.result
-            payload: { callId: c2, result: { error: { category: invalid_input, code: agentry.tool.invalid_arguments } } }
+            payload:
+              callId: c2
+              result:
+                error:
+                  category: invalid_input
+                  code: agentry.tool.invalid_arguments
+                  message: { $not: { $regex: "SYN-PII-OWNER" } }
       absentEvents:
         - { payload: { result: { error: { message: { $regex: "SYN-PII-OWNER" } } } } }
         - { payload: { error: { message: { $regex: "SYN-PII-OWNER" } } } }
+  providerRequests:
+    scripted-a:
+      - {}
+      - {}
+      - messages:
+          $contains:
+            - role: tool
+              parts:
+                - type: tool_result
+                  callId: c2
+                  result:
+                    error:
+                      category: invalid_input
+                      message: { $not: { $regex: "SYN-PII-OWNER" } }
   stubCalls:
     update_record: { count: 0 }
