@@ -1,0 +1,65 @@
+schemaVersion: "0.1.0"
+id: core.block-session-start
+title: A block at sessionStart makes no model call, ends the run `blocked`, and returns the persona fallback
+requirements: [CORE-180, CORE-181]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Hook
+        id: guard-start
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [sessionStart]
+        results: [block]
+        timeoutMs: 1000
+        source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-FORBIDDEN'))", then: { result: block, reasonCode: test.guard.blocked } }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [guard-start@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a: { responses: [] }
+    scripted-b: { responses: [] }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Please do SYN-FORBIDDEN" }]
+    expect: { ok: true, endReason: blocked }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: guard-start@1, point: sessionStart, result: block } }
+          - { type: run.ended, payload: { reason: blocked } }
+      absentEvents:
+        - { type: model.request }
+  providerRequests:
+    scripted-a: { count: 0 }
+    scripted-b: { count: 0 }
+  delivered:
+    $s: { text: "This request was blocked." }

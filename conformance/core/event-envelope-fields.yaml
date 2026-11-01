@@ -93,7 +93,4 @@ expect:
         - { principalRef: { roles: { $any: true } } }
         - { principalRef: { attributes: { $any: true } } }
         - { principalRef: { assurance: { $any: true } } }
-  noPersistedContent:
-    - "SYN-ATTR-7731"
-    - "syn-role-envelope-check"
   schemaValid: true

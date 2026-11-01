@@ -99,5 +99,5 @@ expect:
         - { type: session.created, seq: { $absent: true } }
         - { type: run.started, seq: { $absent: true } }
         - { type: run.ended, seq: { $absent: true } }
-        - { type: run.ended, runId: $r3, seq: 1 }
         - { type: run.started, payload: { kind: resume }, seq: 1 }
+        - { type: run.started, payload: { kind: run }, seq: 1 }

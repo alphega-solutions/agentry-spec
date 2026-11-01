@@ -1,0 +1,71 @@
+schemaVersion: "0.1.0"
+id: core.block-fallback-policy-default
+title: A blocked run whose persona declares no fallback returns the policy bundle default, without a model call to write it
+description: >-
+  The persona override omits fallbackMessage, so org@1's
+  defaultFallbackMessage applies. Exactly one model call is made (the one
+  whose output was blocked); no further call generates the fallback.
+requirements: [CORE-181]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Hook
+        id: guard-response
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeResponse]
+        results: [block]
+        timeoutMs: 1000
+        source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-UNSAFE'))", then: { result: block, reasonCode: test.guard.blocked } }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [guard-response@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "SYN-UNSAFE-RESPONSE-0181" }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b: { responses: [] }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: blocked }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { point: beforeResponse, result: block } }
+          - { type: run.ended, payload: { reason: blocked } }
+      absentEvents:
+        - { type: model.request, step: 2 }
+  providerRequests:
+    scripted-a: { count: 1 }
+    scripted-b: { count: 0 }
+  delivered:
+    $s: { text: "I can't help with that request." }

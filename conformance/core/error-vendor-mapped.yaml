@@ -1,0 +1,55 @@
+schemaVersion: "0.1.0"
+id: core.error-vendor-mapped
+title: Provider errors are mapped into the error shape, with vendor detail only in `details`
+description: >-
+  The primary provider fails with an authentication error (non-retryable),
+  so the harness fails over to scripted-b before the turn's first completed
+  call. The error event for the failed call carries the full error shape
+  with source provider. Any vendor detail kept is confined to `details`.
+requirements: [CORE-194, CORE-190]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - error: { category: unavailable, code: agentry.provider.auth, retryable: false }
+    scripted-b:
+      responses:
+        - parts: [{ type: text, text: "Hello from the fallback." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, payload: { provider: scripted-a, role: primary } }
+          - type: error
+            payload:
+              error:
+                code: agentry.provider.auth
+                category: unavailable
+                retryable: false
+                source: provider
+                message: { $any: true }
+          - { type: model.request, payload: { provider: scripted-b, role: fallback, fallbackReason: failover } }
+          - { type: run.ended, payload: { reason: responded } }
+  providerRequests:
+    scripted-a: { count: 1 }
+    scripted-b: { count: 1 }
+  schemaValid: true

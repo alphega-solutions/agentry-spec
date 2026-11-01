@@ -1,0 +1,66 @@
+schemaVersion: "0.1.0"
+id: core.block-before-response
+title: A block at beforeResponse withholds the response, ends the run `blocked`, and returns the fallback
+requirements: [CORE-180, CORE-181]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Hook
+        id: guard-response
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeResponse]
+        results: [block]
+        timeoutMs: 1000
+        source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-UNSAFE'))", then: { result: block, reasonCode: test.guard.blocked } }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [guard-response@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "SYN-UNSAFE-RESPONSE-0180" }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: blocked }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: model.response, step: 1 }
+          - { type: hook.decision, payload: { hook: guard-response@1, point: beforeResponse, result: block } }
+          - { type: run.ended, payload: { reason: blocked } }
+  providerRequests:
+    scripted-a: { count: 1 }
+  delivered:
+    $s: { text: "This request was blocked." }
