@@ -1,0 +1,325 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://alphega.io/agentry/schemas/config/defs/v1.json
+title: agentry configuration definitions
+description: >-
+  Building blocks shared by the configuration schemas (Areas 2–3, with the
+  blocks added by Areas 6, 7 and 9). Fields of behavioural blocks carry their
+  merge rule (`x-agentry-merge`) and, for `stricter`, their strictness order
+  (`x-agentry-order`, strictest first); see the artifact schema for the
+  vocabulary. A block such as `model` or `context` carries no rule of its own:
+  it merges field by field.
+$defs:
+  duration:
+    description: >-
+      ISO 8601 duration, limited to days, hours, minutes and seconds (for
+      example `PT30S`, `PT24H`, `P30D`) so that `min` comparisons are exact.
+      Years, months and weeks are not accepted.
+    type: string
+    pattern: "^P(?=[0-9T])([0-9]+D)?(T(?=[0-9])([0-9]+H)?([0-9]+M)?([0-9]+(\\.[0-9]+)?S)?)?$"
+
+  celExpression:
+    description: >-
+      Expression in the agentry CEL subset (HOOK-110–114, ADR-0006). Compiled
+      and type-checked against the variables of its use at load time
+      (CFG-042); failure is a configuration error.
+    type: string
+    minLength: 1
+
+  secretRef:
+    description: >-
+      Secret reference `secret://<provider>/<name>` (CFG-060). Fields of this
+      type carry `x-agentry-secret: true`; anything other than a reference is a
+      configuration error (CFG-061).
+    type: string
+    pattern: "^secret://[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*$"
+
+  providerId:
+    description: Identifier of a provider declared in the deployment (PROV-010).
+    type: string
+    pattern: "^[A-Za-z0-9_.-]{1,128}$"
+
+  providerIds:
+    type: array
+    items: { $ref: "#/$defs/providerId" }
+    uniqueItems: true
+
+  modelName:
+    description: Model identifier at its provider (PROV-020).
+    type: string
+    minLength: 1
+    maxLength: 256
+
+  region:
+    description: Deployment region name, compared with `dataResidency` (PROV-012, PORT-005).
+    type: string
+    pattern: "^[A-Za-z0-9_.-]{1,64}$"
+
+  sourceName:
+    description: Attachment channel name (CORE-121), as declared in the deployment's `attachmentSources`.
+    type: string
+    pattern: "^[A-Za-z0-9_.-]{1,128}$"
+
+  escalationSource:
+    description: Escalation source (HITL-001; ORCH-061 keeps the original source of delegated actions).
+    enum: [taint, approval, hook, recovery]
+
+  endpoint:
+    description: Endpoint URI, e.g. `https://…` or an adapter-specific scheme such as `memory://…`.
+    type: string
+    pattern: "^[a-z][a-z0-9+.-]*://\\S+$"
+
+  modelRef:
+    description: A `{provider, name}` pair (PROV-020, PROV-021).
+    type: object
+    additionalProperties: false
+    required: [provider, name]
+    properties:
+      provider: { $ref: "#/$defs/providerId" }
+      name: { $ref: "#/$defs/modelName" }
+
+  modelParams:
+    description: >-
+      Generation parameters (PROV-022). Only parameters the provider's adapter
+      declares (PROV-008) are accepted; this is checked at load time against
+      the adapter, not by this schema. Endpoints, regions, tool or safety
+      settings and data-retention settings are never parameters. Values are
+      scalars or lists of scalars.
+    type: object
+    properties:
+      maxOutputTokens:
+        description: Output token limit; at most the model's `maxOutputTokens` capability (PROV-020).
+        x-agentry-merge: min
+        type: integer
+        minimum: 1
+    propertyNames:
+      pattern: "^[a-z][A-Za-z0-9]{0,63}$"
+    additionalProperties:
+      description: An adapter-declared generation parameter such as `temperature`, `topP`, `stopSequences` or `seed` (PROV-022; the only `override` exemption from CFG-033).
+      x-agentry-merge: override
+      oneOf:
+        - type: [string, number, boolean]
+        - type: array
+          items: { type: [string, number, boolean] }
+
+  modelSelection:
+    description: >-
+      `{provider, name, params}` without fallbacks, used by `compaction.model`
+      (CTX-100) and model hooks (HOOK-100, PROV-023).
+    type: object
+    additionalProperties: false
+    required: [provider, name]
+    properties:
+      provider: { $ref: "#/$defs/providerId" }
+      name: { $ref: "#/$defs/modelName" }
+      params: { $ref: "#/$defs/modelParams" }
+
+  modelBlock:
+    description: >-
+      Model selection (PROV-020), allowed in policy bundles, personas and
+      harness profiles. Replaces the provisional `model` field (CFG-092).
+      `provider` and `name` are set together.
+    type: object
+    additionalProperties: false
+    dependentRequired:
+      provider: [name]
+      name: [provider]
+    properties:
+      provider:
+        description: Provider ID (PROV-020).
+        x-agentry-merge: locked
+        $ref: "#/$defs/providerId"
+      name:
+        description: Model identifier at that provider (PROV-020).
+        x-agentry-merge: locked
+        $ref: "#/$defs/modelName"
+      fallbacks:
+        description: >-
+          Ordered alternative models (PROV-021). The list belongs to the layer
+          that sets `provider` and `name`; lower layers may only remove
+          entries, and the remaining entries keep their order. Adding an entry
+          is a configuration error.
+        x-agentry-merge: intersect
+        type: array
+        items: { $ref: "#/$defs/modelRef" }
+        uniqueItems: true
+      params:
+        $ref: "#/$defs/modelParams"
+
+  contextBlock:
+    description: Context strategy (CTX-100), allowed in policy bundles and harness profiles.
+    type: object
+    additionalProperties: false
+    properties:
+      reserveOutputTokens:
+        description: Space kept for the response; defaults to the model's `maxOutputTokens` (CTX-100, PROV-030).
+        x-agentry-merge: min
+        type: integer
+        minimum: 1
+      compaction:
+        type: object
+        additionalProperties: false
+        properties:
+          mode:
+            description: How to compact (CTX-100, §6.3). Default `truncate`.
+            x-agentry-merge: stricter
+            x-agentry-order: [none, truncate, summarize]
+            enum: [none, truncate, summarize]
+            default: truncate
+          triggerPercent:
+            description: Fill level, as a percentage of available space, that triggers compaction (CTX-050). Default 90.
+            x-agentry-merge: min
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 90
+          model:
+            description: Summarizer model; defaults to the session's model. A policy bundle may pin it (CTX-100).
+            x-agentry-merge: locked
+            $ref: "#/$defs/modelSelection"
+      retrieval:
+        type: object
+        additionalProperties: false
+        properties:
+          auto:
+            description: Enables automatic retrieval (CTX-030). Default `false`. Requires an effective `source` (CTX-101).
+            x-agentry-merge: stricter
+            x-agentry-order: [false, true]
+            type: boolean
+            default: false
+          source:
+            description: Vector store source for automatic retrieval (CTX-100).
+            x-agentry-merge: locked
+            type: string
+            pattern: "^[A-Za-z0-9_.-]{1,128}$"
+          limit:
+            description: Maximum results per automatic retrieval (CTX-031). Default 5.
+            x-agentry-merge: min
+            type: integer
+            minimum: 1
+            default: 5
+          defaultLabels:
+            description: Labels for retrieved content stored without labels (CTX-042).
+            x-agentry-merge: union
+            $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/labels"
+
+  redactionRule:
+    description: >-
+      How content with the label is redacted where it leaves the
+      implementation (CORE-154, PORT-008, PORT-074). `targets` limits the rule
+      to some boundaries; absent, it applies to all. Trace handling (ADR-0015)
+      is expressed as a rule targeting `events` and `telemetry`.
+    type: object
+    additionalProperties: false
+    required: [mode]
+    properties:
+      mode:
+        description: "`mask` replaces the content with a placeholder; `hash` replaces it with a hash; `remove` omits it."
+        enum: [mask, hash, remove]
+      targets:
+        type: array
+        minItems: 1
+        uniqueItems: true
+        items: { enum: [events, audit, telemetry] }
+      extensions: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/extensions" }
+
+  sensitivityPolicy:
+    description: >-
+      Behaviour for one sensitivity label (ADR-0015, CFG-030). Merges per key
+      across layers; each field by its own rule.
+    type: object
+    additionalProperties: false
+    properties:
+      allowedProviders:
+        description: Providers that may receive content with this label (CFG-070, PROV-012).
+        x-agentry-merge: intersect
+        $ref: "#/$defs/providerIds"
+      providerRequirement:
+        description: >-
+          CEL condition over the provider's `id`, `region` and data-handling
+          attributes, e.g. `!provider.retainsData` (PROV-012). Each layer's
+          condition must hold.
+        x-agentry-merge: union
+        $ref: "#/$defs/celExpression"
+      redaction:
+        description: Redaction rules (CFG-030).
+        x-agentry-merge: union
+        type: array
+        items: { $ref: "#/$defs/redactionRule" }
+      approval:
+        description: >-
+          Approval applied to tool calls while content with this label is in
+          context (ADR-0015); the stricter of this and the tool's own
+          `approval` applies. Order as for approval policy (CFG-031).
+        x-agentry-merge: stricter
+        x-agentry-order: [always, policy, never]
+        enum: [always, policy, never]
+      reviewerRule:
+        description: >-
+          CEL rule a reviewer must satisfy to see parts with this label
+          unredacted (HITL-031). Each layer's rule must hold.
+        x-agentry-merge: union
+        $ref: "#/$defs/celExpression"
+      allowedRemoteHooks:
+        description: >-
+          Remote hook endpoints (deployment `remoteHooks` IDs) that may receive
+          content with this label (HOOK-092). Absent: no restriction.
+        x-agentry-merge: intersect
+        type: array
+        uniqueItems: true
+        items: { type: string, pattern: "^[A-Za-z0-9_.-]{1,128}$" }
+      extensions: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/extensions" }
+
+  sensitivityPolicies:
+    description: Label → sensitivity policy (CFG-070). Lower layers may add labels; existing labels merge per field.
+    type: object
+    propertyNames: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/label" }
+    additionalProperties: { $ref: "#/$defs/sensitivityPolicy" }
+
+  reviewerRule:
+    description: A reviewer rule (HITL-021, HITL-024).
+    type: object
+    additionalProperties: false
+    required: [rule]
+    properties:
+      rule:
+        description: CEL over `reviewer`, `principal` and `escalation` (HITL-021).
+        $ref: "#/$defs/celExpression"
+      requiredApprovals:
+        description: Distinct approvals needed; the highest among applicable rules applies (HITL-024). Default 1.
+        type: integer
+        minimum: 1
+        default: 1
+
+  reviewerRules:
+    description: >-
+      Escalation source → reviewer rules (HITL-021). Merged by `union`: a
+      reviewer must satisfy every applicable rule.
+    type: object
+    propertyNames: { $ref: "#/$defs/escalationSource" }
+    additionalProperties:
+      x-agentry-merge: union
+      type: array
+      minItems: 1
+      items: { $ref: "#/$defs/reviewerRule" }
+
+  approvalRules:
+    description: >-
+      CEL expressions evaluated with the `beforeToolCall` variables for calls
+      whose effective approval is `policy` (HOOK-130–132).
+    type: array
+    items: { $ref: "#/$defs/celExpression" }
+
+  hookRefs:
+    description: Required hooks, as `id@version` references to `Hook` artifacts (Area 5).
+    type: array
+    uniqueItems: true
+    items: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/artifactRef" }
+
+  artifactRefs:
+    type: array
+    uniqueItems: true
+    items: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/artifactRef" }
+
+  outputSchema:
+    description: JSON Schema (draft 2020-12) for the final response's `structured` part (CORE-130).
+    type: object
