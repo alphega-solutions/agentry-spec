@@ -1,0 +1,7 @@
+schema: https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/part
+instance:
+  type: image
+  mediaType: image/png
+  data: "iVBORw0KGgo="
+  provenance: principal
+  labels: []

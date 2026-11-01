@@ -1,0 +1,146 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://alphega.io/agentry/schemas/core/content/v1.json
+title: Messages and content parts
+description: Area 1 §7–8. The part list is closed (CORE-110).
+$defs:
+  blobRef:
+    description: Tenant-scoped reference to binary content (CORE-113).
+    type: object
+    additionalProperties: false
+    required: [id, hash, mediaType, size]
+    properties:
+      id: { type: string, minLength: 1 }
+      hash: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/sha256" }
+      mediaType: { type: string, pattern: "^[a-z]+/[A-Za-z0-9.+-]+$" }
+      size: { type: integer, minimum: 0 }
+
+  partBase:
+    description: Fields every part carries (CORE-111).
+    type: object
+    required: [type, provenance, labels]
+    properties:
+      provenance: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/provenance" }
+      labels: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/labels" }
+      extensions: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/extensions" }
+
+  textPart:
+    allOf: [{ $ref: "#/$defs/partBase" }]
+    unevaluatedProperties: false
+    properties:
+      type: { const: text }
+      text: { type: string }
+    required: [text]
+
+  imagePart:
+    description: Image by blob reference only; no inline bytes (CORE-112).
+    allOf: [{ $ref: "#/$defs/partBase" }]
+    unevaluatedProperties: false
+    properties:
+      type: { const: image }
+      mediaType: { type: string, pattern: "^image/[A-Za-z0-9.+-]+$" }
+      blob: { $ref: "#/$defs/blobRef" }
+    required: [mediaType, blob]
+
+  filePart:
+    allOf: [{ $ref: "#/$defs/partBase" }]
+    unevaluatedProperties: false
+    properties:
+      type: { const: file }
+      mediaType: { type: string, pattern: "^[a-z]+/[A-Za-z0-9.+-]+$" }
+      blob: { $ref: "#/$defs/blobRef" }
+      name: { type: string }
+    required: [mediaType, blob]
+
+  structuredPart:
+    allOf: [{ $ref: "#/$defs/partBase" }]
+    unevaluatedProperties: false
+    properties:
+      type: { const: structured }
+      value: {}
+      schemaRef:
+        description: Artifact reference of the persona or profile that declared the output schema.
+        $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/artifactRef"
+    required: [value]
+
+  toolCallPart:
+    allOf: [{ $ref: "#/$defs/partBase" }]
+    unevaluatedProperties: false
+    properties:
+      type: { const: tool_call }
+      callId: { type: string, minLength: 1 }
+      tool: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/toolId" }
+      arguments: { type: object }
+    required: [callId, tool, arguments]
+
+  toolResultPart:
+    allOf: [{ $ref: "#/$defs/partBase" }]
+    unevaluatedProperties: false
+    properties:
+      type: { const: tool_result }
+      callId: { type: string, minLength: 1 }
+      tool: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/toolId" }
+      result: { $ref: "#/$defs/toolResult" }
+    required: [callId, result]
+
+  reasoningPart:
+    description: Provider reasoning, possibly opaque (CORE-140–143).
+    allOf: [{ $ref: "#/$defs/partBase" }]
+    unevaluatedProperties: false
+    properties:
+      type: { const: reasoning }
+      provider: { type: string, minLength: 1 }
+      data: { type: string }
+      opaque: { type: boolean }
+    required: [provider, data]
+
+  toolResult:
+    oneOf:
+      - type: object
+        additionalProperties: false
+        required: [ok]
+        properties:
+          ok:
+            type: object
+            additionalProperties: false
+            properties:
+              output: {}
+              blob: { $ref: "#/$defs/blobRef" }
+      - type: object
+        additionalProperties: false
+        required: [error]
+        properties:
+          error: { $ref: "https://alphega.io/agentry/schemas/core/error/v1.json" }
+
+  part:
+    description: Any content part. Unknown types are rejected (CORE-110).
+    type: object
+    required: [type]
+    properties:
+      type: { enum: [text, image, file, structured, tool_call, tool_result, reasoning] }
+    allOf:
+      - if: { properties: { type: { const: text } } }
+        then: { $ref: "#/$defs/textPart" }
+      - if: { properties: { type: { const: image } } }
+        then: { $ref: "#/$defs/imagePart" }
+      - if: { properties: { type: { const: file } } }
+        then: { $ref: "#/$defs/filePart" }
+      - if: { properties: { type: { const: structured } } }
+        then: { $ref: "#/$defs/structuredPart" }
+      - if: { properties: { type: { const: tool_call } } }
+        then: { $ref: "#/$defs/toolCallPart" }
+      - if: { properties: { type: { const: tool_result } } }
+        then: { $ref: "#/$defs/toolResultPart" }
+      - if: { properties: { type: { const: reasoning } } }
+        then: { $ref: "#/$defs/reasoningPart" }
+
+  message:
+    description: A role and a non-empty ordered list of parts (CORE-100).
+    type: object
+    additionalProperties: false
+    required: [role, parts]
+    properties:
+      role: { enum: [system, principal, assistant, tool] }
+      parts:
+        type: array
+        minItems: 1
+        items: { $ref: "#/$defs/part" }

@@ -1,0 +1,44 @@
+schemaVersion: "0.1.0"
+id: core.single-turn-no-tools
+title: A single turn with no tools ends `responded` and leaves the session idle
+requirements: [CORE-013, CORE-020, CORE-054, CORE-060, CORE-061, CORE-080]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, seq: 1, sessionId: $s }
+          - { type: run.started, runId: $r1, payload: { kind: run } }
+          - { type: turn.started, runId: $r1, turn: 1 }
+          - { type: model.request, runId: $r1, turn: 1, step: 1 }
+          - { type: model.response, runId: $r1, turn: 1, step: 1 }
+          - { type: turn.completed, runId: $r1, turn: 1 }
+          - { type: run.ended, runId: $r1, payload: { reason: responded } }
+      absentEvents:
+        - { type: session.closed }
+  delivered:
+    $s: { text: "Hello." }

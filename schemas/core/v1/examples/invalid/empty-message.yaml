@@ -1,0 +1,2 @@
+schema: https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/message
+instance: { role: principal, parts: [] }

@@ -1,0 +1,13 @@
+kind: PolicyBundle
+id: org
+version: 1
+schemaVersion: "0.1.0"
+instructions: "Follow organisational policy."
+defaultFallbackMessage: "I can't help with that request."
+sensitivityPolicies:
+  pii:
+    allowedProviders: [scripted-a, scripted-b]
+    redaction: [{ mode: mask }]
+  phi:
+    allowedProviders: [scripted-a]
+    redaction: [{ mode: mask }]

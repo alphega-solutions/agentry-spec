@@ -1,0 +1,96 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://alphega.io/agentry/schemas/common/defs/v1.json
+title: agentry common definitions
+description: Shared building blocks used by every agentry schema (ADR-0001).
+$defs:
+  uuidv7:
+    description: UUID version 7 (CORE-001, ADR-0010).
+    type: string
+    pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+  timestamp:
+    description: RFC 3339 timestamp in UTC (CORE-002).
+    type: string
+    format: date-time
+    pattern: "Z$"
+  contractVersion:
+    description: Semantic version of the agentry contract (ADR-0002).
+    type: string
+    pattern: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$"
+  sha256:
+    type: string
+    pattern: "^sha256:[0-9a-f]{64}$"
+  artifactId:
+    description: Identifier of a configuration artifact.
+    type: string
+    pattern: "^[A-Za-z0-9_.-]{1,128}$"
+  toolId:
+    description: Tool identifier, accepted by every supported provider (TOOL-002).
+    type: string
+    pattern: "^[a-zA-Z0-9_-]{1,64}$"
+  artifactRef:
+    description: Exact reference to a configuration artifact, id@version (CFG-010).
+    type: string
+    pattern: "^[A-Za-z0-9_.-]{1,128}@[1-9][0-9]*$"
+  errorCode:
+    description: Stable, namespaced error code (CORE-190).
+    type: string
+    pattern: "^[a-z][a-z0-9_-]*(\\.[a-z0-9_-]+)+$"
+  label:
+    description: >-
+      Sensitivity label (ADR-0015). Well-known labels are un-namespaced;
+      custom labels are <reverse-domain>:<label>.
+    type: string
+    pattern: "^(pii|phi|pci|secret|[a-z0-9-]+(\\.[a-z0-9-]+)+:[a-z0-9][a-z0-9_-]*)$"
+  labels:
+    type: array
+    items: { $ref: "#/$defs/label" }
+    uniqueItems: true
+  provenance:
+    description: Where content came from (ADR-0008, domain.md §7).
+    type: string
+    pattern: "^(system|principal|model|reviewer|tool:[a-zA-Z0-9_-]{1,64}|retrieval:[A-Za-z0-9_.-]{1,128}|agent:[A-Za-z0-9_.-]{1,128})$"
+  provenances:
+    type: array
+    items: { $ref: "#/$defs/provenance" }
+    uniqueItems: true
+  assuranceLevel:
+    description: Principal authentication strength, weakest to strongest (TOOL-005).
+    enum: [none, single_factor, multi_factor, phishing_resistant]
+  principalRef:
+    description: Reference to a principal; never the full principal (CORE-150).
+    type: object
+    additionalProperties: false
+    required: [subject, tenant]
+    properties:
+      subject: { type: string, minLength: 1 }
+      tenant: { type: string, minLength: 1 }
+  traceContext:
+    description: W3C Trace Context.
+    type: object
+    additionalProperties: false
+    required: [traceparent]
+    properties:
+      traceparent:
+        type: string
+        pattern: "^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$"
+      tracestate: { type: string }
+  extensions:
+    description: Vendor or adapter data. The only open object in core schemas (ADR-0001).
+    type: object
+  sessionState:
+    enum: [active, idle, suspended, closed]
+  closeReason:
+    enum: [completed, cancelled, failed, expired]
+  runEndReason:
+    description: CORE-060 as amended by Area 7 (context_limit).
+    enum: [responded, escalated, blocked, step_limit, budget_exhausted, context_limit, timeout, cancelled, failed]
+  usage:
+    description: Normalized usage (PROV-070).
+    type: object
+    additionalProperties: false
+    required: [inputTokens, outputTokens, cachedInputTokens, reasoningTokens]
+    properties:
+      inputTokens: { type: integer, minimum: 0 }
+      outputTokens: { type: integer, minimum: 0 }
+      cachedInputTokens: { type: integer, minimum: 0 }
+      reasoningTokens: { type: integer, minimum: 0 }

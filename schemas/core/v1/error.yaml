@@ -1,0 +1,22 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://alphega.io/agentry/schemas/core/error/v1.json
+title: Error
+description: The single error shape used by every component (CORE-190, ADR-0009).
+type: object
+additionalProperties: false
+required: [code, category, retryable, source, message]
+properties:
+  code: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/errorCode" }
+  category:
+    description: CORE-191.
+    enum: [invalid_input, unauthorized, policy, limit, unavailable, conflict, not_found, configuration, cancelled, fatal]
+  retryable: { type: boolean }
+  source:
+    enum: [tool, hook, provider, port, harness, config]
+  message:
+    description: Human-readable; never contains sensitive content.
+    type: string
+  details:
+    description: Structured detail, subject to sensitivity labels and redaction.
+    type: object
+  extensions: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/extensions" }

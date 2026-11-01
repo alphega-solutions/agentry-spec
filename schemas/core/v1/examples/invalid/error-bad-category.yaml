@@ -1,0 +1,2 @@
+schema: https://alphega.io/agentry/schemas/core/error/v1.json
+instance: { code: agentry.tool.timeout, category: timeout, retryable: true, source: tool, message: "Timed out" }
