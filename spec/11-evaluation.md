@@ -1,0 +1,178 @@
+# Area 11 — Conformance, testing, and evaluation
+
+**Status:** Approved 2026-10-31 · **Contract version:** 0.1.0-draft · **Date:** 2026-10-31
+**Sources:** `intent.md` G1, G6, principle 5, §8 success criteria; `domain.md` (approved, incl. amendments); `notes/hooks.md` (replay modes); ADR-0001, 0002, 0006, 0011; Areas 1–10 (approved), esp. HOOK-062, CTX-001/032/083, PROV §11, PORT-130, TOOL-013
+
+---
+
+## 1. Scope
+
+This area specifies:
+
+1. **Conformance** — the format of conformance fixtures, how implementations run them, and how a conformance claim is made, including replaying another implementation's traces (`intent.md` §8).
+2. **Test doubles** — the deterministic stand-ins that make fixtures and unit tests repeatable.
+3. **Evaluation** — eval cases, graders, trace replay, converting traces into cases, and reports with a CI gate.
+
+Command-line and web tooling are informative (Appendix A). This area is Tier 3; its replay modes come from `notes/hooks.md` §4.
+
+## 2. Conventions
+
+As in Area 1 §2. Requirement IDs use the prefix `EVAL-`. Schemas for fixtures, CEL rule fixtures, trace bundles, eval cases, and reports are specified in Phase 4.
+
+- **EVAL-000** Wherever this area compares or hashes JSON values — argument matching (EVAL-062), hook input hashes (HOOK-062), trace bundles — values **MUST** first be canonicalized with the JSON Canonicalization Scheme (RFC 8785). *(Clarifies HOOK-062.)*
+
+## 3. Conformance fixtures
+
+### 3.1 Format
+
+- **EVAL-001** A conformance fixture is a data file, authored in YAML and published as JSON (ADR-0001). It **MUST** contain:
+
+| Section | Contents |
+|---|---|
+| `id`, `title` | Stable identifier and description |
+| `requirements` | The requirement IDs it verifies |
+| `contract` | The contract version range it applies to |
+| `features` | Optional features it needs (e.g. `binding.langchain`); empty for mandatory behaviour |
+| `setup` | One or more tenants, principals, and sessions (including delegation chains); configuration artifacts or a shared set; initial port contents; virtual clock and ID-generator seed |
+| `script` | Ordered steps: host actions (`run`, `resume`, `decide`, `close`, `cancel`) with reviewer principals where needed; scripted provider responses; stub behaviours (tools, MCP servers, HTTP endpoints, remote hooks); clock advances; crash points |
+| `expect` | Event sequence patterns per session; run end reasons; session states; errors (category and code); port contents, including audit records; requests captured by stubs; things that must **not** occur |
+
+- **EVAL-002** Fixtures **MUST** be deterministic. Values that vary between runs are matched by named placeholders that must bind consistently within a fixture (e.g. the same `$session` everywhere; two loads producing the same `$snapshotHash`).
+- **EVAL-003** Fixtures **MUST** use synthetic data only: no real personal or health data, client details, or content from a private implementation (ADR-0011). Spec repository review enforces this.
+- **EVAL-004** Event expectations **MUST** support: exact sequences, ordered subsequences, unordered sets (for parallel tool calls), presence and absence, and field matching. Fixtures **SHOULD** assert only what their requirements need.
+- **EVAL-005** A **CEL rule fixture** contains an expression, the point whose variables it uses (HOOK §9.1), variable values, and the expected result or the expected failure (compile, type-check, or runtime).
+
+### 3.2 Coverage
+
+- **EVAL-010** Every normative requirement (`MUST`/`MUST NOT`) in the area specs, including requirements added by amendments, **MUST** be referenced by at least one fixture, unless the requirement is annotated *(untestable)* in its spec with the reason. The spec repository's CI **MUST** enforce this. Checks on the spec's own schemas (e.g. CFG-033) are spec-maintenance checks, listed separately. *(Introduces the untestable annotation for all areas.)*
+- **EVAL-011** The conformance suite includes: CEL rule fixtures (ADR-0006, HOOK-110–114), the adapter test kit for every port (PORT-130), the provider adapter fixtures (PROV §11), and the golden trace bundles (§4.2).
+
+## 4. Running conformance
+
+### 4.1 The runner and the claim
+
+- **EVAL-020** Each implementation **MUST** provide a **conformance runner** that loads the published fixtures for a contract version, drives the implementation with the test doubles (§5), and checks the expectations.
+- **EVAL-021** Results **MUST** be reported per fixture — pass, fail, or skipped — with the fixture ID, its requirement IDs, and for failures the first unmet expectation, as JSON and JUnit XML.
+- **EVAL-022** A fixture **MAY** be skipped only if its `features` include an optional feature the implementation declares unsupported (e.g. `binding.langchain`, TOOL-013).
+- **EVAL-023** An implementation conforms to a contract version if, and only if, it passes every fixture it does not legitimately skip. A conformance claim **MUST** name the contract version and the declared unsupported features. Reference implementations **MUST NOT** declare any mandatory behaviour unsupported, and for contract 1.0 **MUST** pass the full suite (`intent.md` §8).
+- **EVAL-024** Fixtures **MUST NOT** depend on real providers, real tools, or network access.
+
+### 4.2 Cross-implementation traces
+
+- **EVAL-025** Implementations **MUST** export a session as a **trace bundle**: its events, the blobs they reference, its snapshot, and its audit records, for one tenant. Bundles **MUST** validate against the published bundle schema.
+- **EVAL-026** The spec repository publishes **golden trace bundles** (synthetic). Every implementation **MUST** replay each one (§6.3) and reproduce the recorded outcomes, and **MUST** export bundles that the other reference implementations can replay. This verifies `intent.md` §8: a trace recorded by any implementation replays in the others.
+
+## 5. Test doubles
+
+- **EVAL-030** Every implementation **MUST** provide the following test doubles, usable by its conformance runner and in unit tests.
+- **EVAL-031** **Scripted providers** — provider adapters that pass PROV §11, return responses from a script (content parts, tool calls, usage, errors, capabilities), and **record every request** they receive for assertions. A fixture may declare several, as different providers, to exercise routing and failover. Summarizer, model-hook, and judge calls go to scripted providers too. A request beyond the script **MUST** fail the test.
+- **EVAL-032** **Stubs** — scripted, call-recording stand-ins for `native` tools, MCP servers (including advertised schemas, for TOOL-092), HTTP endpoints, and remote hooks.
+- **EVAL-033** **In-memory port adapters** — for every port in Area 10, each passing its adapter test kit (PORT-130).
+- **EVAL-034** **Virtual clock and ID generator** — all time-dependent behaviour (TTLs, leases, timeouts, deadlines, timestamps, and the time component of UUIDv7) **MUST** read time from an injectable clock, and IDs **MUST** come from an injectable, seedable generator. *(Requires clock and ID injection in every implementation.)*
+- **EVAL-035** **Crash injection** — the runner **MUST** be able to stop the implementation at named points — at least after a started record and before dispatch; after dispatch and before the outcome is recorded; after an event append and before the checkpoint save — and restart it against the same port contents.
+- **EVAL-036** **Recorded vendor transcripts** — each native provider adapter (Claude, OpenAI) **MUST** pass the provider adapter fixtures offline against recorded wire-level request/response transcripts published with the suite.
+
+## 6. Evaluation
+
+### 6.1 Isolation
+
+- **EVAL-040** Eval runs **MUST** use a dedicated eval tenant and dedicated port bindings, never production event logs, audit logs, or stores.
+- **EVAL-041** In eval runs, every tool (whatever its `effect` or `egress`), MCP server, HTTP binding, and remote hook **MUST** be stubbed or replayed. Only model providers may be real, and only for content their sensitivity policies allow (PROV-053).
+- **EVAL-042** Eval cases **MUST** use synthetic or converted (§7) data only.
+
+### 6.2 Cases, runs, and graders
+
+- **EVAL-043** An eval case **MUST** contain an ID, a persona reference, one or more principal inputs, and expectations; and **MAY** contain stub results, retrieval fixtures, attachments, scripted reviewer decisions for any escalation, and tags (e.g. `critical`).
+- **EVAL-044** An eval run **MUST** declare its matrix — the models and harness profiles to compare — and a repeat count. Each case runs once per matrix cell per repeat, through the real harness with governance in force.
+- **EVAL-050** Implementations **MUST** support these grader kinds, combinable per case:
+
+| Grader | Checks |
+|---|---|
+| `schema` | Output validates against a JSON Schema, or equals an expected value |
+| `trajectory` | Expected tools called, forbidden tools not called, optionally in order |
+| `policy` | Expected or forbidden hook decisions and policy decisions |
+| `escalation` | Escalated when it should, not when it shouldn't, with the expected source |
+| `budget` | Tokens and cost under thresholds; latency only in live runs, not replay |
+| `judge` | A rubric score from a model |
+
+- **EVAL-051** A `judge` grader's model **MUST** come from a provider allowed for the content it reads (PROV-053), runs with no tools, and records its usage separately.
+- **EVAL-052** Each grader result **MUST** record pass/fail or a score and the evidence (event IDs) it used.
+
+### 6.3 Trace replay
+
+- **EVAL-060** A case built from a trace bundle (§4.2) or a converted trace (§7) replays against a snapshot the run declares — the recorded one or a candidate — and the report states which.
+- **EVAL-061** On replay, summaries and automatically retrieved content are always reused from the recording (CTX-083, CTX-032).
+- **EVAL-062** Tool calls are answered from the recording. A call matches a recorded call when the tool is the same and its dispatched arguments (after hooks) are equal after canonicalization (EVAL-000); repeated identical calls match recorded occurrences in order. Agent-bound calls are answered with the recorded child result. An unmatched call receives a tool result error (`agentry.eval.unrecorded_call`, category `unavailable`, `retryable: false`, source `harness`), is reported as divergence, and — like delegation errors (ORCH-051) — **MUST NOT** by itself end the run.
+- **EVAL-063** Replay supports two hook modes (HOOK-062):
+  - **re-evaluate** — hooks run again on the replayed content;
+  - **replay decisions** — recorded non-`continue` decisions are reused where the hook's input hash matches. Hooks with no matching recorded decision are re-evaluated; any that then return a non-`continue` result are reported as divergence. Converted traces (§7) always use re-evaluate, since conversion changes inputs.
+
+## 7. Converting traces into cases and fixtures
+
+- **EVAL-070** Implementations **MUST** provide an operation that converts a recorded session into an eval case or regression fixture draft.
+- **EVAL-071** The conversion **MUST**:
+  - run the deployment's redaction and labelling hooks over all content first, then refuse unless every part carrying a sensitivity label is redacted or replaced with synthetic content;
+  - drop reasoning parts, hook input hashes, and blobs that are not redacted;
+  - replace tenant, principal, session, event, and other identifying values with placeholders, and regenerate time-bearing IDs;
+  - reference configuration by artifact `id@version` rather than copying the snapshot, so private configuration is not exported.
+- **EVAL-072** Converted output is a draft: it **MUST** be marked as requiring human review before it joins an eval suite or the conformance suite. Labels cannot catch unlabelled sensitive content; human review is the final check.
+
+## 8. Reports and CI gate
+
+- **EVAL-080** An eval run **MUST** produce a report: per matrix cell — pass rate, per-grader results, token and cost totals, latency (live runs only), variance across repeats, divergences (EVAL-062, EVAL-063) — and differences from a declared baseline.
+- **EVAL-081** A CI gate **MAY** be configured with thresholds. It **MUST** fail if any `critical` case fails in any cell, or a pass rate drops below its threshold.
+- **EVAL-082** Reports **MUST** apply the redaction of the sensitivity policies in force and **MUST NOT** contain secret values.
+
+## 9. Conformance fixtures for this area (to be written in Phase 4)
+
+| Fixture | Requirements |
+|---|---|
+| Canonicalization: key order and number forms compare equal | EVAL-000 |
+| Fixture schema validation; unbound placeholder → runner error | EVAL-001, 002 |
+| Unordered expectation for parallel calls; absence expectation fails when event occurs | EVAL-004 |
+| CEL rule fixture: value, compile failure, runtime failure | EVAL-005 |
+| Spec CI fails when a requirement loses its last fixture | EVAL-010 |
+| Runner reports JSON and JUnit with requirement IDs | EVAL-020, 021 |
+| Skipping a fixture without its feature declared unsupported → claim invalid | EVAL-022, 023 |
+| Runner works with networking disabled | EVAL-024 |
+| Exported bundle validates; golden bundles replay with recorded outcomes | EVAL-025, 026 |
+| Scripted provider records requests; extra request fails; two providers drive failover | EVAL-031 |
+| MCP, HTTP, and remote-hook stubs record calls; MCP schema drift scriptable | EVAL-032 |
+| In-memory ports pass their test kits | EVAL-033 |
+| Timestamps and UUIDv7 from virtual clock and seeded generator | EVAL-034 |
+| Crash at each named point → recovery per HITL-091 and PORT-034 | EVAL-035 |
+| Native adapters pass PROV fixtures against recorded transcripts | EVAL-036 |
+| Eval run never touches production bindings; egress read tool still stubbed | EVAL-040, 041 |
+| Eval case with scripted reviewer decisions | EVAL-043 |
+| Matrix × repeats executed through governance | EVAL-044 |
+| Each grader kind; judge on a disallowed provider never receives content; evidence recorded | EVAL-050–052 |
+| Replay uses declared snapshot; summaries and retrieval reused | EVAL-060, 061 |
+| Matching by canonical post-hook arguments; repeated calls in order; child results replayed; unmatched → divergence, run continues | EVAL-062 |
+| Replay decisions: matching hash reused; missing decision re-evaluated; divergence reported | EVAL-063 |
+| Conversion runs redaction hooks; refuses labelled unredacted parts; strips identifiers, reasoning, hashes; references config; marks draft | EVAL-070–072 |
+| Report contents incl. divergences; critical failure fails gate; redacted | EVAL-080–082 |
+
+## 10. Additions approved with this spec (2026-10-31)
+
+All rules here are new; this is a Tier 3 area. Rules that affect approved areas are marked.
+
+| ID | Proposed rule |
+|---|---|
+| EVAL-000 | **RFC 8785 canonical JSON** for matching and hashing (clarifies HOOK-062) |
+| EVAL-001–005 | Fixture format (multi-tenant/multi-session setup, feature tags, stub scripts, audit expectations, unordered matching); CEL rule fixture format; synthetic data only |
+| EVAL-010, 011 | **Every requirement needs a fixture, enforced by spec CI**; new *(untestable)* annotation for all areas; suite contents |
+| EVAL-020–024 | Conformance runner per implementation; JSON/JUnit; skips only for declared optional features; **reference implementations skip nothing** |
+| EVAL-025, 026 | **Portable trace bundles and golden bundles** to prove cross-implementation replay |
+| EVAL-030–036 | **Mandatory test doubles**: request-recording scripted providers, stubs for tools/MCP/HTTP/remote hooks, in-memory ports, **injectable clock and seeded ID generator** (affects every implementation), crash injection, recorded vendor transcripts for native adapters |
+| EVAL-040–042 | **Eval isolation**: dedicated tenant and bindings; every tool and remote dependency stubbed; only providers may be real |
+| EVAL-043, 044 | Eval case and run format, including scripted reviewer decisions |
+| EVAL-050–052 | Six grader kinds; judges follow sensitivity routing |
+| EVAL-060–063 | Replay rules; call matching on canonical post-hook arguments; unmatched calls continue as divergences (exception to CORE-191 like ORCH-051); replay-decisions behaviour for unrecorded `continue` results |
+| EVAL-070–072 | Conversion runs redaction hooks, strips identifiers and private config, and **always requires human review** |
+| EVAL-080–082 | Report contents; CI gate with `critical` cases; redacted reports |
+
+## Appendix A — Tooling (informative)
+
+- **CLI first.** A command-line tool covers the scriptable needs: run conformance (`agentry test`), run evals (`agentry eval run`), compare runs (`agentry eval diff`), export and replay trace bundles, and convert traces (`agentry trace to-fixture`). It emits JSON and JUnit XML for CI. One TypeScript CLI can drive all three implementations through their conformance runners.
+- **Static HTML reports.** The CLI can write a self-contained report per run — trace viewer, run comparison — covering most review needs without a server or authentication.
+- **Web UI later.** A hosted UI earns its place when human graders or escalation reviewers need it. It reads the event and audit logs through their ports and eval reports as files; it does not run evals or keep its own copies.

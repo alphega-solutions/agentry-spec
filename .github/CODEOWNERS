@@ -1,0 +1,8 @@
+# Changes to normative artifacts require maintainer approval (ADR-0011).
+*                 @alphegasolutions
+/intent.md        @alphegasolutions
+/domain.md        @alphegasolutions
+/adr/             @alphegasolutions
+/spec/            @alphegasolutions
+/schemas/         @alphegasolutions
+/conformance/     @alphegasolutions
