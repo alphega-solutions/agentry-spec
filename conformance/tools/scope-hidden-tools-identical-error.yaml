@@ -1,0 +1,154 @@
+schemaVersion: "0.1.0"
+id: tool.scope-hidden-tools-identical-error
+title: A call to an unknown tool and to a tool outside the visible set get identical model-facing errors, and hidden tools are never described to the model
+description: >-
+  The model calls `archive_record` with the same call ID and arguments in
+  three sessions, each against a different snapshot:
+
+  - $sUnknown: no such tool exists in the catalog;
+  - $sNotAllowed: the tool is in the catalog but not in the persona's
+    allowlist;
+  - $sOutOfScope: the persona allows it, but the host's runtime scope
+    omits it.
+
+  Each call is stopped at stage 1 with `policy` (`agentry.tool.unavailable`)
+  and the turn continues. The error the model receives, and the recorded
+  tool result, are identical in all three, so the model cannot tell an
+  unknown tool from a hidden one, and the error carries no `details`. A
+  scope `policy.decision` is recorded each time. The model's tool list never
+  includes `archive_record`.
+requirements: [TOOL-023, TOOL-030]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: archive_record, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Unavailable." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: archive_record, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Unavailable." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: archive_record, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Unavailable." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      archive_record: []
+script:
+  - action: run
+    bind: $sUnknown
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Archive k1" }]
+    expect: { ok: true, endReason: responded }
+  - load:
+      artifacts:
+        - kind: Tool
+          id: archive_record
+          version: 1
+          schemaVersion: "0.1.0"
+          description: Archive a record.
+          input:
+            type: object
+            additionalProperties: false
+            required: [key]
+            properties: { key: { type: string } }
+          effect: mutating
+          binding: { kind: native, handler: test.archive_record }
+    expect: { ok: true }
+  - action: run
+    bind: $sNotAllowed
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Archive k1" }]
+    expect: { ok: true, endReason: responded }
+  - load:
+      artifacts:
+        - kind: Persona
+          id: assistant
+          version: 1
+          schemaVersion: "0.1.0"
+          displayName: Test assistant
+          instructions: "You are a test assistant."
+          tools: [lookup@1, update_record@1, archive_record@1]
+          fallbackMessage: "This request was blocked."
+          defaultProfile: default@1
+          allowedProfiles: [default@1, streamed@1]
+          model:
+            provider: scripted-a
+            name: model-a
+            fallbacks:
+              - { provider: scripted-b, name: model-b }
+    expect: { ok: true }
+  - action: run
+    bind: $sOutOfScope
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    runtimeScope: [lookup@1, update_record@1]
+    input: [{ type: text, text: "Archive k1" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sUnknown:
+      events:
+        mode: subsequence
+        items:
+          - { type: policy.decision, payload: { kind: scope, outcome: block, callId: c1 } }
+          - type: tool.result
+            payload:
+              callId: c1
+              result:
+                $all:
+                  - $res
+                  - error: { category: policy, code: agentry.tool.unavailable, retryable: false, details: { $absent: true } }
+          - { type: model.request, step: 2 }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call }
+    $sNotAllowed:
+      events:
+        mode: subsequence
+        items:
+          - { type: policy.decision, payload: { kind: scope, outcome: block, callId: c1 } }
+          - { type: tool.result, payload: { callId: c1, result: $res } }
+          - { type: model.request, step: 2 }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call }
+    $sOutOfScope:
+      events:
+        mode: subsequence
+        items:
+          - { type: policy.decision, payload: { kind: scope, outcome: block, callId: c1 } }
+          - { type: tool.result, payload: { callId: c1, result: $res } }
+          - { type: model.request, step: 2 }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call }
+  stubCalls:
+    archive_record: { count: 0 }
+  providerRequests:
+    scripted-a:
+      - tools: { $all: [{ $len: 2 }, { $contains: [{ name: lookup }, { name: update_record }] }] }
+      - tools: { $all: [{ $len: 2 }, { $contains: [{ name: lookup }, { name: update_record }] }] }
+        messages: { $contains: [{ role: tool, parts: [{ type: tool_result, callId: c1, result: $modelRes }] }] }
+      - tools: { $all: [{ $len: 2 }, { $contains: [{ name: lookup }, { name: update_record }] }] }
+      - tools: { $all: [{ $len: 2 }, { $contains: [{ name: lookup }, { name: update_record }] }] }
+        messages: { $contains: [{ role: tool, parts: [{ type: tool_result, callId: c1, result: $modelRes }] }] }
+      - tools: { $all: [{ $len: 2 }, { $contains: [{ name: lookup }, { name: update_record }] }] }
+      - tools: { $all: [{ $len: 2 }, { $contains: [{ name: lookup }, { name: update_record }] }] }
+        messages: { $contains: [{ role: tool, parts: [{ type: tool_result, callId: c1, result: $modelRes }] }] }

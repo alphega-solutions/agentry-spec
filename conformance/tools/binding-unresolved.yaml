@@ -1,0 +1,201 @@
+schemaVersion: "0.1.0"
+id: tool.binding-unresolved
+title: An unresolved binding of each kind is a configuration error at load time
+description: >-
+  The deployment declares the MCP server `notes-mcp`, whose stub advertises
+  only `get_note`, and the HTTP endpoint `records-api`, which declares only
+  the `getRecord` operation. Each failing load adds one tool whose binding
+  does not resolve: a native handler that is not registered; an MCP server
+  that is not declared; a declared MCP server that does not advertise the
+  tool; an HTTP endpoint that is not declared; a declared endpoint without
+  the named operation (Phase 4 amendment to TOOL-010); and an agent binding
+  to a persona, or a persona version, that is not in the snapshot. The tools
+  are not referenced by any persona: every binding in the snapshot must
+  resolve. The final load adds one tool of each mandatory kind with a
+  resolvable binding and succeeds.
+
+  Assumed runner conventions (not yet fixed by the fixture format): native
+  handlers named in the base configuration (`test.*`) are registered, and
+  `unregistered.handler` is not; an MCP server stub lists the tools it
+  advertises under `tools`, keyed by tool name, each with its `input`
+  schema.
+requirements: [TOOL-010]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        mcpServers:
+          - { id: notes-mcp, endpoint: "memory://notes-mcp", identity: notes-mcp.test, region: test-region }
+        httpEndpoints:
+          - id: records-api
+            endpoint: "memory://records-api"
+            region: test-region
+            operations:
+              getRecord: { method: GET, path: "/records/{key}" }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: Persona
+        id: helper
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Helper
+        instructions: "You are a helper."
+        tools: [lookup@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  stubs:
+    mcpServers:
+      notes-mcp:
+        tools:
+          get_note:
+            input:
+              type: object
+              required: [key]
+              properties: { key: { type: string } }
+script:
+  # 0: native handler not registered
+  - load:
+      artifacts:
+        - kind: Tool
+          id: native_tool
+          version: 1
+          schemaVersion: "0.1.0"
+          description: A native tool.
+          input: { type: object, required: [key], properties: { key: { type: string } } }
+          effect: read
+          binding: { kind: native, handler: unregistered.handler }
+    expect: { ok: false, error: { category: configuration, details: { artifact: native_tool@1 } } }
+  # 1: MCP server not declared in the deployment
+  - load:
+      artifacts:
+        - kind: Tool
+          id: mcp_tool
+          version: 1
+          schemaVersion: "0.1.0"
+          description: An MCP tool.
+          input: { type: object, required: [key], properties: { key: { type: string } } }
+          effect: read
+          binding: { kind: mcp, server: other-mcp, tool: get_note }
+    expect: { ok: false, error: { category: configuration, details: { artifact: mcp_tool@1 } } }
+  # 2: declared MCP server does not advertise the tool
+  - load:
+      artifacts:
+        - kind: Tool
+          id: mcp_tool
+          version: 1
+          schemaVersion: "0.1.0"
+          description: An MCP tool.
+          input: { type: object, required: [key], properties: { key: { type: string } } }
+          effect: read
+          binding: { kind: mcp, server: notes-mcp, tool: missing_note }
+    expect: { ok: false, error: { category: configuration, details: { artifact: mcp_tool@1 } } }
+  # 3: HTTP endpoint not declared
+  - load:
+      artifacts:
+        - kind: Tool
+          id: http_tool
+          version: 1
+          schemaVersion: "0.1.0"
+          description: An HTTP tool.
+          input: { type: object, required: [key], properties: { key: { type: string } } }
+          effect: read
+          binding: { kind: http, endpoint: other-api, operation: getRecord }
+    expect: { ok: false, error: { category: configuration, details: { artifact: http_tool@1 } } }
+  # 4: declared HTTP endpoint without the named operation
+  - load:
+      artifacts:
+        - kind: Tool
+          id: http_tool
+          version: 1
+          schemaVersion: "0.1.0"
+          description: An HTTP tool.
+          input: { type: object, required: [key], properties: { key: { type: string } } }
+          effect: read
+          binding: { kind: http, endpoint: records-api, operation: deleteRecord }
+    expect: { ok: false, error: { category: configuration, details: { artifact: http_tool@1 } } }
+  # 5: agent binding to a persona not in the snapshot
+  - load:
+      artifacts:
+        - kind: Tool
+          id: agent_tool
+          version: 1
+          schemaVersion: "0.1.0"
+          description: Ask a helper.
+          input: { type: object, required: [question], properties: { question: { type: string } } }
+          effect: read
+          binding: { kind: agent, persona: ghost@1 }
+    expect: { ok: false, error: { category: configuration, details: { artifact: agent_tool@1 } } }
+  # 6: agent binding to a persona version not in the snapshot
+  - load:
+      artifacts:
+        - kind: Tool
+          id: agent_tool
+          version: 1
+          schemaVersion: "0.1.0"
+          description: Ask a helper.
+          input: { type: object, required: [question], properties: { question: { type: string } } }
+          effect: read
+          binding: { kind: agent, persona: helper@2 }
+    expect: { ok: false, error: { category: configuration, details: { artifact: agent_tool@1 } } }
+  # 7: every binding resolves
+  - load:
+      artifacts:
+        - kind: Tool
+          id: native_tool
+          version: 1
+          schemaVersion: "0.1.0"
+          description: A native tool.
+          input: { type: object, required: [key], properties: { key: { type: string } } }
+          effect: read
+          binding: { kind: native, handler: test.lookup }
+        - kind: Tool
+          id: mcp_tool
+          version: 1
+          schemaVersion: "0.1.0"
+          description: An MCP tool.
+          input: { type: object, required: [key], properties: { key: { type: string } } }
+          effect: read
+          binding: { kind: mcp, server: notes-mcp, tool: get_note }
+        - kind: Tool
+          id: http_tool
+          version: 1
+          schemaVersion: "0.1.0"
+          description: An HTTP tool.
+          input: { type: object, required: [key], properties: { key: { type: string } } }
+          effect: read
+          binding: { kind: http, endpoint: records-api, operation: getRecord }
+        - kind: Tool
+          id: agent_tool
+          version: 1
+          schemaVersion: "0.1.0"
+          description: Ask a helper.
+          input: { type: object, required: [question], properties: { question: { type: string } } }
+          effect: read
+          binding: { kind: agent, persona: helper@1 }
+    expect: { ok: true }
+expect: {}

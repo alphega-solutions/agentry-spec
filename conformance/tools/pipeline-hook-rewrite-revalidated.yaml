@@ -1,0 +1,150 @@
+schemaVersion: "0.1.0"
+id: tool.pipeline-hook-rewrite-revalidated
+title: Arguments rewritten by a beforeToolCall hook are re-validated against `input` before the call continues
+description: >-
+  The model's `update_record` arguments are valid in every session. A remote
+  beforeToolCall hook rewrites them:
+
+  - $sBadType: to a numeric `value` → `invalid_input`
+    (`agentry.tool.invalid_arguments`); not dispatched.
+  - $sExtra: adding a property `input` does not allow → `invalid_input`;
+    not dispatched.
+  - $sValid: to a valid normalised value → dispatched with the rewritten
+    arguments.
+requirements: [TOOL-031]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        remoteHooks:
+          - { id: normalise, endpoint: "memory://hook-normalise", region: test-region }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: Hook
+        id: normalise
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [rewrite]
+        timeoutMs: 1000
+        match: "tool.id == 'update_record'"
+        source: { kind: remote, endpoint: normalise }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [normalise@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Not updated." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Not updated." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+    remoteHooks:
+      normalise:
+        - result: rewrite
+          parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: 42 } }]
+        - result: rewrite
+          parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1, note: "added" } }]
+        - result: rewrite
+          parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: V1-NORMALISED } }]
+script:
+  - action: run
+    bind: $sBadType
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sExtra
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sValid
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sBadType:
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: normalise@1, point: beforeToolCall, result: rewrite } }
+          - { type: tool.result, payload: { callId: c1, result: { error: { category: invalid_input, code: agentry.tool.invalid_arguments } } } }
+          - { type: model.request, step: 2 }
+      absentEvents:
+        - { type: tool.call }
+    $sExtra:
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: normalise@1, point: beforeToolCall, result: rewrite } }
+          - { type: tool.result, payload: { callId: c1, result: { error: { category: invalid_input, code: agentry.tool.invalid_arguments } } } }
+          - { type: model.request, step: 2 }
+      absentEvents:
+        - { type: tool.call }
+    $sValid:
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: normalise@1, point: beforeToolCall, result: rewrite } }
+          - { type: tool.call, payload: { callId: c1, arguments: { key: k1, value: V1-NORMALISED } } }
+          - { type: tool.result, payload: { callId: c1, result: { ok: { output: { updated: true } } } } }
+  stubCalls:
+    normalise: { count: 3 }
+    update_record: [{ arguments: { key: k1, value: V1-NORMALISED } }]

@@ -1,0 +1,99 @@
+schemaVersion: "0.1.0"
+id: tool.def-trusted-output-rejected
+title: A tool definition declaring `trustedOutput` is rejected, whatever its value
+description: >-
+  Output trust is granted only by a policy bundle's `trustedTools`. A tool
+  that declares `trustedOutput: true`, or even `trustedOutput: false`, is a
+  configuration error. The same tool without the field loads, and the run in
+  the last step shows that, with no bundle `trustedTools` entry, the
+  lookup result is untrusted: the following mutating call escalates through
+  the taint rule.
+requirements: [TOOL-004]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "synthetic value" } }
+      update_record: []
+script:
+  - load:
+      artifacts:
+        - kind: Tool
+          id: lookup
+          version: 1
+          schemaVersion: "0.1.0"
+          description: Look up a record by key.
+          input:
+            type: object
+            additionalProperties: false
+            required: [key]
+            properties: { key: { type: string } }
+          effect: read
+          trustedOutput: true
+          binding: { kind: native, handler: test.lookup }
+    expect: { ok: false, error: { category: configuration, details: { artifact: lookup@1, field: /trustedOutput } } }
+  - load:
+      artifacts:
+        - kind: Tool
+          id: lookup
+          version: 1
+          schemaVersion: "0.1.0"
+          description: Look up a record by key.
+          input:
+            type: object
+            additionalProperties: false
+            required: [key]
+            properties: { key: { type: string } }
+          effect: read
+          trustedOutput: false
+          binding: { kind: native, handler: test.lookup }
+    expect: { ok: false, error: { category: configuration, details: { artifact: lookup@1, field: /trustedOutput } } }
+  - load:
+      artifacts:
+        - kind: Tool
+          id: lookup
+          version: 1
+          schemaVersion: "0.1.0"
+          description: Look up a record by key.
+          input:
+            type: object
+            additionalProperties: false
+            required: [key]
+            properties: { key: { type: string } }
+          effect: read
+          binding: { kind: native, handler: test.lookup }
+    expect: { ok: true }
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1 then set it to v1" }]
+    expect: { ok: true, endReason: escalated }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: c1 } }
+          - { type: policy.decision, payload: { kind: taint, outcome: escalate, callId: c2, provenances: { $contains: ["tool:lookup"] } } }
+      absentEvents:
+        - { type: tool.call, payload: { callId: c2 } }
+  stubCalls:
+    update_record: { count: 0 }

@@ -1,0 +1,169 @@
+schemaVersion: "0.1.0"
+id: tool.pipeline-stage-order
+title: A call that passes every stage records them in pipeline order — taint rule, beforeToolCall hooks, approval, dispatch, afterToolCall hooks, recording
+description: >-
+  An untrusted lookup result taints the session. `set_status` is mutating
+  with `onTainted: allow` (so the taint rule records an `allow` decision and
+  continues), `approval: always`, and a `minAssurance` the principal meets.
+  A remote `beforeToolCall` hook and a remote `afterToolCall` hook each
+  annotate (both match only `set_status`), so each records a decision.
+
+  The events show the order: taint decision (stage 5), then the
+  beforeToolCall hook decision (stage 6), then the approval escalation
+  (stage 7). After approval, the call is dispatched (`tool.call`, stage 8),
+  then the afterToolCall hook decision (stage 10), then `tool.result`
+  (stage 11), then the next model request (stage 12). Approval comes after
+  the beforeToolCall hook, so the reviewer approves the final arguments, and
+  on resume neither the taint rule nor the beforeToolCall hook runs again.
+requirements: [TOOL-030]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        remoteHooks:
+          - { id: pre, endpoint: "memory://hook-pre", region: test-region }
+          - { id: post, endpoint: "memory://hook-post", region: test-region }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: Hook
+        id: pre
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [annotate]
+        timeoutMs: 1000
+        match: "tool.id == 'set_status'"
+        source: { kind: remote, endpoint: pre }
+      - kind: Hook
+        id: post
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [afterToolCall]
+        results: [annotate]
+        timeoutMs: 1000
+        match: "tool.id == 'set_status'"
+        source: { kind: remote, endpoint: post }
+      - kind: Tool
+        id: set_status
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Set a record's status.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: mutating
+        onTainted: allow
+        approval: always
+        minAssurance: single_factor
+        binding: { kind: native, handler: test.set_status }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, set_status@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [pre@1, post@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: set_status, arguments: { key: k1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Status set." }]
+          usage: { inputTokens: 40, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "synthetic untrusted value" } }
+      set_status:
+        - ok: { output: { status: set } }
+    remoteHooks:
+      pre:
+        - result: annotate
+          labels: [{ part: 0, labels: [pii] }]
+      post:
+        - result: annotate
+          labels: [{ part: 0, labels: [pii] }]
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1 then set its status" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $esc, payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000001", escalationId: $esc, actionId: $act, type: approve }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, runId: $r1, payload: { callId: c1 } }
+          - { type: policy.decision, runId: $r1, payload: { kind: taint, outcome: allow, callId: c2 } }
+          - { type: hook.decision, runId: $r1, payload: { hook: pre@1, point: beforeToolCall, result: annotate } }
+          - { type: escalation.raised, runId: $r1, payload: { escalation: { sources: [approval], pendingActions: [{ kind: tool_call, callId: c2 }] } } }
+          - { type: run.ended, runId: $r1, payload: { reason: escalated } }
+          - { type: run.started, runId: $r2, payload: { kind: resume } }
+          - { type: tool.call, runId: $r2, payload: { callId: c2, tool: set_status } }
+          - { type: hook.decision, runId: $r2, payload: { hook: post@1, point: afterToolCall, result: annotate } }
+          - { type: tool.result, runId: $r2, payload: { callId: c2, result: { ok: { output: { status: set } } } } }
+          - { type: model.request, runId: $r2, step: 3 }
+          - { type: run.ended, runId: $r2, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call, runId: $r1, payload: { callId: c2 } }
+        - { type: policy.decision, runId: $r2 }
+        - { type: hook.decision, runId: $r2, payload: { point: beforeToolCall } }
+        - { type: policy.decision, payload: { kind: assurance } }
+  stubCalls:
+    lookup: { count: 1 }
+    set_status: [{ arguments: { key: k1 } }]
+    pre: { count: 1 }
+    post: { count: 1 }

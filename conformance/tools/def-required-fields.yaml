@@ -1,0 +1,128 @@
+schemaVersion: "0.1.0"
+id: tool.def-required-fields
+title: A tool definition missing a required field, with a non-object `input`, or with `onTaintedEgress` allow is rejected
+description: >-
+  Each failing load adds one `Tool` artifact that is valid except for one
+  defect: missing `id`, `description`, `input`, `effect` or `binding`; an
+  `input` schema whose top level is an array or has no `type`; or
+  `onTaintedEgress: allow`, which TOOL-001 does not permit. A failed load
+  leaves the previous snapshot in force, so each step is independent. The
+  final load adds the same tool with only the required fields and succeeds,
+  so the rejections can only come from the defects.
+requirements: [TOOL-001]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  # 0: no id
+  - load:
+      artifacts:
+        - kind: Tool
+          version: 1
+          schemaVersion: "0.1.0"
+          description: Mark a record.
+          input: { type: object, properties: { key: { type: string } } }
+          effect: mutating
+          binding: { kind: native, handler: test.lookup }
+    expect: { ok: false, error: { category: configuration } }
+  # 1: no description
+  - load:
+      artifacts:
+        - kind: Tool
+          id: mark_record
+          version: 1
+          schemaVersion: "0.1.0"
+          input: { type: object, properties: { key: { type: string } } }
+          effect: mutating
+          binding: { kind: native, handler: test.lookup }
+    expect: { ok: false, error: { category: configuration, details: { artifact: mark_record@1 } } }
+  # 2: no input
+  - load:
+      artifacts:
+        - kind: Tool
+          id: mark_record
+          version: 1
+          schemaVersion: "0.1.0"
+          description: Mark a record.
+          effect: mutating
+          binding: { kind: native, handler: test.lookup }
+    expect: { ok: false, error: { category: configuration, details: { artifact: mark_record@1 } } }
+  # 3: no effect
+  - load:
+      artifacts:
+        - kind: Tool
+          id: mark_record
+          version: 1
+          schemaVersion: "0.1.0"
+          description: Mark a record.
+          input: { type: object, properties: { key: { type: string } } }
+          binding: { kind: native, handler: test.lookup }
+    expect: { ok: false, error: { category: configuration, details: { artifact: mark_record@1 } } }
+  # 4: no binding
+  - load:
+      artifacts:
+        - kind: Tool
+          id: mark_record
+          version: 1
+          schemaVersion: "0.1.0"
+          description: Mark a record.
+          input: { type: object, properties: { key: { type: string } } }
+          effect: mutating
+    expect: { ok: false, error: { category: configuration, details: { artifact: mark_record@1 } } }
+  # 5: input top level is an array schema
+  - load:
+      artifacts:
+        - kind: Tool
+          id: mark_record
+          version: 1
+          schemaVersion: "0.1.0"
+          description: Mark a record.
+          input: { type: array, items: { type: string } }
+          effect: mutating
+          binding: { kind: native, handler: test.lookup }
+    expect: { ok: false, error: { category: configuration, details: { artifact: mark_record@1, field: /input } } }
+  # 6: input top level declares no type (not an object schema)
+  - load:
+      artifacts:
+        - kind: Tool
+          id: mark_record
+          version: 1
+          schemaVersion: "0.1.0"
+          description: Mark a record.
+          input: { properties: { key: { type: string } } }
+          effect: mutating
+          binding: { kind: native, handler: test.lookup }
+    expect: { ok: false, error: { category: configuration, details: { artifact: mark_record@1 } } }
+  # 7: onTaintedEgress may never be allow
+  - load:
+      artifacts:
+        - kind: Tool
+          id: mark_record
+          version: 1
+          schemaVersion: "0.1.0"
+          description: Mark a record.
+          input: { type: object, properties: { key: { type: string } } }
+          effect: mutating
+          egress: true
+          onTaintedEgress: allow
+          binding: { kind: native, handler: test.lookup }
+    expect: { ok: false, error: { category: configuration, details: { artifact: mark_record@1, field: /onTaintedEgress } } }
+  # 8: required fields only → loads
+  - load:
+      artifacts:
+        - kind: Tool
+          id: mark_record
+          version: 1
+          schemaVersion: "0.1.0"
+          description: Mark a record.
+          input: { type: object, properties: { key: { type: string } } }
+          effect: mutating
+          binding: { kind: native, handler: test.lookup }
+    expect: { ok: true }
+expect: {}

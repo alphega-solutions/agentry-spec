@@ -1,0 +1,138 @@
+schemaVersion: "0.1.0"
+id: tool.scope-delegated
+title: A delegated session sees only its own allowlist ∩ the caller's visible tools
+description: >-
+  The parent persona allows `lookup`, `update_record` and `delegate` (an
+  agent tool for `helper`). The helper allows `lookup`, `update_record` and
+  `archive_record`. The host's runtime scope for the parent is `lookup`,
+  `delegate` and `archive_record`, so the parent sees `lookup` and
+  `delegate`.
+
+  The child therefore sees exactly `lookup` (TOOL-022 as amended by
+  ORCH-013: helper allowlist ∩ the parent's visible tools). It does not see
+  `update_record` (allowed for both, but outside the parent's runtime
+  scope), nor `archive_record`, which is in the parent's runtime scope but
+  not visible to the parent. When the child model calls either, the call is
+  stopped at stage 1 as unavailable and nothing is dispatched.
+requirements: [TOOL-022, ORCH-013]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: archive_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Archive a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: mutating
+        binding: { kind: native, handler: test.archive_record }
+      - kind: Tool
+        id: delegate
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Delegate a task to the helper.
+        input:
+          type: object
+          additionalProperties: false
+          required: [task]
+          properties: { task: { type: string } }
+        effect: mutating
+        binding: { kind: agent, persona: helper@1 }
+      - kind: Persona
+        id: helper
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Helper
+        instructions: "You are a helper."
+        tools: [lookup@1, update_record@1, archive_record@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, delegate@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # parent, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: delegate, arguments: { task: "Tidy record k1" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # child
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: archive_record, arguments: { key: k1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "I could not change k1." }]
+          usage: { inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # parent, step 2
+        - parts: [{ type: text, text: "The helper could not change k1." }]
+          usage: { inputTokens: 50, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record: []
+      archive_record: []
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    runtimeScope: [lookup@1, delegate@1, archive_record@1]
+    input: [{ type: text, text: "Have the helper tidy k1" }]
+    capture:
+      - event: { type: tool.call, payload: { callId: c1, tool: delegate } }
+        bind: { payload.childSessionId: $child }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: delegate, childSessionId: $child } }
+          - { type: tool.result, payload: { callId: c1 } }
+          - { type: run.ended, payload: { reason: responded } }
+    $child:
+      events:
+        mode: subsequence
+        items:
+          - { type: policy.decision, payload: { kind: scope, outcome: block, callId: c1, tool: update_record } }
+          - { type: tool.result, payload: { callId: c1, result: { error: { category: policy, code: agentry.tool.unavailable } } } }
+          - { type: policy.decision, payload: { kind: scope, outcome: block, callId: c2, tool: archive_record } }
+          - { type: tool.result, payload: { callId: c2, result: { error: { category: policy, code: agentry.tool.unavailable } } } }
+      absentEvents:
+        - { type: tool.call }
+  stubCalls:
+    update_record: { count: 0 }
+    archive_record: { count: 0 }
+  providerRequests:
+    scripted-a:
+      - tools: { $all: [{ $len: 2 }, { $contains: [{ name: lookup }, { name: delegate }] }] }
+      - tools: [{ name: lookup }]
+      - tools: [{ name: lookup }]
+      - tools: [{ name: lookup }]
+      - tools: { $all: [{ $len: 2 }, { $contains: [{ name: lookup }, { name: delegate }] }] }

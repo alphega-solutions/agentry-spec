@@ -1,0 +1,105 @@
+schemaVersion: "0.1.0"
+id: tool.scope-visible-set
+title: Visible tools are exactly catalog ∩ persona allowlist ∩ runtime scope; with no runtime scope, the scope is the allowlist
+description: >-
+  The catalog holds `lookup`, `update_record` and `archive_record`; the
+  persona allows `lookup` and `update_record`.
+
+  - $sDefault: no runtime scope, so the scope is the allowlist; the model
+    sees exactly `lookup` and `update_record`, and never `archive_record`,
+    which is in the catalog only.
+  - $sScoped: the runtime scope is `update_record` and `archive_record`;
+    the model sees exactly `update_record` at every step of the turn
+    (`archive_record` is in scope but not allowed; `lookup` is allowed but
+    not in scope).
+  - $sNarrow: the runtime scope is `lookup`; the model sees exactly
+    `lookup`.
+
+  The recorded provider request lists the visible tool definitions under
+  `tools`, each named by its tool `id` (`name`); this naming is assumed, as
+  the provider request shape is not yet fixed by a schema.
+requirements: [TOOL-020, TOOL-021]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: archive_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Archive a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: mutating
+        binding: { kind: native, handler: test.archive_record }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # $sDefault
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sScoped
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sNarrow
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+script:
+  - action: run
+    bind: $sDefault
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sScoped
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    runtimeScope: [update_record@1, archive_record@1]
+    input: [{ type: text, text: "Set k1 to v1" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sNarrow
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    runtimeScope: [lookup@1]
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sScoped:
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: update_record } }
+          - { type: model.request, step: 2 }
+  stubCalls:
+    update_record: { count: 1 }
+  providerRequests:
+    scripted-a:
+      # $sDefault
+      - tools: { $all: [{ $len: 2 }, { $contains: [{ name: lookup }, { name: update_record }] }] }
+      # $sScoped, steps 1 and 2
+      - tools: [{ name: update_record }]
+      - tools: [{ name: update_record }]
+      # $sNarrow
+      - tools: [{ name: lookup }]
