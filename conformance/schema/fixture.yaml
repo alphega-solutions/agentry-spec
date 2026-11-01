@@ -11,7 +11,11 @@ description: >-
   element>}, {"$gte": n}, {"$lte": n}, {"$all": [<matchers that must all
   hold>]}. Placeholders may be bound in `expect`
   or by a step's `capture`; a placeholder used in a step must be bound by an
-  earlier step's capture.
+  earlier step's capture. Arrays in expectations match exactly — same
+  length, same order — unless wrapped in {"$contains": [...]}; objects match
+  partially. `delayMs` and timeouts are measured on the virtual clock.
+  Scripted provider `capabilities` are merged over defaults in which every
+  boolean capability is true and limits are 1,000,000 tokens.
 type: object
 additionalProperties: false
 required: [schemaVersion, id, title, requirements, contract, setup, script, expect]
@@ -263,6 +267,9 @@ $defs:
       capture:
         type: array
         items: { $ref: "#/$defs/capture" }
+      startAfter:
+        description: Inside `concurrently` only — start this action once an event matching this pattern has been persisted.
+        type: object
       expect: { $ref: "#/$defs/stepOutcome" }
 
   loadStep:
@@ -288,9 +295,14 @@ $defs:
       clock:
         type: object
         additionalProperties: false
-        required: [advance]
+        oneOf:
+          - required: [advance]
+          - required: [set]
         properties:
           advance: { type: string, description: ISO 8601 duration, e.g. PT1H. }
+          set:
+            description: Set the virtual clock, possibly backwards, to test that order never depends on timestamps (CORE-003).
+            $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/timestamp"
 
   crashStep:
     type: object
@@ -357,7 +369,9 @@ $defs:
     type: object
     additionalProperties: false
     properties:
-      ok: { type: boolean }
+      ok:
+        description: The host operation was accepted (no error returned to the host), whatever the run's end reason.
+        type: boolean
       error:
         type: object
         additionalProperties: false

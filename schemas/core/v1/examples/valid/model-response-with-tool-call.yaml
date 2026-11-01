@@ -6,6 +6,8 @@ instance:
   turn: 1
   step: 1
   type: model.response
+  provenances: [model]
+  labels: []
   schemaVersion: "0.1.0"
   sessionId: 0190a3c4-0000-7000-8000-000000000001
   timestamp: "2026-01-01T00:00:00Z"

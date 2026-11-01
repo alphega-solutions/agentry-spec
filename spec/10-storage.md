@@ -183,3 +183,8 @@ All rules here are new; this is a Tier 3 area.
 | PORT-110–115 | **Retention periods required, no defaults**; dependency ordering; whole-session deletion; **legal holds**; replayed resume after retention returns `not_found` |
 | PORT-120–122 | Migration rules across contract versions |
 | PORT-130 | Shared adapter test kit contents |
+
+## Amendment 2026-11-01 — from Phase 4 review
+
+- PORT-030: the checkpoint holds **all** reasoning parts (CORE-140), not only those required for continuation.
+

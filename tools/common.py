@@ -46,22 +46,42 @@ def registry(schemas: dict[str, dict]) -> Registry:
 
 
 def spec_requirements() -> dict[str, dict]:
-    """Requirement ID -> {area_file, normative, untestable, text}."""
+    """Requirement ID -> {file, normative, untestable, text}.
+
+    A requirement's block runs from its "- **ID**" line to the next requirement,
+    heading, table, or blank line followed by non-indented text. It is normative
+    if any line in the block contains **MUST (including sub-bullets).
+    """
     reqs: dict[str, dict] = {}
     for path in sorted((ROOT / "spec").glob("[0-9]*.md")):
-        for line in path.read_text(encoding="utf-8").splitlines():
-            m = REQ_DEF.match(line.strip())
+        lines = path.read_text(encoding="utf-8").splitlines()
+        i = 0
+        while i < len(lines):
+            m = REQ_DEF.match(lines[i].strip())
             if not m:
+                i += 1
                 continue
-            rid, text = m.group(1), m.group(2)
-            if rid in reqs:
-                continue  # first definition wins; amendments only reference IDs
-            reqs[rid] = {
-                "file": path.name,
-                "normative": "**MUST" in text,
-                "untestable": "*(untestable)*" in text,
-                "text": text.strip(),
-            }
+            rid, first = m.group(1), m.group(2)
+            block = [first]
+            j = i + 1
+            while j < len(lines):
+                ln = lines[j]
+                if REQ_DEF.match(ln.strip()) or ln.startswith("#") or ln.startswith("|"):
+                    break
+                if ln.strip() == "" and j + 1 < len(lines) and lines[j + 1] and not lines[j + 1].startswith(" "):
+                    break
+                if ln.startswith("  "):
+                    block.append(ln.strip())
+                j += 1
+            text = " ".join(block)
+            if rid not in reqs:  # first definition wins; amendments only reference IDs
+                reqs[rid] = {
+                    "file": path.name,
+                    "normative": "**MUST" in text,
+                    "untestable": "*(untestable)*" in text,
+                    "text": first.strip(),
+                }
+            i = j
     return reqs
 
 

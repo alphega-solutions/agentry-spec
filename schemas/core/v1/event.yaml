@@ -59,6 +59,16 @@ allOf:
   - if:
       properties: { type: { not: { enum: [session.created, session.closed] } } }
     then: { required: [runId] }
+  - if: { properties: { type: { const: session.created } } }
+    then: { not: { required: [runId] } }
+  # position: turn on turn events; turn and step on model and tool events
+  - if: { properties: { type: { enum: [turn.started, turn.completed] } } }
+    then: { required: [turn] }
+  - if: { properties: { type: { enum: [model.request, model.response, tool.call, tool.result] } } }
+    then: { required: [turn, step] }
+  # events that carry content carry its provenance and labels (CORE-151)
+  - if: { properties: { type: { enum: [model.response, tool.result, context.retrieved, context.compacted] } } }
+    then: { required: [provenances, labels] }
 
   - if: { properties: { type: { const: session.created } } }
     then: { properties: { payload: { $ref: "#/$defs/sessionCreated" } } }
@@ -143,6 +153,8 @@ $defs:
     properties:
       reason: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/runEndReason" }
       error: { $ref: "https://alphega.io/agentry/schemas/core/error/v1.json" }
+    if: { properties: { reason: { const: failed } } }
+    then: { required: [error] }
 
   modelRequest:
     type: object
@@ -215,6 +227,8 @@ $defs:
     allOf:
       - if: { properties: { result: { enum: [block, escalate] } } }
         then: { required: [reasonCode] }
+      - if: { properties: { point: { enum: [onError, sessionEnd] } } }
+        then: { properties: { result: { const: annotate } } }
 
   policyDecision:
     type: object
@@ -236,25 +250,56 @@ $defs:
       version: { type: integer, minimum: 1 }
 
   escalationRaised:
-    description: Minimal record; refined in the Area 6 schemas.
+    description: Escalation record (HITL-010); refined further in the Area 6 schemas.
     type: object
     additionalProperties: false
     required: [escalation]
     properties:
       escalation:
         type: object
-        required: [id, pendingActions, expiresAt]
+        additionalProperties: false
+        required: [id, step, sources, pendingActions, createdAt, expiresAt]
         properties:
           id: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+          step: { type: integer, minimum: 1 }
+          sources:
+            type: array
+            minItems: 1
+            items: { enum: [taint, approval, hook, recovery] }
+          reasonCodes:
+            type: array
+            items: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/errorCode" }
+          taintProvenances: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/provenances" }
+          reviewerRequirements:
+            type: object
+            additionalProperties: false
+            properties:
+              requiredApprovals: { type: integer, minimum: 1 }
+              selfApprovalAllowed: { type: boolean }
           pendingActions:
             type: array
             minItems: 1
             items:
               type: object
-              required: [id, kind]
+              additionalProperties: false
+              required: [id, kind, source, allowedDecisions]
               properties:
                 id: { type: string, minLength: 1 }
                 kind: { enum: [tool_call, content, recovery] }
+                source: { enum: [taint, approval, hook, recovery] }
+                delegated: { type: boolean }
+                chain:
+                  type: array
+                  items: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+                reasonCode: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/errorCode" }
+                callId: { type: string }
+                tool: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/toolId" }
+                point: { enum: [sessionStart, beforeModelCall, afterModelCall, beforeToolCall, afterToolCall, beforeResponse] }
+                allowedDecisions:
+                  type: array
+                  minItems: 1
+                  items: { enum: [approve, reject, edit, confirm] }
+          createdAt: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/timestamp" }
           expiresAt: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/timestamp" }
 
   escalationResolved:
