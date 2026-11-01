@@ -1,0 +1,142 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://alphega.io/agentry/schemas/config/harness-profile/v1.json
+title: HarnessProfile
+description: >-
+  How a persona runs (CFG-090, as amended by Areas 5, 6, 7, 8 and 9). A run
+  request may tighten the `min` and `stricter` fields (CFG-101).
+allOf: [{ $ref: "https://alphega.io/agentry/schemas/config/artifact/v1.json" }]
+unevaluatedProperties: false
+required: [idleTtl, suspendedTtl, stepLimit]
+properties:
+  kind: { const: HarnessProfile }
+  idleTtl:
+    description: Idle session expiry; no default (CORE-040).
+    x-agentry-merge: min
+    $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/duration"
+  suspendedTtl:
+    description: Suspended session expiry; no default (CORE-040).
+    x-agentry-merge: min
+    $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/duration"
+  stepLimit:
+    description: Maximum steps per turn (CORE-083).
+    x-agentry-merge: min
+    type: integer
+    minimum: 1
+  budget:
+    description: Per-turn budget (CFG-091); includes delegated children's usage (ORCH-042).
+    type: object
+    additionalProperties: false
+    properties:
+      tokens:
+        description: Input plus output tokens per turn (PROV-071).
+        x-agentry-merge: min
+        type: integer
+        minimum: 1
+      cost:
+        description: Cost per turn, in the deployment price table's currency (PROV-072–074).
+        x-agentry-merge: min
+        type: number
+        exclusiveMinimum: 0
+  timeouts:
+    type: object
+    additionalProperties: false
+    properties:
+      run:
+        description: Wall-clock limit per run.
+        x-agentry-merge: min
+        $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/duration"
+      tool:
+        description: Default tool timeout when a tool declares none (Area 4).
+        x-agentry-merge: min
+        $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/duration"
+  retry:
+    type: object
+    additionalProperties: false
+    properties:
+      unavailable:
+        description: Maximum retries for `unavailable` errors (CORE-191, PROV-060).
+        x-agentry-merge: min
+        type: integer
+        minimum: 0
+  outputRetryLimit:
+    description: Corrections allowed for an output schema (CORE-132).
+    x-agentry-merge: min
+    type: integer
+    minimum: 0
+  outputSchema:
+    description: Output schema, if the persona declares none (CORE-130). Not allowed with `streamed` (CORE-131).
+    x-agentry-merge: locked
+    $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/outputSchema"
+  deliveryMode:
+    description: Response delivery (ADR-0005). Default `buffered`.
+    x-agentry-merge: stricter
+    x-agentry-order: [buffered, streamed]
+    enum: [buffered, streamed]
+    default: buffered
+  checkpoint:
+    description: Checkpoint granularity (CFG-090).
+    x-agentry-merge: stricter
+    x-agentry-order: [tool, turn]
+    enum: [tool, turn]
+  limits:
+    type: object
+    additionalProperties: false
+    properties:
+      partSize:
+        description: Maximum bytes per content part (CORE-115).
+        x-agentry-merge: min
+        type: integer
+        minimum: 1
+      sessionSize:
+        description: Maximum total content bytes per session (CORE-115).
+        x-agentry-merge: min
+        type: integer
+        minimum: 1
+  defaultAttachmentLabels:
+    description: Labels applied to unscanned attachments (CORE-123).
+    x-agentry-merge: union
+    $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/labels"
+  trace:
+    type: object
+    additionalProperties: false
+    properties:
+      includeReasoning:
+        description: Include reasoning parts in traces, labelled and redacted (CORE-143). Default `false`.
+        x-agentry-merge: stricter
+        x-agentry-order: [false, true]
+        type: boolean
+        default: false
+  requiredHooks:
+    description: Hooks this profile adds (HOOK-070).
+    x-agentry-merge: union
+    $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/hookRefs"
+  guardrails:
+    type: object
+    additionalProperties: false
+    properties:
+      requireDeterministic:
+        description: Every point with a model hook able to `block` also needs a `rule` or `remote` hook able to `block` (HOOK-104).
+        x-agentry-merge: stricter
+        x-agentry-order: [true, false]
+        type: boolean
+        default: false
+  onExpiry:
+    description: What happens to undecided actions when `suspendedTtl` elapses (HITL-081, HITL-082). Default `close`.
+    x-agentry-merge: stricter
+    x-agentry-order: [close, reject]
+    enum: [close, reject]
+    default: close
+  delegation:
+    type: object
+    additionalProperties: false
+    properties:
+      maxDepth:
+        description: Maximum delegation depth; the root is depth 0 (ORCH-030). Default 2.
+        x-agentry-merge: min
+        type: integer
+        minimum: 0
+        default: 2
+  context:
+    $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/contextBlock"
+  model:
+    $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/modelBlock"

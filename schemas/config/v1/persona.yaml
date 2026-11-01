@@ -1,0 +1,68 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://alphega.io/agentry/schemas/config/persona/v1.json
+title: Persona
+description: >-
+  Who an agent is (CFG-080, as amended by Areas 5, 6 and 9). `trustedTools`
+  and `trustedAttachmentSources` are not persona fields (CFG-071).
+allOf: [{ $ref: "https://alphega.io/agentry/schemas/config/artifact/v1.json" }]
+unevaluatedProperties: false
+required: [instructions, tools, defaultProfile, allowedProfiles]
+properties:
+  kind: { const: Persona }
+  displayName:
+    description: Human-readable label.
+    x-agentry-merge: override
+    type: string
+    minLength: 1
+  description:
+    description: Human-readable description.
+    x-agentry-merge: override
+    type: string
+  instructions:
+    description: >-
+      System content for the model, provenance `system` (CORE-119). Must not
+      contain secret references or values (CFG-083).
+    x-agentry-merge: locked
+    type: string
+    minLength: 1
+    not: { pattern: "secret://" }
+  tools:
+    description: Tool allowlist, as `id@version` references to `Tool` artifacts (CFG-082, Area 4).
+    x-agentry-merge: intersect
+    $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/artifactRefs"
+  requiredHooks:
+    description: Hooks this persona always runs (HOOK-070).
+    x-agentry-merge: union
+    $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/hookRefs"
+  fallbackMessage:
+    description: Response when a run ends `blocked` (CORE-181).
+    x-agentry-merge: locked
+    type: string
+    minLength: 1
+  outputSchema:
+    description: Output schema for the final response (CORE-130).
+    x-agentry-merge: locked
+    $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/outputSchema"
+  defaultProfile:
+    description: Profile used when a run request names none; must be in `allowedProfiles` (CFG-081).
+    x-agentry-merge: locked
+    $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/artifactRef"
+  allowedProfiles:
+    description: Profiles a run request may choose (CFG-100).
+    x-agentry-merge: intersect
+    allOf: [{ $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/artifactRefs" }]
+    minItems: 1
+  allowedProviders:
+    description: Providers this persona may use (CFG-080).
+    x-agentry-merge: intersect
+    $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/providerIds"
+  approvalRules:
+    description: "Approval rules for `approval: policy` (HOOK-130)."
+    x-agentry-merge: union
+    $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/approvalRules"
+  reviewerRules:
+    description: Reviewer rules per escalation source (HITL-021, HITL-024).
+    x-agentry-merge: union
+    $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/reviewerRules"
+  model:
+    $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/modelBlock"

@@ -1,0 +1,9 @@
+# CFG-090, CORE-040: idleTtl is required; there is no default.
+schema: https://alphega.io/agentry/schemas/config/harness-profile/v1.json
+instance:
+  kind: HarnessProfile
+  id: no-idle-ttl
+  version: 1
+  schemaVersion: "0.1.0"
+  suspendedTtl: PT72H
+  stepLimit: 8

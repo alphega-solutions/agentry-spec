@@ -1,0 +1,244 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://alphega.io/agentry/schemas/config/deployment/v1.json
+title: Deployment
+description: >-
+  Where agentry runs (CFG-110, as amended by Areas 4, 5, 9, 10 and the Phase 4
+  review): environment, policy bundle stack, providers, port bindings,
+  retention, and the endpoints tools and hooks may reach. A deployment is not
+  a behavioural layer: it declares no persona, profile, tool or hook
+  behaviour (CFG-021, CFG-111), and its fields carry no merge annotations.
+  The config source is supplied to the loader at startup and is not declared
+  here (CFG-110, PORT-010).
+allOf: [{ $ref: "https://alphega.io/agentry/schemas/config/artifact/v1.json" }]
+unevaluatedProperties: false
+required: [environment, policyBundles, providers, ports, retention]
+properties:
+  kind: { const: Deployment }
+  environment:
+    description: Environment name, e.g. `dev`, `staging`, `prod` (CFG-112).
+    type: string
+    pattern: "^[A-Za-z0-9_.-]{1,64}$"
+  policyBundles:
+    description: Policy bundle stack, highest first (CFG-072). May be empty.
+    type: array
+    uniqueItems: true
+    items: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/artifactRef" }
+  attachmentSources:
+    description: >-
+      Channel names hosts may give for attachments (CORE-121). An attachment
+      from an undeclared source is rejected. Absent: none declared.
+    type: array
+    uniqueItems: true
+    items: { $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/sourceName" }
+  providers:
+    description: Provider declarations (PROV-010). A model whose provider is not declared is a configuration error (PROV-011).
+    type: array
+    minItems: 1
+    items: { $ref: "#/$defs/provider" }
+  ports:
+    description: Storage port bindings, secrets provider and optional telemetry exporter (Area 10).
+    type: object
+    additionalProperties: false
+    required: [eventLog, checkpointStore, idempotencyStore, snapshotStore, blobStore, auditLog, secrets]
+    properties:
+      eventLog: { $ref: "#/$defs/portBinding" }
+      checkpointStore: { $ref: "#/$defs/portBinding" }
+      idempotencyStore: { $ref: "#/$defs/portBinding" }
+      snapshotStore: { $ref: "#/$defs/portBinding" }
+      blobStore: { $ref: "#/$defs/portBinding" }
+      auditLog: { $ref: "#/$defs/portBinding" }
+      vectorStore:
+        allOf: [{ $ref: "#/$defs/portBindingFields" }]
+        unevaluatedProperties: false
+        properties:
+          sources:
+            description: Vector store sources that retrieval tools and `retrieval.source` may name (CTX-020, CTX-100).
+            type: array
+            uniqueItems: true
+            items: { type: string, pattern: "^[A-Za-z0-9_.-]{1,128}$" }
+      secrets:
+        description: Secrets provider (CFG-062, PORT-090).
+        $ref: "#/$defs/portBinding"
+      telemetry:
+        description: Optional telemetry exporter (PORT-100–102).
+        $ref: "#/$defs/portBinding"
+  retention:
+    description: Retention periods; there are no defaults (PORT-110).
+    type: object
+    additionalProperties: false
+    required: [events, checkpoints, idempotency, blobs, snapshots, audit]
+    properties:
+      events: { $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/duration" }
+      checkpoints:
+        description: Checkpoints of closed sessions.
+        $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/duration"
+      idempotency: { $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/duration" }
+      blobs: { $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/duration" }
+      snapshots: { $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/duration" }
+      audit: { $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/duration" }
+  legalHolds:
+    description: Holds that suspend retention deletion for a tenant or one of its sessions (PORT-114).
+    type: array
+    items:
+      type: object
+      additionalProperties: false
+      required: [tenant]
+      properties:
+        tenant: { type: string, minLength: 1 }
+        session: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+        reason: { type: string }
+  priceTable:
+    description: Optional per-model prices (PROV-072), required for every candidate model when a cost budget is set (PROV-073).
+    type: object
+    additionalProperties: false
+    required: [currency, models]
+    properties:
+      currency:
+        description: ISO 4217 code; `budget.cost` is in this currency.
+        type: string
+        pattern: "^[A-Z]{3}$"
+      models:
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [provider, name, input, cachedInput, output, reasoning]
+          properties:
+            provider: { $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/providerId" }
+            name: { $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/modelName" }
+            input: { description: Per million uncached input tokens., type: number, minimum: 0 }
+            cachedInput: { description: Per million cached input tokens., type: number, minimum: 0 }
+            output: { description: Per million output tokens., type: number, minimum: 0 }
+            reasoning: { description: Per million reasoning output tokens., type: number, minimum: 0 }
+  mcpServers:
+    description: MCP servers tools may bind to, by endpoint and identity (TOOL-093).
+    type: array
+    items: { $ref: "#/$defs/mcpServer" }
+  remoteHooks:
+    description: Remote hook endpoints (HOOK-092).
+    type: array
+    items: { $ref: "#/$defs/remoteHook" }
+
+$defs:
+  credential:
+    description: Credential, by secret reference only (CFG-060, TOOL-011, HOOK-091).
+    x-agentry-secret: true
+    $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/secretRef"
+
+  capabilityRestriction:
+    description: >-
+      Restriction of an adapter-declared model capability (PROV-031): integers
+      may be lowered and booleans turned off. Extending a capability is a
+      configuration error, checked against the adapter at load time.
+    type: object
+    additionalProperties: false
+    properties:
+      contextLimit: { type: integer, minimum: 1 }
+      maxOutputTokens: { type: integer, minimum: 1 }
+      toolUse: { const: false }
+      parallelToolCalls: { const: false }
+      structuredOutput: { const: false }
+      vision: { const: false }
+      documents: { const: false }
+      reasoning: { const: false }
+      streaming: { const: false }
+
+  provider:
+    description: A provider declaration (PROV-010). One per vendor endpoint, including for framework-wrapping adapters (PROV-009).
+    type: object
+    additionalProperties: false
+    required: [id, adapter, endpoint, region, retainsData]
+    properties:
+      id: { $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/providerId" }
+      adapter:
+        description: The adapter that serves this provider.
+        type: string
+        pattern: "^[A-Za-z0-9_.-]{1,128}$"
+      endpoint: { $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/endpoint" }
+      region: { $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/region" }
+      retainsData:
+        description: Whether the provider retains request data (PROV-010).
+        type: boolean
+      attributes:
+        description: Further data-handling attributes, visible to `providerRequirement` (PROV-012).
+        type: object
+        propertyNames: { pattern: "^[a-z][A-Za-z0-9]{0,63}$" }
+        additionalProperties: { type: [string, number, boolean] }
+      credential: { $ref: "#/$defs/credential", x-agentry-secret: true }
+      capabilities:
+        description: Model name → capability restrictions (PROV-031).
+        type: object
+        additionalProperties: { $ref: "#/$defs/capabilityRestriction" }
+      extensions: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/extensions" }
+
+  portBinding:
+    allOf: [{ $ref: "#/$defs/portBindingFields" }]
+    unevaluatedProperties: false
+
+  portBindingFields:
+    description: >-
+      Binding of a port to an adapter (Area 10). Every binding declares its
+      region, checked against `dataResidency` (PORT-005). Adapter-specific
+      settings go in `extensions`; any secret they need goes in `credential`.
+    type: object
+    required: [adapter, region]
+    properties:
+      adapter:
+        type: string
+        pattern: "^[A-Za-z0-9_.-]{1,128}$"
+      region: { $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/region" }
+      encryption:
+        description: Encryption at rest (PORT-006). Absent means platform-managed keys.
+        type: object
+        additionalProperties: false
+        required: [keys]
+        properties:
+          keys: { enum: [platform, customer] }
+          keyId:
+            description: "Identifier of the customer-managed key; required with `keys: customer`."
+            type: string
+            minLength: 1
+        if: { properties: { keys: { const: customer } } }
+        then: { required: [keyId] }
+      credential: { $ref: "#/$defs/credential", x-agentry-secret: true }
+      extensions: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/extensions" }
+
+  mcpServer:
+    description: An MCP server (TOOL-093).
+    type: object
+    additionalProperties: false
+    required: [id, endpoint, identity]
+    properties:
+      id:
+        type: string
+        pattern: "^[A-Za-z0-9_.-]{1,128}$"
+      endpoint: { $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/endpoint" }
+      identity:
+        description: The identity the server must present, e.g. a TLS server name or workload identity (TOOL-093).
+        type: string
+        minLength: 1
+      region: { $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/region" }
+      credential: { $ref: "#/$defs/credential", x-agentry-secret: true }
+      extensions: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/extensions" }
+
+  remoteHook:
+    description: A remote hook endpoint (HOOK-091, HOOK-092).
+    type: object
+    additionalProperties: false
+    required: [id, endpoint]
+    properties:
+      id:
+        type: string
+        pattern: "^[A-Za-z0-9_.-]{1,128}$"
+      endpoint: { $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/endpoint" }
+      protocol:
+        description: Transport (HOOK-091). Default `http`.
+        enum: [http, grpc]
+        default: http
+      identity:
+        description: The identity the endpoint must present.
+        type: string
+        minLength: 1
+      region: { $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/region" }
+      credential: { $ref: "#/$defs/credential", x-agentry-secret: true }
+      extensions: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/extensions" }

@@ -1,0 +1,10 @@
+# Durations use days, hours, minutes and seconds only, so `min` compares exactly.
+schema: https://alphega.io/agentry/schemas/config/harness-profile/v1.json
+instance:
+  kind: HarnessProfile
+  id: months
+  version: 1
+  schemaVersion: "0.1.0"
+  idleTtl: P1M
+  suspendedTtl: PT72H
+  stepLimit: 8

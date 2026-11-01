@@ -10,4 +10,4 @@ The shared configuration set most fixtures start from (`setup.config.base: basel
 | `streamed@1` | Same, with `streamed` delivery |
 | `test@1` | Deployment: two scripted providers, in-memory ports, retention |
 
-These artifacts are validated against the configuration schemas once Areas 2–3 schemas land.
+`tools/validate.py` validates these artifacts against the configuration schemas (`Tool` artifacts once the Area 4 schema lands).

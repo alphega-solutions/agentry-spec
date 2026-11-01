@@ -1,0 +1,8 @@
+# PROV-020: provider and name are set together.
+schema: https://alphega.io/agentry/schemas/config/policy-bundle/v1.json
+instance:
+  kind: PolicyBundle
+  id: org
+  version: 1
+  schemaVersion: "0.1.0"
+  model: { provider: scripted-a }

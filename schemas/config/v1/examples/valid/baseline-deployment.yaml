@@ -1,0 +1,22 @@
+# Copy of conformance/shared/baseline/deployment.yaml.
+schema: https://alphega.io/agentry/schemas/config/deployment/v1.json
+instance:
+  kind: Deployment
+  id: test
+  version: 1
+  schemaVersion: "0.1.0"
+  environment: test
+  policyBundles: [org@1]
+  attachmentSources: [upload, email]
+  providers:
+    - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+    - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+  ports:
+    eventLog: { adapter: memory, region: test-region }
+    checkpointStore: { adapter: memory, region: test-region }
+    idempotencyStore: { adapter: memory, region: test-region }
+    snapshotStore: { adapter: memory, region: test-region }
+    blobStore: { adapter: memory, region: test-region }
+    auditLog: { adapter: memory, region: test-region }
+    secrets: { adapter: memory, region: test-region }
+  retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
