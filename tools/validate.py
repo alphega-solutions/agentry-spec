@@ -97,10 +97,14 @@ KIND_SCHEMAS = {
     "Persona": f"{CONFIG}/persona/v1.json",
     "HarnessProfile": f"{CONFIG}/harness-profile/v1.json",
     "Deployment": f"{CONFIG}/deployment/v1.json",
+    "Tool": f"{CONFIG}/tool/v1.json",
 }
-# Kinds whose schemas arrive with Areas 4-5; their artifacts are not yet validated.
-PENDING_KINDS = {"Tool", "Hook"}
+# Kinds whose schemas arrive with Area 5; their artifacts are checked only
+# against the interim names in conformance/shared/NAMES.md.
+PENDING_KINDS = {"Hook"}
 BEHAVIOURAL = ("PolicyBundle", "Persona", "HarnessProfile")
+# Kinds that are not behavioural layers and carry no merge annotations (CFG-021, TOOL-001).
+UNLAYERED = ("Deployment", "Tool")
 MERGE_RULES = {"union", "intersect", "min", "stricter", "locked", "override"}
 # Envelope fields are not merged; extensions are vendor data.
 UNMERGED = {"kind", "id", "version", "schemaVersion", "extensions"}
@@ -128,14 +132,15 @@ SECRET_PATTERN = re.compile(r"^secret://[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9_.-
 # 6 and 7 (HOOK-104, HITL-023, HITL-081, CTX-102). Paths are `Kind.field`,
 # with `*` for a map key. Every `stricter` field in a configuration schema must
 # be listed here with exactly this order, and every listed path in a schema'd
-# kind must exist. Families whose fields live in kinds without a schema yet
-# (Tool, Hook; Areas 4-5) list their paths for when those schemas land.
+# behavioural kind must exist. Tool fields with these values (approval,
+# onTainted, onTaintedEgress) are not merged, so they are not listed; the
+# Hook failure mode lists its paths when the Area 5 schema lands.
 STRICTNESS_ORDERS = [
     # (family, order, paths)
     ("Hook failure mode", ["failClosed", "failOpen"], []),  # Hook schema (Area 5)
     ("Delivery mode", ["buffered", "streamed"], ["HarnessProfile.deliveryMode"]),
-    ("Taint outcome", ["block", "escalate", "allow"], ["PolicyBundle.toolTaintDefaults.*"]),  # + Tool onTainted/onTaintedEgress (Area 4)
-    ("Approval policy", ["always", "policy", "never"], ["PolicyBundle.sensitivityPolicies.*.approval"]),  # + Tool approval (Area 4)
+    ("Taint outcome", ["block", "escalate", "allow"], ["PolicyBundle.toolTaintDefaults.*"]),
+    ("Approval policy", ["always", "policy", "never"], ["PolicyBundle.sensitivityPolicies.*.approval"]),
     ("Checkpoint granularity", ["tool", "turn"], ["HarnessProfile.checkpoint"]),
     ("Include reasoning in traces", [False, True], ["HarnessProfile.trace.includeReasoning"]),
     ("Deterministic guardrails (HOOK-104)", [True, False],
@@ -149,15 +154,8 @@ STRICTNESS_ORDERS = [
 ]
 CANONICAL_ORDER = {path: order for _, order, paths in STRICTNESS_ORDERS for path in paths}
 
-# Interim Tool/Hook names (conformance/shared/NAMES.md) until Areas 4-5 schemas exist.
-TOOL_BINDINGS = {
-    "native": ["handler"],
-    "mcp": ["server", "tool"],
-    "http": ["endpoint", "operation"],
-    "agent": ["persona"],
-    "retrieval": ["source"],
-    "langchain": ["tool"],
-}
+# Interim Hook names (conformance/shared/NAMES.md) until the Area 5 schema exists.
+# Tool names are normative in schemas/config/v1/tool.yaml.
 HOOK_SOURCES = {
     "rule": ["when", "then"],
     "native": ["handler"],
@@ -165,13 +163,12 @@ HOOK_SOURCES = {
     "model": ["model", "instructions", "maxTokens"],
 }
 # Fields whose value is an ID declared elsewhere (deployment or registry), not a URI.
-ID_FIELDS = {"handler", "server", "endpoint", "source"}
+ID_FIELDS = {"handler", "endpoint"}
 
 
 def _check_pending(art: dict) -> list[str]:
-    """Minimal check of a Tool or Hook artifact against NAMES.md."""
-    kind = art.get("kind")
-    key, table = ("binding", TOOL_BINDINGS) if kind == "Tool" else ("source", HOOK_SOURCES)
+    """Minimal check of a Hook artifact against NAMES.md."""
+    key, table = "source", HOOK_SOURCES
     block = art.get(key)
     if not isinstance(block, dict):
         return [f"{key}: missing or not an object (NAMES.md)"]
@@ -190,8 +187,6 @@ def _check_pending(art: dict) -> list[str]:
         v = block.get(f)
         if v is not None and not (isinstance(v, str) and ID_PATTERN.match(v)):
             problems.append(f"{key}.{f}: {v!r} is not an ID (NAMES.md)")
-    if bkind == "agent" and "persona" in block and not REF_PATTERN.match(str(block["persona"])):
-        problems.append(f"{key}.persona: {block['persona']!r} is not id@version")
     creds = block.get("credentials")
     if creds is not None:
         if not isinstance(creds, dict):
@@ -301,7 +296,8 @@ def check_merge_annotations(schemas: dict) -> list[str]:
       STRICTNESS_ORDERS; x-agentry-order appears only with `stricter`;
     - `override` only on allowlisted paths;
     - a field path declared by more than one kind has the same rule in each;
-    - deployments, including everything they reference, carry no annotations.
+    - deployments and tools, including everything they reference, carry no
+      annotations.
     """
     errors: list[str] = []
     rules_by_path: dict[str, dict[str, str]] = {}
@@ -379,22 +375,23 @@ def check_merge_annotations(schemas: dict) -> list[str]:
         if path.split(".")[0] in BEHAVIOURAL and path not in seen_paths:
             errors.append(f"merge: STRICTNESS_ORDERS lists {path}, which no schema declares")
 
-    def no_merge(base: str, node, where: str, seen: set) -> None:
+    def no_merge(kind: str, base: str, node, where: str, seen: set) -> None:
         if isinstance(node, dict):
             if "x-agentry-merge" in node or "x-agentry-order" in node:
-                errors.append(f"merge: {where} carries a merge annotation; deployments are not a behavioural layer (CFG-021)")
+                errors.append(f"merge: {where} carries a merge annotation; {kind} is not a behavioural layer (CFG-021)")
             if isinstance(node.get("$ref"), str):
                 uri, rbase, target = _deref(schemas, base, node["$ref"])
                 if uri not in seen:
-                    no_merge(rbase, target, f"{where}->{uri}", seen | {uri})
+                    no_merge(kind, rbase, target, f"{where}->{uri}", seen | {uri})
             for k, v in node.items():
-                no_merge(base, v, f"{where}/{k}", seen)
+                no_merge(kind, base, v, f"{where}/{k}", seen)
         elif isinstance(node, list):
             for i, v in enumerate(node):
-                no_merge(base, v, f"{where}/{i}", seen)
+                no_merge(kind, base, v, f"{where}/{i}", seen)
 
-    dep = KIND_SCHEMAS["Deployment"]
-    no_merge(dep, schemas[dep], "Deployment", {dep + "#"})
+    for kind in UNLAYERED:
+        sid = KIND_SCHEMAS[kind]
+        no_merge(kind, sid, schemas[sid], kind, {sid + "#"})
     return errors
 
 
@@ -463,8 +460,8 @@ def check_inline_config(doc: dict, schemas: dict, reg) -> list[str]:
     """Inline configuration that is expected to load must be schema-valid.
 
     Artifacts in setup.config.artifacts, and in `load` steps expected to
-    succeed, are validated against their kind's schema (Tool and Hook against
-    the interim names in NAMES.md). Artifacts in steps expected to fail are
+    succeed, are validated against their kind's schema (Hook against the
+    interim names in NAMES.md). Artifacts in steps expected to fail are
     not, since they may be invalid on purpose. Run-request `overrides` must use
     harness profile field paths, and `remove` must name artifacts present in
     the base or previous set when that set is known.

@@ -1,0 +1,11 @@
+# TOOL-001: the top level of input must be an object schema.
+schema: https://alphega.io/agentry/schemas/config/tool/v1.json
+instance:
+  kind: Tool
+  id: lookup
+  version: 1
+  schemaVersion: "0.1.0"
+  description: Look up a record.
+  input: { type: string }
+  effect: read
+  binding: { kind: native, handler: test.lookup }

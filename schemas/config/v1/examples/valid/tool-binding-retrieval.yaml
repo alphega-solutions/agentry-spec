@@ -1,0 +1,11 @@
+# CTX-020: retrieval binding names a vector store source; effect is read.
+schema: https://alphega.io/agentry/schemas/config/tool/v1.json
+instance:
+  kind: Tool
+  id: search_docs
+  version: 1
+  schemaVersion: "0.1.0"
+  description: Search the documentation.
+  input: { type: object, required: [query], properties: { query: { type: string } } }
+  effect: read
+  binding: { kind: retrieval, source: docs }

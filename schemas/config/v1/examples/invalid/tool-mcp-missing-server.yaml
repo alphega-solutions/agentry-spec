@@ -1,0 +1,11 @@
+# TOOL-093: an mcp binding must name its server.
+schema: https://alphega.io/agentry/schemas/config/tool/v1.json
+instance:
+  kind: Tool
+  id: search_tickets
+  version: 1
+  schemaVersion: "0.1.0"
+  description: Search support tickets.
+  input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }
+  effect: read
+  binding: { kind: mcp, tool: search }

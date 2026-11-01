@@ -123,6 +123,13 @@ properties:
     description: Remote hook endpoints (HOOK-092).
     type: array
     items: { $ref: "#/$defs/remoteHook" }
+  httpEndpoints:
+    description: >-
+      HTTP endpoints that tools with an `http` binding may name (TOOL-010). Each
+      declares its base URL and the operations tools may call; a binding names
+      an endpoint ID and an operation ID.
+    type: array
+    items: { $ref: "#/$defs/httpEndpoint" }
 
 $defs:
   credentials:
@@ -234,6 +241,39 @@ $defs:
       endpoint: { $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/endpoint" }
       identity:
         description: The identity the server must present, e.g. a TLS server name or workload identity (TOOL-093).
+        type: string
+        minLength: 1
+      region: { $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/region" }
+      credentials: { $ref: "#/$defs/credentials" }
+      extensions: { $ref: "#/$defs/bindingExtensions" }
+
+  httpEndpoint:
+    description: An HTTP endpoint for `http` tool bindings (TOOL-010).
+    type: object
+    additionalProperties: false
+    required: [id, endpoint, operations]
+    properties:
+      id:
+        type: string
+        pattern: "^[A-Za-z0-9_.-]{1,128}$"
+      endpoint: { $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/endpoint" }
+      operations:
+        description: >-
+          Operation ID → HTTP method and path template. Path parameters and the
+          request body are filled from the tool's arguments; an OpenAPI document
+          may be the source, but the deployment lists the operations it allows.
+        type: object
+        minProperties: 1
+        propertyNames: { pattern: "^[A-Za-z0-9_.-]{1,128}$" }
+        additionalProperties:
+          type: object
+          additionalProperties: false
+          required: [method, path]
+          properties:
+            method: { enum: [GET, POST, PUT, PATCH, DELETE] }
+            path: { type: string, pattern: "^/" }
+      identity:
+        description: The identity the endpoint must present.
         type: string
         minLength: 1
       region: { $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/region" }

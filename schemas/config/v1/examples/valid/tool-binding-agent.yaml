@@ -1,0 +1,11 @@
+# TOOL-100: agent binding references a persona by id@version.
+schema: https://alphega.io/agentry/schemas/config/tool/v1.json
+instance:
+  kind: Tool
+  id: ask_writer
+  version: 1
+  schemaVersion: "0.1.0"
+  description: Ask the writer persona.
+  input: { type: object, required: [task], properties: { task: { type: string } } }
+  effect: read
+  binding: { kind: agent, persona: writer@1 }

@@ -1,0 +1,240 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://alphega.io/agentry/schemas/config/tool/v1.json
+title: Tool
+description: >-
+  One tool definition (TOOL-001, as amended by Areas 7 and 8): the
+  language-neutral description that governance acts on. A `Tool` artifact is
+  not a behavioural layer: it is referenced by `id@version` from persona
+  allowlists and is never merged, so its fields carry no merge annotations.
+  Defaults apply when a field is absent; `timeoutMs` defaults to the
+  harness profile's `timeouts.tool`.
+
+
+  Schema-checked here: required fields; the `id` pattern (TOOL-002); an
+  `input` schema whose top level is an object (TOOL-001); no `trustedOutput`
+  field, since output trust is granted only by a policy bundle's
+  `trustedTools` (TOOL-004, CFG-071); `onTaintedEgress` never `allow`
+  (TOOL-001); a retrieval tool's `effect` is `read` (CTX-020); binding
+  fields per kind (TOOL-010, `conformance/shared/NAMES.md`); credentials only
+  as secret references (TOOL-011, CFG-061).
+
+
+  Checked at load time, not here: that `input` and `output` are valid JSON
+  Schemas; that each binding resolves (TOOL-010) and an MCP server's
+  advertised schema is compatible (TOOL-092); label-to-policy completeness
+  (CFG-042); an agent tool's `effect`/`egress` against its reachable tools
+  and its `output` against the child persona's output schema (ORCH-020,
+  ORCH-021); and that retrieval and agent tools are never listed in
+  `trustedTools` (CTX-021, ORCH-022).
+allOf:
+  - $ref: "https://alphega.io/agentry/schemas/config/artifact/v1.json"
+  - description: A retrieval tool **MUST** have `effect` `read` (CTX-020).
+    if:
+      required: [binding]
+      properties: { binding: { required: [kind], properties: { kind: { const: retrieval } } } }
+    then:
+      properties: { effect: { const: read } }
+unevaluatedProperties: false
+required: [description, input, effect, binding]
+properties:
+  kind: { const: Tool }
+  id:
+    description: >-
+      Tool identifier, accepted by every supported provider's tool-naming
+      rules (TOOL-002). Narrower than other artifact IDs: no `.`, at most 64
+      characters.
+    $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/toolId"
+  description:
+    description: Shown to the model.
+    type: string
+    minLength: 1
+  input:
+    description: >-
+      JSON Schema (draft 2020-12) for the arguments. Its top level **MUST** be
+      an object schema (TOOL-001). Arguments are validated against it at
+      pipeline stage 2, and again after a hook rewrite (TOOL-031).
+    type: object
+    required: [type]
+    properties:
+      type: { const: object }
+  output:
+    description: >-
+      JSON Schema (draft 2020-12) for the expected `ok` output. Absent: none.
+      An `ok` result that does not validate is replaced by a `fatal` error
+      (TOOL-070).
+    type: object
+  effect:
+    description: Whether the tool changes state.
+    enum: [read, mutating]
+  egress:
+    description: Whether the tool sends data outside the trust boundary (ADR-0008).
+    type: boolean
+    default: false
+  idempotent:
+    description: >-
+      Whether repeating a call with the same idempotency key is safe (TOOL-052,
+      TOOL-062). Agent-bound tools are idempotent by construction (ORCH-002).
+    type: boolean
+    default: false
+  approval:
+    description: >-
+      When human approval is required (Area 6). The effective approval is the
+      strictest of this and the tool's label policies (TOOL-035).
+    enum: [never, policy, always]
+    default: never
+  sensitivity:
+    description: Labels applied to the tool's results (TOOL-071, ADR-0015).
+    $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/labels"
+    default: []
+  credentialMode:
+    description: Whose credentials the binding uses (TOOL-012, ADR-0014).
+    enum: [principal, service]
+    default: principal
+  minAssurance:
+    description: "Minimum principal assurance to call the tool (TOOL-005, pipeline stage 4). Absent: none."
+    $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/assuranceLevel"
+  onTainted:
+    description: >-
+      Taint outcome for a mutating call in a tainted session (HOOK-122).
+      Combined with policy-bundle `toolTaintDefaults` (CFG-042, TOOL-003).
+    enum: [escalate, block, allow]
+    default: escalate
+  onTaintedEgress:
+    description: >-
+      Taint outcome for an egress call with sensitive content in context
+      (HOOK-122). Never `allow` (TOOL-001).
+    enum: [block, escalate]
+    default: block
+  timeoutMs:
+    description: "Per-call timeout in milliseconds (TOOL-051). Absent: the profile's `timeouts.tool`."
+    type: integer
+    minimum: 1
+  binding:
+    $ref: "#/$defs/binding"
+
+$defs:
+  id:
+    description: An ID declared elsewhere (deployment, handler registry).
+    type: string
+    pattern: "^[A-Za-z0-9_.-]{1,128}$"
+
+  credentials:
+    description: >-
+      Credential name → secret reference (TOOL-011, CFG-060). The only place a
+      binding takes secrets; each value must be a `secret://` reference, never
+      a literal (CFG-061). Names are binding-defined, e.g. `apiKey`.
+    type: object
+    propertyNames: { pattern: "^[A-Za-z][A-Za-z0-9_.-]{0,63}$" }
+    additionalProperties:
+      x-agentry-secret: true
+      $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/secretRef"
+
+  binding:
+    description: >-
+      How the tool is invoked (Area 4 §4, as amended by Area 7). Discriminated
+      by `kind`; each kind has exactly the fields below plus optional
+      `credentials`. Unknown kinds and fields are rejected. Implementations
+      must support `native`, `mcp`, `http` and `agent`; `langchain` is
+      optional (TOOL-013).
+    type: object
+    required: [kind]
+    properties:
+      kind: { enum: [native, mcp, http, agent, retrieval, langchain] }
+    allOf:
+      - if: { properties: { kind: { const: native } } }
+        then: { $ref: "#/$defs/nativeBinding" }
+      - if: { properties: { kind: { const: mcp } } }
+        then: { $ref: "#/$defs/mcpBinding" }
+      - if: { properties: { kind: { const: http } } }
+        then: { $ref: "#/$defs/httpBinding" }
+      - if: { properties: { kind: { const: agent } } }
+        then: { $ref: "#/$defs/agentBinding" }
+      - if: { properties: { kind: { const: retrieval } } }
+        then: { $ref: "#/$defs/retrievalBinding" }
+      - if: { properties: { kind: { const: langchain } } }
+        then: { $ref: "#/$defs/langchainBinding" }
+
+  nativeBinding:
+    description: A handler registered in the implementation's language.
+    type: object
+    additionalProperties: false
+    required: [kind, handler]
+    properties:
+      kind: { const: native }
+      handler:
+        description: The registered handler name.
+        $ref: "#/$defs/id"
+      credentials: { $ref: "#/$defs/credentials" }
+
+  mcpBinding:
+    description: A tool on an MCP server declared in the deployment (TOOL-093).
+    type: object
+    additionalProperties: false
+    required: [kind, server, tool]
+    properties:
+      kind: { const: mcp }
+      server:
+        description: An MCP server ID from the deployment's `mcpServers`.
+        $ref: "#/$defs/id"
+      tool:
+        description: The tool's name on that server.
+        type: string
+        minLength: 1
+      credentials: { $ref: "#/$defs/credentials" }
+
+  httpBinding:
+    description: An HTTP endpoint, declaratively mapped (e.g. from an OpenAPI operation).
+    type: object
+    additionalProperties: false
+    required: [kind, endpoint, operation]
+    properties:
+      kind: { const: http }
+      endpoint:
+        description: An HTTP endpoint ID declared for the deployment (TOOL-010).
+        $ref: "#/$defs/id"
+      operation:
+        description: Operation ID.
+        type: string
+        minLength: 1
+      credentials: { $ref: "#/$defs/credentials" }
+
+  agentBinding:
+    description: >-
+      Another persona, as a nested session (TOOL-100, Area 8). Its `effect`
+      and `egress` must cover every reachable tool (ORCH-020).
+    type: object
+    additionalProperties: false
+    required: [kind, persona]
+    properties:
+      kind: { const: agent }
+      persona:
+        description: The persona, as `id@version`.
+        $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/artifactRef"
+      credentials: { $ref: "#/$defs/credentials" }
+
+  retrievalBinding:
+    description: >-
+      A query against a vector store source (CTX-020). Results carry
+      provenance `retrieval:<source>` and are never trusted (CTX-021).
+    type: object
+    additionalProperties: false
+    required: [kind, source]
+    properties:
+      kind: { const: retrieval }
+      source:
+        description: A vector store source ID from the deployment's `ports.vectorStore.sources`.
+        $ref: "#/$defs/id"
+      credentials: { $ref: "#/$defs/credentials" }
+
+  langchainBinding:
+    description: A LangChain tool, through the optional adapter (ADR-0013).
+    type: object
+    additionalProperties: false
+    required: [kind, tool]
+    properties:
+      kind: { const: langchain }
+      tool:
+        description: The LangChain tool name.
+        type: string
+        minLength: 1
+      credentials: { $ref: "#/$defs/credentials" }

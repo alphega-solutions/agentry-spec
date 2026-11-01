@@ -1,0 +1,32 @@
+# Every TOOL-001 field set; native binding with a credential reference.
+schema: https://alphega.io/agentry/schemas/config/tool/v1.json
+instance:
+  kind: Tool
+  id: send_invoice
+  version: 1
+  schemaVersion: "0.1.0"
+  description: Send an invoice to a customer.
+  input:
+    type: object
+    additionalProperties: false
+    required: [customer, amount]
+    properties: { customer: { type: string }, amount: { type: number, minimum: 0 } }
+  output:
+    type: object
+    required: [invoiceId]
+    properties: { invoiceId: { type: string } }
+  effect: mutating
+  egress: true
+  idempotent: true
+  approval: policy
+  sensitivity: [pii, com.example:billing]
+  credentialMode: service
+  minAssurance: multi_factor
+  onTainted: block
+  onTaintedEgress: escalate
+  timeoutMs: 15000
+  binding:
+    kind: native
+    handler: billing.send_invoice
+    credentials: { apiKey: "secret://vault/billing/api-key" }
+  extensions: { com.example: { owner: billing-team } }

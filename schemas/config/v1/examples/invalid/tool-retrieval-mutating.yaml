@@ -1,0 +1,11 @@
+# CTX-020: a retrieval tool must have effect read.
+schema: https://alphega.io/agentry/schemas/config/tool/v1.json
+instance:
+  kind: Tool
+  id: search_docs
+  version: 1
+  schemaVersion: "0.1.0"
+  description: Search the documentation.
+  input: { type: object, required: [query], properties: { query: { type: string } } }
+  effect: mutating
+  binding: { kind: retrieval, source: docs }

@@ -240,3 +240,9 @@ Tooling that generates `Tool` artifacts from an MCP server's tool list is encour
 - TOOL-032: agent-bound calls in one step run one at a time, in request order (ORCH-040).
 - TOOL-051: time spent `suspended` does not count toward tool deadlines (ORCH-044).
 - TOOL-053 / TOOL-062: agent-bound tools always record a started record holding the child session ID and are idempotent by construction (ORCH-002); their error results never end the parent run by themselves (ORCH-051).
+
+## Amendment 2026-11-01 — from Phase 4 (Area 4 schemas)
+
+- **TOOL-010, `http` bindings**: a binding names an `endpoint` and an `operation`. Deployments declare `httpEndpoints`, each with a base URL and the operations tools may call (method and path template); an undeclared endpoint or operation is a configuration error. *(Extends CFG-110.)*
+- **Binding fields** are normative in `schemas/config/v1/tool.yaml`: `native.handler`, `mcp.server` and `mcp.tool`, `http.endpoint` and `http.operation`, `agent.persona`, `retrieval.source`, `langchain.tool`, and an optional `credentials` map of secret references on every binding.
+

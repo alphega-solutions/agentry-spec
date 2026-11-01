@@ -1,0 +1,12 @@
+# HTTP binding: an endpoint ID and an operation ID.
+schema: https://alphega.io/agentry/schemas/config/tool/v1.json
+instance:
+  kind: Tool
+  id: get_weather
+  version: 1
+  schemaVersion: "0.1.0"
+  description: Get the weather forecast.
+  input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }
+  effect: read
+  egress: true
+  binding: { kind: http, endpoint: weather-api, operation: getForecast }
