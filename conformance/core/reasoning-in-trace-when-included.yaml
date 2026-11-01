@@ -1,0 +1,112 @@
+schemaVersion: "0.1.0"
+id: core.reasoning-in-trace-when-included
+title: With trace.includeReasoning, reasoning parts appear in traces, labelled and redacted like other content
+description: >-
+  The profile sets trace.includeReasoning true. A remote afterModelCall hook
+  annotates the reasoning part (index 0) with pii. The persisted
+  model.response carries the reasoning part with provenance model and label
+  pii, and its inline view is redacted under the pii policy (mask), so the
+  raw reasoning text never appears in the event. The checkpoint keeps it.
+requirements: [CORE-143]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        remoteHooks:
+          - { id: scanner, endpoint: "memory://hook-scanner", region: test-region }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: Hook
+        id: scanner
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [afterModelCall]
+        results: [annotate]
+        purpose: guardrail
+        failureMode: failClosed
+        timeoutMs: 1000
+        source: { kind: remote, endpoint: "memory://hook-scanner" }
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+        trace: { includeReasoning: true }
+        requiredHooks: [scanner@1]
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { reasoning: true }
+      responses:
+        - parts:
+            - { type: reasoning, provider: scripted-a, data: "SYNTHETIC-REASONING-PII-7781", opaque: false }
+            - { type: text, text: "Hello." }
+          usage: { inputTokens: 20, outputTokens: 30, cachedInputTokens: 0, reasoningTokens: 24 }
+  stubs:
+    remoteHooks:
+      "memory://hook-scanner":
+        - result: annotate
+          annotations:
+            - { part: 0, labels: [pii] }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: contains
+        items:
+          - type: model.response
+            labels: { $contains: [pii] }
+            payload:
+              message:
+                parts:
+                  $contains:
+                    - { type: reasoning, provider: scripted-a, provenance: model, labels: [pii] }
+      absentEvents:
+        - type: model.response
+          payload:
+            message:
+              parts:
+                $contains:
+                  - { type: reasoning, data: "SYNTHETIC-REASONING-PII-7781" }
+  delivered:
+    $s:
+      parts: [{ type: text, text: "Hello." }]

@@ -1,0 +1,74 @@
+schemaVersion: "0.1.0"
+id: core.output-schema-corrected
+title: Output that fails schema validation is corrected within the retry limit; each correction is a new step
+description: >-
+  outputRetryLimit is 2. The first response has quantity 0 (invalid); the
+  harness requests a correction as step 2, which returns a valid value.
+requirements: [CORE-130, CORE-132]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Persona
+        id: extractor
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test extractor
+        instructions: "Extract the order as JSON."
+        tools: []
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+        outputSchema:
+          type: object
+          additionalProperties: false
+          required: [item, quantity]
+          properties:
+            item: { type: string }
+            quantity: { type: integer, minimum: 1 }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: structured, value: { item: widget, quantity: 0 } }]
+          usage: { inputTokens: 20, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: structured, value: { item: widget, quantity: 2 } }]
+          usage: { inputTokens: 20, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: extractor@1
+    input: [{ type: text, text: "Two widgets, please" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, runId: $r1, turn: 1, step: 1 }
+          - { type: model.response, runId: $r1, turn: 1, step: 1 }
+          - { type: model.request, runId: $r1, turn: 1, step: 2 }
+          - type: model.response
+            runId: $r1
+            turn: 1
+            step: 2
+            payload: { message: { parts: { $contains: [{ type: structured, value: { item: widget, quantity: 2 } }] } } }
+          - { type: run.ended, runId: $r1, payload: { reason: responded } }
+  providerRequests:
+    scripted-a: { count: 2 }
+  delivered:
+    $s:
+      parts:
+        $contains:
+          - { type: structured, value: { item: widget, quantity: 2 } }

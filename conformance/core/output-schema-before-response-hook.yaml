@@ -1,0 +1,112 @@
+schemaVersion: "0.1.0"
+id: core.output-schema-before-response-hook
+title: Schema validation completes before beforeResponse hooks, which receive only the validated value
+description: >-
+  The first response fails validation and is corrected. The required remote
+  beforeResponse hook is called once, after the correction, and sees the
+  validated structured value; it never sees the invalid one.
+requirements: [CORE-134]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Persona
+        id: extractor
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test extractor
+        instructions: "Extract the order as JSON."
+        tools: []
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+        outputSchema:
+          type: object
+          additionalProperties: false
+          required: [item, quantity]
+          properties:
+            item: { type: string }
+            quantity: { type: integer, minimum: 1 }
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        remoteHooks:
+          - { id: scanner, endpoint: "memory://hook-scanner", region: test-region }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: Hook
+        id: scanner
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeResponse]
+        results: [annotate, block]
+        purpose: guardrail
+        failureMode: failClosed
+        timeoutMs: 1000
+        source: { kind: remote, endpoint: "memory://hook-scanner" }
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+        requiredHooks: [scanner@1]
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: structured, value: { item: widget, quantity: 0 } }]
+          usage: { inputTokens: 20, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: structured, value: { item: widget, quantity: 2 } }]
+          usage: { inputTokens: 20, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    remoteHooks:
+      "memory://hook-scanner":
+        - result: continue
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: extractor@1
+    input: [{ type: text, text: "Two widgets, please" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+  stubCalls:
+    "memory://hook-scanner":
+      - point: beforeResponse
+        content:
+          - { type: structured, value: { item: widget, quantity: 2 } }
+  providerRequests:
+    scripted-a: { count: 2 }

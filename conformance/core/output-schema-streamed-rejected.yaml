@@ -1,0 +1,37 @@
+schemaVersion: "0.1.0"
+id: core.output-schema-streamed-rejected
+title: A profile declaring an output schema and streamed delivery is rejected at load
+description: >-
+  Loading a streamed profile with an output schema fails with category configuration.
+requirements: [CORE-131]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  - load:
+      artifacts:
+        - kind: HarnessProfile
+          id: streamed-structured
+          version: 1
+          schemaVersion: "0.1.0"
+          idleTtl: PT24H
+          suspendedTtl: PT72H
+          stepLimit: 8
+          deliveryMode: streamed
+          budget: { tokens: 100000 }
+          timeouts: { run: PT5M, tool: PT30S }
+          retry: { unavailable: 2 }
+          outputRetryLimit: 2
+          limits: { partSize: 1048576, sessionSize: 10485760 }
+          outputSchema:
+            type: object
+            required: [answer]
+            properties: { answer: { type: string } }
+    expect: { ok: false, error: { category: configuration } }
+expect: {}

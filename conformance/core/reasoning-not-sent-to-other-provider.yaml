@@ -1,0 +1,91 @@
+schemaVersion: "0.1.0"
+id: core.reasoning-not-sent-to-other-provider
+title: Reasoning parts are never sent to a provider other than the one that produced them
+description: >-
+  Step 1 on scripted-a returns a reasoning part and a lookup call. The lookup
+  result carries a custom label that only scripted-b may receive, so step 2 is
+  routed to the fallback scripted-b. The request to scripted-b contains the
+  earlier tool call and its result, but not scripted-a's reasoning part.
+requirements: [CORE-142]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+          "example.test:region-b":
+            allowedProviders: [scripted-b]
+            redaction: [{ mode: mask }]
+      - kind: Tool
+        id: lookup
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Look up a record by key.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        sensitivity: ["example.test:region-b"]
+        binding: { kind: native, ref: test.lookup }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { reasoning: true, toolUse: true }
+      responses:
+        - parts:
+            - { type: reasoning, provider: scripted-a, data: "SYNTHETIC-REASONING-A-0001", opaque: true }
+            - { type: tool_call, callId: c1, tool: lookup, arguments: { key: a } }
+          usage: { inputTokens: 20, outputTokens: 30, cachedInputTokens: 0, reasoningTokens: 24 }
+    scripted-b:
+      capabilities: { reasoning: true, toolUse: true }
+      responses:
+        - parts: [{ type: text, text: "Found it." }]
+          usage: { inputTokens: 40, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "synthetic-b" } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up a" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, step: 1, payload: { provider: scripted-a } }
+          - { type: model.request, step: 2, payload: { provider: scripted-b, role: fallback } }
+  providerRequests:
+    scripted-a: { count: 1 }
+    scripted-b:
+      - messages:
+          $contains:
+            - role: assistant
+              parts: [{ type: tool_call, callId: c1, tool: lookup }]
+            - role: tool
+              parts: [{ type: tool_result, callId: c1 }]

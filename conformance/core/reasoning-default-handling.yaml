@@ -1,0 +1,51 @@
+schemaVersion: "0.1.0"
+id: core.reasoning-default-handling
+title: Reasoning parts are kept in the checkpoint, but by default are absent from the delivered response and from traces
+description: >-
+  The model returns a reasoning part with a text answer. The profile does not
+  include reasoning in traces (baseline default). The reasoning part is in the
+  checkpoint, but not in the delivered response or in any persisted event.
+requirements: [CORE-140, CORE-141, CORE-143]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { reasoning: true }
+      responses:
+        - parts:
+            - { type: reasoning, provider: scripted-a, data: "SYNTHETIC-REASONING-0001 consider the greeting", opaque: false }
+            - { type: text, text: "Hello." }
+          usage: { inputTokens: 20, outputTokens: 30, cachedInputTokens: 0, reasoningTokens: 24 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: contains
+        items:
+          - { type: model.response, payload: { message: { role: assistant, parts: { $contains: [{ type: text, text: "Hello." }] } } } }
+      absentEvents:
+        - { type: model.response, payload: { message: { parts: { $contains: [{ type: reasoning }] } } } }
+      checkpoint:
+        reasoning:
+          $contains:
+            - { type: reasoning, provider: scripted-a, data: "SYNTHETIC-REASONING-0001 consider the greeting" }
+  delivered:
+    $s:
+      text: "Hello."
+      parts: [{ type: text, text: "Hello." }]

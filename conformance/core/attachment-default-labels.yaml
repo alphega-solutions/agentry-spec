@@ -1,0 +1,64 @@
+schemaVersion: "0.1.0"
+id: core.attachment-default-labels
+title: An unscanned attachment carries the profile's default attachment labels; typed text does not
+requirements: [CORE-123]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: [pii]
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { vision: true }
+      responses:
+        - parts: [{ type: text, text: "A chart." }]
+          usage: { inputTokens: 100, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  ports:
+    blobStore:
+      t1:
+        - id: blob-img-1
+          hash: "sha256:82e0d9513a9797c3e32e35d6fff5c8648db4b0a8c74ffea2be6d5b827d3c7aa7"
+          mediaType: image/png
+          size: 20
+          data: "U1lOVEhFVElDLUlNQUdFLTAwMDE="
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input:
+      - { type: text, text: "What is this?" }
+      - type: image
+        mediaType: image/png
+        blob: { id: blob-img-1, hash: "sha256:82e0d9513a9797c3e32e35d6fff5c8648db4b0a8c74ffea2be6d5b827d3c7aa7", mediaType: image/png, size: 20 }
+    expect: { ok: true, endReason: responded }
+expect:
+  providerRequests:
+    scripted-a:
+      - messages:
+          $contains:
+            - role: principal
+              parts:
+                - { type: text, text: "What is this?", labels: [] }
+                - { type: image, blob: { id: blob-img-1 }, labels: [pii] }

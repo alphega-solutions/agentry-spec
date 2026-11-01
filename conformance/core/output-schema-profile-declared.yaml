@@ -1,0 +1,68 @@
+schemaVersion: "0.1.0"
+id: core.output-schema-profile-declared
+title: An output schema declared by the harness profile, when the persona declares none, governs the final message
+description: >-
+  The baseline persona declares no output schema; the profile does. A text-only
+  response fails validation and is corrected; the corrected response carries a
+  valid structured part.
+requirements: [CORE-130, CORE-132]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+        outputSchema:
+          type: object
+          additionalProperties: false
+          required: [answer]
+          properties: { answer: { type: string } }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "The answer is yes." }]
+          usage: { inputTokens: 20, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: structured, value: { answer: "yes" } }]
+          usage: { inputTokens: 20, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Two widgets, please" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, turn: 1, step: 1 }
+          - { type: model.request, turn: 1, step: 2 }
+          - type: model.response
+            step: 2
+            payload: { message: { parts: { $contains: [{ type: structured, value: { answer: "yes" } }] } } }
+          - { type: run.ended, payload: { reason: responded } }
+  providerRequests:
+    scripted-a: { count: 2 }
