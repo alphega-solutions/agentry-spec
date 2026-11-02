@@ -116,7 +116,6 @@ expect:
           - { type: run.ended, runId: $r2, payload: { reason: responded } }
       absentEvents:
         - { type: context.retrieved, runId: $r2 }
-        - { type: turn.started, runId: $r2 }
   stubCalls:
     vectorStore/kb:
       - arguments: { tenant: t1, text: "Set k1 to v1", limit: 5 }

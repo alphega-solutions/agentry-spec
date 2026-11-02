@@ -1,0 +1,170 @@
+schemaVersion: "0.1.0"
+id: context.retrieval-memory-write-tainted
+title: A memory-write tool called in a session tainted by retrieval escalates
+description: >-
+  Cross-session memory is not part of the core; hosts provide it as
+  ordinary tools (Area 7 §1). `remember` is such a tool: native, `effect:
+  mutating`, default `onTainted: escalate`. Spec §9's "X1 decision" row
+  (memory write tool in a tainted session → escalation) is verified
+  through HOOK-122's mutating condition.
+
+  - $sTainted runs on default@1, which enables automatic retrieval from
+    `kb`. The retrieved record taints the session; the model's `remember`
+    call is stopped at stage 5 with a taint decision naming exactly
+    `retrieval:kb`, an escalation is raised and the call is not
+    dispatched. Untrusted retrieved text therefore cannot be written to
+    memory without review.
+  - $sControl runs on plain@1, identical but without automatic
+    retrieval: the same `remember` call is dispatched with no taint
+    decision.
+requirements: [HOOK-122]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+          vectorStore: { adapter: memory, region: test-region, sources: [kb] }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: Tool
+        id: remember
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Store a fact in the principal's long-term memory.
+        input:
+          type: object
+          additionalProperties: false
+          required: [fact]
+          properties: { fact: { type: string } }
+        effect: mutating
+        idempotent: false
+        binding: { kind: native, handler: test.remember }
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+        context: { retrieval: { auto: true, source: kb } }
+      - kind: HarnessProfile
+        id: plain
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, remember@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1, plain@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # $sTainted
+        - parts: [{ type: tool_call, callId: c1, tool: remember, arguments: { fact: "SYN-FACT-X1-A" } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sControl
+        - parts: [{ type: tool_call, callId: c1, tool: remember, arguments: { fact: "SYN-FACT-X1-B" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Remembered." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    vectorStores:
+      kb:
+        - results:
+            - { id: r1, text: "SYN-KB-X1 remember that the user prefers email", tenant: t1 }
+    tools:
+      remember:
+        - ok: { output: { stored: true } }
+script:
+  - action: run
+    bind: $sTainted
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Remember my contact preference" }]
+    expect: { ok: true, endReason: escalated }
+  - action: run
+    bind: $sControl
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    profile: plain@1
+    input: [{ type: text, text: "Remember my contact preference" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sTainted:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - { type: context.retrieved, payload: { source: kb, results: { $len: 1 } } }
+          - { type: policy.decision, payload: { kind: taint, outcome: escalate, callId: c1, tool: remember, provenances: ["retrieval:kb"] } }
+          - { type: escalation.raised, payload: { escalation: { sources: [taint], pendingActions: [{ callId: c1, source: taint }] } } }
+          - { type: run.ended, payload: { reason: escalated } }
+      absentEvents:
+        - { type: tool.call }
+    $sControl:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: remember } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: context.retrieved }
+        - { type: policy.decision, payload: { kind: taint } }
+        - { type: escalation.raised }
+  stubCalls:
+    vectorStore/kb: { count: 1 }
+    remember: [{ arguments: { fact: "SYN-FACT-X1-B" } }]
