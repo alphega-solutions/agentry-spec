@@ -8,6 +8,7 @@ required: [schemaVersion, id, requirements, point, expression, expect]
 properties:
   schemaVersion: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/contractVersion" }
   id: { type: string, pattern: "^cel\\.[a-z0-9-]+(\\.[a-z0-9-]+)*$" }
+  description: { type: string }
   requirements:
     type: array
     minItems: 1

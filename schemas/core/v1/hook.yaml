@@ -58,7 +58,7 @@ $defs:
     properties:
       arguments: { type: object }
 
-  result:
+  toolResult:
     description: The tool result at `afterToolCall`, as `ok` with `output`, or not `ok` with `error`.
     type: object
     additionalProperties: false
@@ -109,11 +109,11 @@ $defs:
         items: { $ref: "https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/part" }
       tool: { $ref: "#/$defs/tool" }
       call: { $ref: "#/$defs/call" }
-      result: { $ref: "#/$defs/result" }
+      result: { $ref: "#/$defs/toolResult" }
       error: { $ref: "#/$defs/error" }
       summary: { $ref: "#/$defs/summary" }
 
-  request:
+  hookRequest:
     title: HookRequest
     description: >-
       What a remote hook receives (HOOK-091): the point, tenant, principal,
@@ -207,7 +207,7 @@ $defs:
         $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/labels"
         minItems: 1
 
-  result:
+  hookResult:
     title: HookResult
     description: >-
       A hook's answer (Area 5 §5). Anything that does not validate, and any

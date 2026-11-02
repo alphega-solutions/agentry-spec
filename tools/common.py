@@ -13,9 +13,28 @@ SCHEMA_DIRS = [ROOT / "schemas", ROOT / "conformance" / "schema"]
 REQ_DEF = re.compile(r"^- \*\*([A-Z]+-\d{3})\*\*(.*)$")
 
 
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """SafeLoader that rejects duplicate mapping keys, which plain YAML
+    loading silently resolves to the last value."""
+
+
+def _construct_mapping(loader, node, deep=False):
+    keys = set()
+    for key_node, _ in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if key in keys:
+            raise yaml.constructor.ConstructorError(
+                None, None, f"duplicate key {key!r}", key_node.start_mark)
+        keys.add(key)
+    return loader.construct_mapping(node, deep=deep)
+
+
+_UniqueKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_mapping)
+
+
 def load_yaml(path: pathlib.Path):
     with path.open(encoding="utf-8") as fh:
-        return yaml.safe_load(fh)
+        return yaml.load(fh, Loader=_UniqueKeyLoader)  # noqa: S506 - SafeLoader subclass
 
 
 def schema_files() -> list[pathlib.Path]:

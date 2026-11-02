@@ -371,7 +371,7 @@ $defs:
       - required: [error]
       - required: [hang]
     properties:
-      answer: { $ref: "https://alphega.io/agentry/schemas/core/hook/v1.json#/$defs/result" }
+      answer: { $ref: "https://alphega.io/agentry/schemas/core/hook/v1.json#/$defs/hookResult" }
       result: { $ref: "https://alphega.io/agentry/schemas/core/hook/v1.json#/$defs/resultType" }
       reasonCode: { type: string }
       labels:
@@ -396,7 +396,7 @@ $defs:
     dependentSchemas:
       result:
         description: The shorthand must itself be a valid `HookResult`.
-        $ref: "https://alphega.io/agentry/schemas/core/hook/v1.json#/$defs/result"
+        $ref: "https://alphega.io/agentry/schemas/core/hook/v1.json#/$defs/hookResult"
 
   capture:
     description: >-
@@ -818,6 +818,16 @@ $defs:
             fallback: { type: boolean, description: The response was the fixed fallback message. }
       noPersistedContent:
         description: Strings that must not appear anywhere in persisted events, checkpoints, audit records, blobs, or configuration snapshots.
+        type: array
+        items: { type: string }
+      noTransmittedContent:
+        description: >-
+          Strings that must not appear anywhere in what the implementation
+          sends out: recorded stub calls (tool, MCP, HTTP and hook requests,
+          including `HookRequest`s) and provider requests. Use it for secret
+          values that may reach a backend only through its transport
+          credentials, never through arguments or requests (HOOK-115,
+          CFG-061).
         type: array
         items: { type: string }
       schemaValid:
