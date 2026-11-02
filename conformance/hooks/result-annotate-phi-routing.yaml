@@ -1,0 +1,140 @@
+schemaVersion: "0.1.0"
+id: hook.result-annotate-phi-routing
+title: "A label added by `annotate` brings its sensitivity policy into force: `phi` content is routed only to a provider the `phi` policy allows"
+description: >-
+  In the baseline bundle the phi policy allows only scripted-a. The rule
+  hook phi-tagger (beforeModelCall) annotates the content with phi when it
+  holds SYN-PHI-0022. The persona's primary model is on scripted-b, with a
+  fallback on scripted-a. $sPhi: the hook adds phi, so routing (which runs
+  after beforeModelCall hooks, PROV-050) switches to the scripted-a
+  fallback, recorded as a routing policy.decision; scripted-b never
+  receives the content. $sPlain (control): no marker, no label, the primary
+  scripted-b is used. $sSolo: persona solo has only scripted-b; the added
+  phi leaves no allowed model, so no call is made and the run ends blocked
+  with the fallback message (PROV-052).
+requirements: [HOOK-022, PROV-050, PROV-051, PROV-052]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Hook
+        id: phi-tagger
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeModelCall]
+        results: [annotate]
+        timeoutMs: 1000
+        source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-PHI-0022'))", then: { result: annotate, labels: [phi] } }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [phi-tagger@1]
+        model:
+          provider: scripted-b
+          name: model-b
+          fallbacks:
+            - { provider: scripted-a, name: model-a }
+      - kind: Persona
+        id: solo
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [phi-tagger@1]
+        model:
+          provider: scripted-b
+          name: model-b
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Handled on a." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      responses:
+        - parts: [{ type: text, text: "Handled on b." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $sPhi
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Note SYN-PHI-0022" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sPlain
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Plain note" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sSolo
+    tenant: t1
+    principal: p1
+    persona: solo@1
+    input: [{ type: text, text: "Note SYN-PHI-0022" }]
+    expect: { ok: true, endReason: blocked }
+expect:
+  sessions:
+    $sPhi:
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: phi-tagger@1, point: beforeModelCall, result: annotate, labelsAdded: [phi] } }
+          - { type: policy.decision, payload: { kind: routing, outcome: switch } }
+          - { type: model.request, payload: { provider: scripted-a, role: fallback, fallbackReason: routing } }
+      absentEvents:
+        - { type: model.request, payload: { provider: scripted-b } }
+    $sPlain:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, payload: { provider: scripted-b, role: primary } }
+      absentEvents:
+        - { type: hook.decision }
+        - { type: policy.decision }
+    $sSolo:
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: phi-tagger@1, point: beforeModelCall, result: annotate, labelsAdded: [phi] } }
+          - { type: policy.decision, payload: { kind: routing, outcome: block } }
+          - { type: run.ended, payload: { reason: blocked } }
+      absentEvents:
+        - { type: model.request }
+  providerRequests:
+    scripted-a:
+      - messages:
+          $contains:
+            - parts:
+                $contains:
+                  - { type: text, text: "Note SYN-PHI-0022", labels: { $contains: [phi] } }
+    scripted-b:
+      - messages:
+          $contains:
+            - parts:
+                $contains:
+                  - { type: text, text: "Plain note" }
+  delivered:
+    $sPhi: { text: "Handled on a.", fallback: false }
+    $sPlain: { text: "Handled on b.", fallback: false }
+    $sSolo: { text: "This request was blocked.", fallback: true }

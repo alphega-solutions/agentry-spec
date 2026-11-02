@@ -1,0 +1,134 @@
+schemaVersion: "0.1.0"
+id: hook.load-require-deterministic-bundle
+title: With requireDeterministic set in a policy bundle, a point whose model hook can block also needs a rule or remote hook that can block
+description: >-
+  The policy bundle sets `guardrails.requireDeterministic: true` (HOOK-104).
+  Every load replaces the persona's `requiredHooks`; all hooks are defined
+  in setup. A load is rejected when some point has a model hook able to
+  `block` and no `rule` or `remote` hook able to `block` at that point:
+
+  - only the model hook (`judge-block`, beforeModelCall);
+  - the model hook with a native blocking hook at the same point (native
+    is not deterministic for HOOK-104);
+  - the model hook with a rule hook at the same point that can only
+    `annotate`;
+  - the model hook with a blocking rule hook at a different point
+    (beforeToolCall);
+  - a model hook at beforeModelCall and beforeToolCall (`judge-wide`) with
+    a blocking rule hook at beforeModelCall only.
+
+  Accepted: the model hook with a blocking rule hook, or a blocking remote
+  hook, at the same point; `judge-wide` with blocking rule hooks at both of
+  its points; and, as the last control, only the model hook under a bundle
+  that does not set `requireDeterministic`, so the rejections come from the
+  setting. Reading: the §12 row's "only a native one" is taken as a model
+  block hook whose only companion at the point is a native block hook,
+  which is what HOOK-104's text constrains; a point with a native block
+  hook and no model hook is not asserted either way.
+requirements: [HOOK-104]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          - { id: scripted-judge, adapter: scripted, endpoint: "memory://scripted-judge", region: test-region, retainsData: false }
+        remoteHooks:
+          - { id: gate, endpoint: "memory://hook-gate", region: test-region }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - { kind: Hook, id: judge-block, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [block], timeoutMs: 5000, source: { kind: model, model: { provider: scripted-judge, name: judge-1 }, instructions: "Classify the content. Answer with a HookResult.", maxTokens: 200 } }
+      - { kind: Hook, id: judge-wide, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall, beforeToolCall], results: [block], timeoutMs: 5000, source: { kind: model, model: { provider: scripted-judge, name: judge-1 }, instructions: "Classify the content. Answer with a HookResult.", maxTokens: 200 } }
+      - { kind: Hook, id: native-block, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [block], timeoutMs: 1000, source: { kind: native, handler: test.hook.native_block } }
+      - { kind: Hook, id: rule-note, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [annotate], timeoutMs: 1000, source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-UNSAFE'))", then: { result: annotate, labels: [pii] } } }
+      - { kind: Hook, id: rule-block, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [block], timeoutMs: 1000, source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-UNSAFE'))", then: { result: block, reasonCode: test.guard.blocked } } }
+      - { kind: Hook, id: rule-tool-block, version: 1, schemaVersion: "0.1.0", points: [beforeToolCall], results: [block], timeoutMs: 1000, source: { kind: rule, when: "tool.effect == 'mutating'", then: { result: block, reasonCode: test.guard.blocked } } }
+      - { kind: Hook, id: remote-block, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [block], timeoutMs: 1000, source: { kind: remote, endpoint: gate } }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        guardrails: { requireDeterministic: true }
+        sensitivityPolicies:
+          pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+          phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  # Only a model block hook at beforeModelCall.
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], requiredHooks: [judge-block@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }] } }
+    expect: { ok: false, error: { category: configuration } }
+  # Model block hook with only a native block hook beside it.
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], requiredHooks: [judge-block@1, native-block@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }] } }
+    expect: { ok: false, error: { category: configuration } }
+  # Model block hook with a rule hook that cannot block.
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], requiredHooks: [judge-block@1, rule-note@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }] } }
+    expect: { ok: false, error: { category: configuration } }
+  # Model block hook with a blocking rule hook at a different point.
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], requiredHooks: [judge-block@1, rule-tool-block@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }] } }
+    expect: { ok: false, error: { category: configuration } }
+  # Model block hook at two points; a blocking rule hook at only one of them.
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], requiredHooks: [judge-wide@1, rule-block@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }] } }
+    expect: { ok: false, error: { category: configuration } }
+  # Control: blocking rule hook at the same point.
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], requiredHooks: [judge-block@1, rule-block@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }] } }
+    expect: { ok: true }
+  # Control: blocking remote hook at the same point.
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], requiredHooks: [judge-block@1, remote-block@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }] } }
+    expect: { ok: true }
+  # Control: blocking rule hooks at both points of the wide model hook.
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], requiredHooks: [judge-wide@1, rule-block@1, rule-tool-block@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }] } }
+    expect: { ok: true }
+  # Control: without requireDeterministic, a lone model block hook loads.
+  - load:
+      artifacts:
+        - kind: PolicyBundle
+          id: org
+          version: 1
+          schemaVersion: "0.1.0"
+          policyInstructions: "Follow organisational policy."
+          defaultFallbackMessage: "I can't help with that request."
+          sensitivityPolicies:
+            pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+            phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], requiredHooks: [judge-block@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }] } }
+    expect: { ok: true }
+expect: {}

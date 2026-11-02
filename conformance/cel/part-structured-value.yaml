@@ -1,0 +1,49 @@
+schemaVersion: 0.1.0
+id: cel.part-structured-value
+description: >-
+  A structured part exposes its `value` as dyn (HOOK-112); a text part has no
+  `value`. JSON numbers inside it are doubles, so `score` (2 in JSON) plus 0.5
+  is 2.5.
+requirements:
+- HOOK-110
+- HOOK-112
+point: beforeResponse
+expression: '[content[1].value.verdict, content[1].value.score + 0.5, ''SYN-a'' in content[1].value.flags,
+  has(content[0].value), has(content[1].value)]'
+variables:
+  principal:
+    subject: user-1
+    tenant: t1
+    roles:
+    - clinician
+    - reviewer
+    attributes:
+      department: SYN-cardiology
+      site: SYN-site-7
+      manager: null
+    assurance: multi_factor
+  session:
+    persona: assistant@1
+    tainted: false
+    turn: 3
+    step: 2
+  content:
+  - type: text
+    text: Here is the summary.
+    provenance: model
+    labels: []
+  - type: structured
+    value:
+      verdict: SYN-ok
+      score: 2
+      flags:
+      - SYN-a
+    provenance: model
+    labels: []
+expect:
+  value:
+  - SYN-ok
+  - 2.5
+  - true
+  - false
+  - true

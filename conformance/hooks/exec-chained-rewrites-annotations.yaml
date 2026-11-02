@@ -1,0 +1,151 @@
+schemaVersion: "0.1.0"
+id: hook.exec-chained-rewrites-annotations
+title: Rewrites chain in hook order, each later hook seeing the earlier rewrite; annotations accumulate
+description: >-
+  At beforeToolCall, rw-first rewrites the model's update_record
+  arguments (value v1 → v2) and rw-second, which runs next, receives v2 in
+  its HookRequest and rewrites it to v3; the call is dispatched with v3.
+  At afterToolCall, ann-first adds io.example:hook-a to the result part
+  and ann-second, which receives the part already carrying hook-a, adds
+  io.example:hook-b; the model receives the result with both labels.
+requirements: [HOOK-032]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Hook
+        id: rw-first
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [rewrite]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.rw-first }
+      - kind: Hook
+        id: rw-second
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [rewrite]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.rw-second }
+      - kind: Hook
+        id: ann-first
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [afterToolCall]
+        results: [annotate]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.ann-first }
+      - kind: Hook
+        id: ann-second
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [afterToolCall]
+        results: [annotate]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.ann-second }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+          io.example:hook-a:
+            allowedProviders: [scripted-a, scripted-b]
+          io.example:hook-b:
+            allowedProviders: [scripted-a, scripted-b]
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [rw-first@1, rw-second@1, ann-first@1, ann-second@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+    nativeHooks:
+      rw-first:
+        - result: rewrite
+          parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v2 } }]
+      rw-second:
+        - result: rewrite
+          parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v3 } }]
+      ann-first:
+        - result: annotate
+          labels: [{ part: 0, labels: ["io.example:hook-a"] }]
+      ann-second:
+        - result: annotate
+          labels: [{ part: 0, labels: ["io.example:hook-b"] }]
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: rw-first@1, point: beforeToolCall, result: rewrite } }
+          - { type: hook.decision, payload: { hook: rw-second@1, point: beforeToolCall, result: rewrite } }
+          - { type: tool.call, payload: { callId: c1, arguments: { key: k1, value: v3 } } }
+          - { type: hook.decision, payload: { hook: ann-first@1, point: afterToolCall, result: annotate, labelsAdded: ["io.example:hook-a"] } }
+          - { type: hook.decision, payload: { hook: ann-second@1, point: afterToolCall, result: annotate, labelsAdded: ["io.example:hook-b"] } }
+          - { type: tool.result, labels: { $contains: ["io.example:hook-a", "io.example:hook-b"] }, payload: { callId: c1 } }
+  stubCalls:
+    rw-first:
+      - arguments: { call: { arguments: { key: k1, value: v1 } } }
+    rw-second:
+      - arguments: { call: { arguments: { key: k1, value: v2 } } }
+    update_record: [{ arguments: { key: k1, value: v3 } }]
+    ann-first:
+      - arguments: { content: [{ type: tool_result, callId: c1, labels: [] }] }
+    ann-second:
+      - arguments: { content: [{ type: tool_result, callId: c1, labels: ["io.example:hook-a"] }] }
+  providerRequests:
+    scripted-a:
+      - {}
+      - messages:
+          $contains:
+            - role: tool
+              parts:
+                - type: tool_result
+                  callId: c1
+                  labels: { $all: [{ $contains: ["io.example:hook-a", "io.example:hook-b"] }, { $len: 2 }] }

@@ -7,7 +7,7 @@ description: >-
   annotate rule hook's labels, one per load; each is rejected with category
   configuration. Using a mapped label in each of the same places loads, and
   once a policy bundle maps `pci`, the same tool loads too.
-requirements: [CFG-042]
+requirements: [CFG-042, HOOK-022]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:

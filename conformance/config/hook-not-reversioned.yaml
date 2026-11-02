@@ -6,7 +6,7 @@ description: >-
   `guard@1`. A persona or profile requiring `guard@2` is rejected, as is a
   profile requiring `note@2` when the persona requires `note@1`. Restating
   the same version below is accepted, as is requiring an unrelated hook.
-requirements: [CFG-034]
+requirements: [CFG-034, HOOK-071]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:

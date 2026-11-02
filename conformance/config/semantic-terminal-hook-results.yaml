@@ -7,7 +7,7 @@ description: >-
   every one of its points. An annotate hook at both points loads.
   (core.hook-on-error-session-end-restricted covers every result at each
   point for CORE-182.)
-requirements: [CFG-042]
+requirements: [CFG-042, HOOK-003]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:

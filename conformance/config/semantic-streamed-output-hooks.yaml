@@ -10,7 +10,7 @@ description: >-
   rewrite. Controls load: annotate-only output hooks and a blocking
   beforeModelCall hook on the streamed profile, and the blocking and
   rewriting output hooks on the buffered profile.
-requirements: [CFG-042]
+requirements: [CFG-042, HOOK-040]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:

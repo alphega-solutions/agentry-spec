@@ -1,0 +1,35 @@
+schemaVersion: 0.1.0
+id: cel.fn-contains-on-list-rejected
+description: >-
+  `contains` is a string function only; list membership is `in` (op-in-list). No
+  (list, string) overload exists, so the checker rejects it.
+requirements:
+- HOOK-110
+- HOOK-112
+point: beforeModelCall
+expression: principal.roles.contains('clinician')
+variables:
+  principal:
+    subject: user-1
+    tenant: t1
+    roles:
+    - clinician
+    - reviewer
+    attributes:
+      department: SYN-cardiology
+      site: SYN-site-7
+      manager: null
+    assurance: multi_factor
+  session:
+    persona: assistant@1
+    tainted: false
+    turn: 3
+    step: 2
+  content:
+  - type: text
+    text: Look up record SYN-1001 please
+    provenance: principal
+    labels:
+    - pii
+expect:
+  failure: type_check

@@ -1,0 +1,52 @@
+schemaVersion: 0.1.0
+id: cel.dyn-json-number-double
+description: >-
+  `call.arguments` is dyn and its values follow CEL's JSON mapping, so every
+  JSON number is a double (HOOK-112). Variables are JSON: `count: 3` is a JSON
+  number, hence the double 3.0, whatever the YAML spelling. Double arithmetic on
+  it type-checks and evaluates. Contrast dyn-json-number-int-add-runtime.
+requirements:
+- HOOK-112
+point: beforeToolCall
+expression: '[call.arguments.count + 1.0 == 4.0, call.arguments.count * 2.0]'
+variables:
+  principal:
+    subject: user-1
+    tenant: t1
+    roles:
+    - clinician
+    - reviewer
+    attributes:
+      department: SYN-cardiology
+      site: SYN-site-7
+      manager: null
+    assurance: multi_factor
+  session:
+    persona: assistant@1
+    tainted: false
+    turn: 3
+    step: 2
+  content:
+  - type: tool_call
+    callId: SYN-call-1
+    tool: update_record
+    arguments:
+      recordId: SYN-1001
+      count: 3
+    provenance: model
+    labels: []
+  tool:
+    id: update_record
+    effect: mutating
+    egress: false
+    idempotent: false
+    sensitivity:
+    - pii
+  call:
+    arguments:
+      recordId: SYN-1001
+      count: 3
+expect:
+  value:
+  - true
+  - 6.0

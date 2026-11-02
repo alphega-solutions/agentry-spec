@@ -1,0 +1,115 @@
+schemaVersion: "0.1.0"
+id: hook.load-persona-cannot-remove-bundle-hook
+title: A persona cannot remove or replace a hook the policy bundle requires
+description: >-
+  The policy bundle requires `guard@1`, a rule hook that blocks
+  `SYN-GUARD-1` at beforeModelCall. `guard@2` (same id, `failOpen`, a
+  different marker) and `note@1` (annotate) are also defined.
+
+  - The persona requiring `guard@2` instead — replacing the bundle's hook
+    with a weaker version — is rejected (HOOK-071).
+  - The persona setting `requiredHooks: []`, and later requiring only
+    `note@1`, loads: `requiredHooks` merge by `union` (HOOK-070), so leaving
+    the bundle's hook out does not remove it. Sessions created under each of
+    these snapshots still have `SYN-GUARD-1` blocked by `guard@1` before any
+    model call; a message without the marker reaches the model.
+
+  Reading: configuration has no syntax for a lower layer to delete an
+  inherited `requiredHooks` entry, so "persona tries to remove a bundle
+  hook" is tested as the two removal attempts a persona can express:
+  replacing it (a configuration error) and omitting it or declaring an
+  empty list (no effect on the effective set).
+requirements: [HOOK-070, HOOK-071, CFG-034]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - { kind: Hook, id: guard, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [block], timeoutMs: 1000, source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-GUARD-1'))", then: { result: block, reasonCode: test.guard.v1 } } }
+      - { kind: Hook, id: guard, version: 2, schemaVersion: "0.1.0", points: [beforeModelCall], results: [block], failureMode: failOpen, timeoutMs: 1000, source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-GUARD-2'))", then: { result: block, reasonCode: test.guard.v2 } } }
+      - { kind: Hook, id: note, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [annotate], timeoutMs: 1000, source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-PII'))", then: { result: annotate, labels: [pii] } } }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        requiredHooks: [guard@1]
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  # 0: persona replaces the bundle's hook with another version → rejected.
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], requiredHooks: [guard@2], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }] } }
+    expect: { ok: false, error: { category: configuration } }
+  # 1: persona declares an empty list → loads; the bundle's hook stays.
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], requiredHooks: [], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }] } }
+    expect: { ok: true }
+  - action: run
+    bind: $sEmpty
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYN-GUARD-1 request" }]
+    expect: { ok: true, endReason: blocked }
+  # 3: persona lists only another hook → loads; the bundle's hook stays.
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], requiredHooks: [note@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }] } }
+    expect: { ok: true }
+  - action: run
+    bind: $sOmit
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYN-GUARD-1 request" }]
+    expect: { ok: true, endReason: blocked }
+  - action: run
+    bind: $sClear
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sEmpty:
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: guard@1, point: beforeModelCall, result: block, reasonCode: test.guard.v1 } }
+          - { type: run.ended, payload: { reason: blocked } }
+      absentEvents:
+        - { type: model.request }
+    $sOmit:
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: guard@1, point: beforeModelCall, result: block, reasonCode: test.guard.v1 } }
+          - { type: run.ended, payload: { reason: blocked } }
+      absentEvents:
+        - { type: model.request }
+    $sClear:
+      absentEvents:
+        - { type: hook.decision }
+  providerRequests:
+    scripted-a: { count: 1 }

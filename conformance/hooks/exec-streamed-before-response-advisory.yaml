@@ -1,0 +1,105 @@
+schemaVersion: "0.1.0"
+id: hook.exec-streamed-before-response-advisory
+title: In a streamed profile an annotate-only `beforeResponse` hook runs on the complete, already delivered response and is advisory
+description: >-
+  The streamed profile requires advisor, a remote annotate-only
+  beforeResponse hook (allowed in streamed delivery, HOOK-040). The model
+  streams its answer in three deltas. The principal receives every delta
+  and the full text; the hook receives the complete response (the
+  concatenation of the deltas) as one text part, and its annotation is
+  recorded as a hook.decision after the model.response, without changing
+  what was delivered. Delta delivery is ephemeral and has no recorded
+  position relative to the hook invocation, so "after delivery" is checked
+  only through the complete content the hook sees and the unchanged
+  delivery.
+requirements: [HOOK-040]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        remoteHooks:
+          - { id: advisor, endpoint: "memory://hook-advisor", region: test-region }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: Hook
+        id: advisor
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeResponse]
+        results: [annotate]
+        timeoutMs: 1000
+        source: { kind: remote, endpoint: advisor }
+      - kind: HarnessProfile
+        id: streamed
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: streamed
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        requiredHooks: [advisor@1]
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - deltas: ["SYN-STREAM-", "0040 part ", "two."]
+          parts: [{ type: text, text: "SYN-STREAM-0040 part two." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    remoteHooks:
+      advisor:
+        - result: annotate
+          labels: [{ part: 0, labels: [pii] }]
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    profile: streamed@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.response, step: 1 }
+          - { type: hook.decision, payload: { hook: advisor@1, point: beforeResponse, result: annotate, labelsAdded: [pii] } }
+          - { type: run.ended, payload: { reason: responded } }
+  stubCalls:
+    advisor:
+      - arguments: { point: beforeResponse, content: [{ type: text, text: "SYN-STREAM-0040 part two." }] }
+  delivered:
+    $s:
+      deltas: ["SYN-STREAM-", "0040 part ", "two."]
+      text: "SYN-STREAM-0040 part two."
+      fallback: false

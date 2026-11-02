@@ -1,0 +1,141 @@
+schemaVersion: "0.1.0"
+id: hook.source-rule-runtime-error
+title: A CEL evaluation error in a guardrail rule is a hook failure, and the fail-closed hook blocks
+description: >-
+  A rule guardrail hook at beforeToolCall evaluates
+  `call.arguments['value'] == 'SYN-FORBIDDEN'`. The expression compiles and
+  type-checks (`call.arguments` is a map), so the configuration loads.
+
+  - $sMissing: the model calls `lookup`, whose arguments have no `value`
+    key; indexing the missing key is a runtime error → hook failure → the
+    hook (failClosed by default, declares `block`) blocks: an `error` event
+    from source `hook`, no dispatch, and a `policy` error to the model.
+  - $sPresent (control): the model calls `update_record` with
+    `value: v1`; the key exists, the expression is false → `continue`: no
+    error, no hook.decision, the call is dispatched.
+  The failure's `error` event has code agentry.hook.rule_error, category
+  fatal, retryable false, source hook; the block emits hook.decision
+  {result: block, reasonCode: agentry.hook.rule_error} (never the rule's
+  own reason code), and the model receives the generic hook error
+  {code: agentry.hook.blocked, category: policy, retryable: false, source:
+  hook, message: "Blocked by policy."} with no details (HOOK-051, HOOK-023
+  as amended 2026-11-01).
+requirements: [HOOK-113, HOOK-050, HOOK-051]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Hook
+        id: value-guard
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [block]
+        timeoutMs: 1000
+        source: { kind: rule, when: "call.arguments['value'] == 'SYN-FORBIDDEN'", then: { result: block, reasonCode: test.guard.blocked } }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [value-guard@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "I could not look it up." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup: []
+      update_record:
+        - ok: { output: { updated: true } }
+script:
+  - action: run
+    bind: $sMissing
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sPresent
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sMissing:
+      events:
+        mode: subsequence
+        items:
+          - { type: error, payload: { error: { code: agentry.hook.rule_error, category: fatal, retryable: false, source: hook } } }
+          - { type: tool.result, payload: { callId: c1, result: { error: { category: policy } } } }
+          - { type: model.request, step: 2 }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call }
+    $sPresent:
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: update_record, arguments: { key: k1, value: v1 } } }
+          - { type: tool.result, payload: { callId: c1, result: { ok: { output: { updated: true } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: error }
+        - { type: hook.decision }
+  ports:
+    eventLog:
+      t1:
+        $sMissing:
+          $all:
+            - $count: { of: { type: hook.decision }, equals: 1 }
+            - $count: { of: { type: hook.decision, payload: { hook: value-guard@1, point: beforeToolCall, result: block, reasonCode: agentry.hook.rule_error } }, equals: 1 }
+  stubCalls:
+    lookup: { count: 0 }
+    update_record: [{ arguments: { key: k1, value: v1 } }]
+  providerRequests:
+    scripted-a:
+      - {}
+      - messages:
+          $contains:
+            - role: tool
+              parts:
+                $contains:
+                  - type: tool_result
+                    callId: c1
+                    result:
+                      error:
+                        code: agentry.hook.blocked
+                        category: policy
+                        retryable: false
+                        source: hook
+                        message: "Blocked by policy."
+                        details: { $absent: true }
+      - {}
+      - {}

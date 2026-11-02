@@ -1,0 +1,40 @@
+schemaVersion: "0.1.0"
+id: hook.def-unknown-point
+title: A hook definition naming a hook point outside the closed set is rejected
+description: >-
+  The set of hook points is closed (HOOK-010). Each failing load adds one
+  native annotate hook `watch@1` whose `points` include a name that is not
+  one of the eight points: an invented point alone (`beforeRetrieval`), an
+  invented point next to a valid one (`afterAgentCall` with
+  `beforeModelCall`), and a valid point in the wrong case
+  (`BeforeModelCall`). The control loads the same hook at all eight points,
+  declaring `annotate`, which every point permits.
+requirements: [HOOK-010]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  - load:
+      artifacts:
+        - { kind: Hook, id: watch, version: 1, schemaVersion: "0.1.0", points: [beforeRetrieval], results: [annotate], timeoutMs: 1000, source: { kind: native, handler: test.hook.watch } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Hook, id: watch, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall, afterAgentCall], results: [annotate], timeoutMs: 1000, source: { kind: native, handler: test.hook.watch } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Hook, id: watch, version: 1, schemaVersion: "0.1.0", points: [BeforeModelCall], results: [annotate], timeoutMs: 1000, source: { kind: native, handler: test.hook.watch } }
+    expect: { ok: false, error: { category: configuration } }
+  # Control: every point in the closed set.
+  - load:
+      artifacts:
+        - { kind: Hook, id: watch, version: 1, schemaVersion: "0.1.0", points: [sessionStart, beforeModelCall, afterModelCall, beforeToolCall, afterToolCall, beforeResponse, onError, sessionEnd], results: [annotate], timeoutMs: 1000, source: { kind: native, handler: test.hook.watch } }
+    expect: { ok: true }
+expect: {}

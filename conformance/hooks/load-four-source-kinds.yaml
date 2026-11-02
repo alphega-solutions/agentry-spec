@@ -1,0 +1,108 @@
+schemaVersion: "0.1.0"
+id: hook.load-four-source-kinds
+title: A configuration with a rule, native, remote and model hook loads, and each hook runs once in a session
+description: >-
+  Implementations support all four source kinds (HOOK-081). One load adds a
+  hook of each kind at sessionStart, required by the persona in this order:
+  `kind-native@1` (native handler), `kind-remote@1` (remote endpoint
+  `checker`), `kind-model@1` (model `scripted-judge/judge-1`) and
+  `kind-rule@1` (rule annotating `pii` when the input contains
+  `SYN-KIND`). The load succeeds. One run follows, and each hook is invoked
+  exactly once: the native and remote hooks each record one invocation at
+  sessionStart (each has exactly one scripted `continue`); the judge
+  provider receives exactly one request; the rule hook's `annotate` emits
+  the session's only `hook.decision` (the other three answer `continue`,
+  which emits nothing). The rule hook runs last, so the judge does not see
+  the `pii` label. No hook fails (no `error` event), and the session model
+  is called once.
+requirements: [HOOK-081]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          - { id: scripted-judge, adapter: scripted, endpoint: "memory://scripted-judge", region: test-region, retainsData: false }
+        remoteHooks:
+          - { id: checker, endpoint: "memory://hook-checker", region: test-region }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-judge:
+      responses:
+        - parts: [{ type: structured, value: { result: continue } }]
+          usage: { inputTokens: 15, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Done." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    nativeHooks:
+      kind-native:
+        - result: continue
+    remoteHooks:
+      checker:
+        - result: continue
+script:
+  - load:
+      artifacts:
+        - { kind: Hook, id: kind-native, version: 1, schemaVersion: "0.1.0", points: [sessionStart], results: [annotate], timeoutMs: 1000, source: { kind: native, handler: test.hook.kind_native } }
+        - { kind: Hook, id: kind-remote, version: 1, schemaVersion: "0.1.0", points: [sessionStart], results: [annotate], timeoutMs: 1000, source: { kind: remote, endpoint: checker } }
+        - { kind: Hook, id: kind-model, version: 1, schemaVersion: "0.1.0", points: [sessionStart], results: [annotate], timeoutMs: 5000, source: { kind: model, model: { provider: scripted-judge, name: judge-1 }, instructions: "Label the input. Answer with a HookResult.", maxTokens: 200 } }
+        - { kind: Hook, id: kind-rule, version: 1, schemaVersion: "0.1.0", points: [sessionStart], results: [annotate], timeoutMs: 1000, source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-KIND'))", then: { result: annotate, labels: [pii] } } }
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], requiredHooks: [kind-native@1, kind-remote@1, kind-model@1, kind-rule@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }] } }
+    expect: { ok: true }
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYN-KIND check" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: kind-rule@1, point: sessionStart, result: annotate, labelsAdded: [pii] } }
+          - { type: model.request }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: error }
+  stubCalls:
+    kind-native:
+      - { arguments: { hook: kind-native@1, point: sessionStart, sessionId: $s } }
+    checker:
+      - { arguments: { hook: kind-remote@1, point: sessionStart, sessionId: $s } }
+  providerRequests:
+    scripted-judge:
+      - { provider: scripted-judge, model: judge-1 }
+    scripted-a: { count: 1 }
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $count: { of: { type: hook.decision }, equals: 1 }

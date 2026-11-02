@@ -1,0 +1,139 @@
+schemaVersion: "0.1.0"
+id: hook.record-block-reason-hidden
+title: A block's reason code is recorded in the hook decision and audit, and never reaches the model or the principal
+description: >-
+  Two rule hooks block with distinctive reason codes. $sTool: the
+  beforeToolCall hook blocks update_record; the hook.decision (and its
+  audit record) carries test.guard.reason-tool-0023, but the model's next
+  request holds only the generic hook error as the tool result, exactly
+  {code: agentry.hook.blocked, category: policy, retryable: false, source:
+  hook, message: "Blocked by policy."} with no details (HOOK-023 as amended
+  2026-11-01). The run ends normally with the model's text. $sResponse: the
+  beforeResponse hook blocks the answer; the hook.decision carries
+  test.guard.reason-response-0023, and the principal receives exactly the
+  persona's fixed fallback message, with no reason in the run outcome.
+requirements: [HOOK-023, HOOK-060]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Hook
+        id: guard-tool
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [block]
+        timeoutMs: 1000
+        source: { kind: rule, when: "tool.id == 'update_record'", then: { result: block, reasonCode: test.guard.reason-tool-0023 } }
+      - kind: Hook
+        id: guard-response
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeResponse]
+        results: [block]
+        timeoutMs: 1000
+        source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-UNSAFE-0023'))", then: { result: block, reasonCode: test.guard.reason-response-0023 } }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [guard-tool@1, guard-response@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "I could not update it." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "SYN-UNSAFE-0023 answer" }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record: []
+script:
+  - action: run
+    bind: $sTool
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sResponse
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: blocked }
+expect:
+  sessions:
+    $sTool:
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, eventId: $eTool, payload: { hook: guard-tool@1, point: beforeToolCall, result: block, reasonCode: test.guard.reason-tool-0023 } }
+          - type: tool.result
+            payload:
+              callId: c1
+              result:
+                error:
+                  code: agentry.hook.blocked
+                  category: policy
+                  retryable: false
+                  source: hook
+                  message: "Blocked by policy."
+                  details: { $absent: true }
+          - { type: run.ended, payload: { reason: responded } }
+    $sResponse:
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, eventId: $eResp, payload: { hook: guard-response@1, point: beforeResponse, result: block, reasonCode: test.guard.reason-response-0023 } }
+          - { type: run.ended, payload: { reason: blocked, error: { $absent: true } } }
+  stubCalls:
+    update_record: { count: 0 }
+  providerRequests:
+    scripted-a:
+      - {}
+      - messages:
+          $contains:
+            - role: tool
+              parts:
+                - type: tool_result
+                  callId: c1
+                  result:
+                    error:
+                      code: agentry.hook.blocked
+                      category: policy
+                      retryable: false
+                      source: hook
+                      message: "Blocked by policy."
+                      details: { $absent: true }
+      - {}
+  ports:
+    auditLog:
+      t1:
+        $contains:
+          - { type: hook_decision, sessionId: $sTool, eventIds: { $contains: [$eTool] } }
+          - { type: hook_decision, sessionId: $sResponse, eventIds: { $contains: [$eResp] } }
+  delivered:
+    $sTool: { text: "I could not update it.", fallback: false }
+    $sResponse: { text: "This request was blocked.", fallback: true }

@@ -1,0 +1,171 @@
+schemaVersion: "0.1.0"
+id: hook.fail-guardrail-timeout
+title: A guardrail that exceeds `timeoutMs` has failed and blocks; a failing telemetry hook continues; both emit `error`
+description: >-
+  slow-guard (failClosed guardrail, block) and slow-tele (telemetry,
+  annotate) are remote beforeModelCall hooks with timeoutMs 1000, each
+  matched by its own marker. Timeouts run on the virtual clock, which the
+  runner advances when only timers are pending.
+  - $sHang: slow-guard never answers; at 1000 ms it has failed → block,
+    `error` event, no model call.
+  - $sSlow (control): slow-guard answers continue after 500 ms, within the
+    limit → no error, the model is called.
+  - $sTele: slow-tele never answers; at 1000 ms it has failed → continue,
+    `error` event, the model is called.
+  Each timeout's `error` event has code agentry.hook.timeout, category
+  unavailable, retryable false, source hook (HOOK-051 as amended
+  2026-11-01). The block in $sHang also emits hook.decision {result:
+  block, reasonCode: agentry.hook.timeout}; the continue in $sTele emits
+  no hook.decision.
+requirements: [HOOK-050, HOOK-051]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        remoteHooks:
+          - { id: slow-guard, endpoint: "memory://hook-slow-guard", region: test-region }
+          - { id: slow-tele, endpoint: "memory://hook-slow-tele", region: test-region }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: Hook
+        id: slow-guard
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeModelCall]
+        results: [block]
+        failureMode: failClosed
+        timeoutMs: 1000
+        match: "content.exists(p, p.type == 'text' && p.text.contains('SYN-GUARD'))"
+        source: { kind: remote, endpoint: slow-guard }
+      - kind: Hook
+        id: slow-tele
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeModelCall]
+        results: [annotate]
+        purpose: telemetry
+        timeoutMs: 1000
+        match: "content.exists(p, p.type == 'text' && p.text.contains('SYN-TELE'))"
+        source: { kind: remote, endpoint: slow-tele }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [slow-guard@1, slow-tele@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Slow but fine." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Telemetry timed out." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    remoteHooks:
+      slow-guard:
+        - hang: true
+        - answer: { result: continue }
+          delayMs: 500
+      slow-tele:
+        - hang: true
+script:
+  - action: run
+    bind: $sHang
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYN-GUARD hang" }]
+    expect: { ok: true, endReason: blocked }
+  - action: run
+    bind: $sSlow
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYN-GUARD slow" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sTele
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYN-TELE" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sHang:
+      events:
+        mode: subsequence
+        items:
+          - { type: error, payload: { error: { code: agentry.hook.timeout, category: unavailable, retryable: false, source: hook } } }
+          - { type: run.ended, payload: { reason: blocked } }
+      absentEvents:
+        - { type: model.request }
+    $sSlow:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: error }
+    $sTele:
+      events:
+        mode: subsequence
+        items:
+          - { type: error, payload: { error: { code: agentry.hook.timeout, category: unavailable, retryable: false, source: hook } } }
+          - { type: model.request }
+          - { type: run.ended, payload: { reason: responded } }
+  ports:
+    eventLog:
+      t1:
+        $sHang:
+          $all:
+            - $count: { of: { type: hook.decision }, equals: 1 }
+            - $count: { of: { type: hook.decision, payload: { hook: slow-guard@1, point: beforeModelCall, result: block, reasonCode: agentry.hook.timeout } }, equals: 1 }
+        $sSlow:
+          $count: { of: { type: hook.decision }, equals: 0 }
+        $sTele:
+          $count: { of: { type: hook.decision }, equals: 0 }
+  stubCalls:
+    slow-guard: { count: 2 }
+    slow-tele: { count: 1 }
+  providerRequests:
+    scripted-a: { count: 2 }
+  delivered:
+    $sHang: { text: "This request was blocked.", fallback: true }
+    $sSlow: { text: "Slow but fine.", fallback: false }
+    $sTele: { text: "Telemetry timed out.", fallback: false }

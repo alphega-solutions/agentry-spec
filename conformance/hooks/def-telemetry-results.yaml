@@ -1,0 +1,48 @@
+schemaVersion: "0.1.0"
+id: hook.def-telemetry-results
+title: A telemetry hook declaring block, rewrite or escalate is rejected
+description: >-
+  Each failing load adds a native hook `observer@1` with `purpose:
+  telemetry` at beforeModelCall whose `results` include a result other than
+  `continue` or `annotate`: `block` alone, `block` alongside `annotate`,
+  `rewrite`, and `escalate`. Every result is permitted at beforeModelCall
+  (Area 5 §5), so only the telemetry purpose can make them invalid. Controls
+  load: the same telemetry hook declaring `annotate` (and `continue`), and
+  the same hook declaring `block` with the default purpose (`guardrail`).
+requirements: [HOOK-002]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  - load:
+      artifacts:
+        - { kind: Hook, id: observer, version: 1, schemaVersion: "0.1.0", purpose: telemetry, points: [beforeModelCall], results: [block], timeoutMs: 1000, source: { kind: native, handler: test.hook.observer } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Hook, id: observer, version: 1, schemaVersion: "0.1.0", purpose: telemetry, points: [beforeModelCall], results: [annotate, block], timeoutMs: 1000, source: { kind: native, handler: test.hook.observer } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Hook, id: observer, version: 1, schemaVersion: "0.1.0", purpose: telemetry, points: [beforeModelCall], results: [rewrite], timeoutMs: 1000, source: { kind: native, handler: test.hook.observer } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Hook, id: observer, version: 1, schemaVersion: "0.1.0", purpose: telemetry, points: [beforeModelCall], results: [escalate], timeoutMs: 1000, source: { kind: native, handler: test.hook.observer } }
+    expect: { ok: false, error: { category: configuration } }
+  # Controls.
+  - load:
+      artifacts:
+        - { kind: Hook, id: observer, version: 1, schemaVersion: "0.1.0", purpose: telemetry, points: [beforeModelCall], results: [continue, annotate], timeoutMs: 1000, source: { kind: native, handler: test.hook.observer } }
+    expect: { ok: true }
+  - load:
+      artifacts:
+        - { kind: Hook, id: observer, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [block], timeoutMs: 1000, source: { kind: native, handler: test.hook.observer } }
+    expect: { ok: true }
+expect: {}

@@ -1,0 +1,70 @@
+schemaVersion: "0.1.0"
+id: hook.taint-mutating-escalates-by-default
+title: In a tainted session a mutating call escalates by default; a non-mutating, non-egress call continues with no taint decision
+description: >-
+  `update_record` declares no `onTainted` (default `escalate`) and no bundle
+  `toolTaintDefaults` entry applies. The untrusted lookup result (baseline
+  bundle: no trusted tools) taints the session.
+
+  - c2, a second lookup (read, not egress): neither condition holds, so the
+    call is dispatched and no taint decision is emitted.
+  - c3, update_record: the mutating condition holds, so the outcome is
+    `escalate`: exactly one taint decision, an escalation from source
+    `taint`, and no dispatch.
+requirements: [HOOK-122]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: lookup, arguments: { key: k2 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c3, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "SYN-UNTRUSTED-0001" } }
+        - ok: { output: { value: "SYN-UNTRUSTED-0002" } }
+      update_record: []
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1 and k2, then set k1 to v1" }]
+    expect: { ok: true, endReason: escalated }
+expect:
+  sessions:
+    $s:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: c1, tool: lookup } }
+          - { type: tool.call, payload: { callId: c2, tool: lookup } }
+          - { type: tool.result, payload: { callId: c2, tool: lookup } }
+          - { type: policy.decision, payload: { kind: taint, outcome: escalate, callId: c3, tool: update_record } }
+          - { type: escalation.raised, payload: { escalation: { sources: [taint], pendingActions: [{ callId: c3, source: taint }] } } }
+          - { type: run.ended, payload: { reason: escalated } }
+      absentEvents:
+        - { type: policy.decision, payload: { callId: c2 } }
+        - { type: tool.call, payload: { callId: c3 } }
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $count: { of: { type: policy.decision, payload: { kind: taint } }, equals: 1 }
+  stubCalls:
+    lookup: [{ arguments: { key: k1 } }, { arguments: { key: k2 } }]
+    update_record: { count: 0 }

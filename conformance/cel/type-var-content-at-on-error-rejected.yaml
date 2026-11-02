@@ -1,0 +1,31 @@
+schemaVersion: 0.1.0
+id: cel.type-var-content-at-on-error-rejected
+description: >-
+  `content` is not available at onError (§9.1).
+requirements:
+- HOOK-112
+point: onError
+expression: size(content) > 0
+variables:
+  principal:
+    subject: user-1
+    tenant: t1
+    roles:
+    - clinician
+    - reviewer
+    attributes:
+      department: SYN-cardiology
+      site: SYN-site-7
+      manager: null
+    assurance: multi_factor
+  session:
+    persona: assistant@1
+    tainted: false
+    turn: 3
+    step: 2
+  error:
+    code: test.tool.unavailable
+    category: unavailable
+    source: tool
+expect:
+  failure: type_check

@@ -1,0 +1,37 @@
+schemaVersion: 0.1.0
+id: cel.ext-lower-upper-ascii
+description: >-
+  Only ASCII letters change case; non-ASCII letters are left as they are.
+requirements:
+- HOOK-110
+point: beforeModelCall
+expression: '[''SYN-Ab''.lowerAscii(), ''syn-ab''.upperAscii(), ''Äb''.lowerAscii(), ''äB''.upperAscii()]'
+variables:
+  principal:
+    subject: user-1
+    tenant: t1
+    roles:
+    - clinician
+    - reviewer
+    attributes:
+      department: SYN-cardiology
+      site: SYN-site-7
+      manager: null
+    assurance: multi_factor
+  session:
+    persona: assistant@1
+    tainted: false
+    turn: 3
+    step: 2
+  content:
+  - type: text
+    text: Look up record SYN-1001 please
+    provenance: principal
+    labels:
+    - pii
+expect:
+  value:
+  - syn-ab
+  - SYN-AB
+  - Äb
+  - äB

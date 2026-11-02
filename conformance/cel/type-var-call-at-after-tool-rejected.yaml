@@ -1,0 +1,49 @@
+schemaVersion: 0.1.0
+id: cel.type-var-call-at-after-tool-rejected
+description: >-
+  `call` is available only at beforeToolCall (§9.1); at afterToolCall it is
+  undeclared, even though the request carries `result` and the `tool_result`
+  part.
+requirements:
+- HOOK-112
+point: afterToolCall
+expression: call.arguments.recordId == 'SYN-1001'
+variables:
+  principal:
+    subject: user-1
+    tenant: t1
+    roles:
+    - clinician
+    - reviewer
+    attributes:
+      department: SYN-cardiology
+      site: SYN-site-7
+      manager: null
+    assurance: multi_factor
+  session:
+    persona: assistant@1
+    tainted: false
+    turn: 3
+    step: 2
+  content:
+  - type: tool_result
+    callId: SYN-call-1
+    tool: lookup
+    result:
+      ok:
+        output:
+          status: closed
+    provenance: tool:lookup
+    labels: []
+  tool:
+    id: lookup
+    effect: read
+    egress: false
+    idempotent: true
+    sensitivity: []
+  result:
+    ok: true
+    output:
+      status: closed
+expect:
+  failure: type_check

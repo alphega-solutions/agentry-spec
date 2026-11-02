@@ -1,0 +1,196 @@
+schemaVersion: "0.1.0"
+id: hook.taint-egress-labelled-content
+title: In a tainted session an egress call blocks by default when labelled content is in context, and continues when none is
+description: >-
+  `send_note` is a read tool with `egress: true` and the default
+  `onTaintedEgress` (block). `read_contact` returns results labelled `pii`
+  and is trusted by the bundle, so it adds labelled content without
+  tainting; `fetch_external` is untrusted and unlabelled.
+
+  - $sBlock: tainted (fetch_external) and labelled content in context
+    (read_contact) → the egress condition holds → taint decision `block`;
+    send_note is not dispatched, the model receives a `policy` error, and
+    the turn continues to a response.
+  - $sNoLabel: tainted, but no part in context carries a label → neither
+    condition holds (send_note is not mutating) → dispatched, no taint
+    decision.
+  - $sUntainted: labelled content but no taint → dispatched, no taint
+    decision.
+requirements: [HOOK-122]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        trustedTools: [read_contact@1]
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+      - kind: Tool
+        id: fetch_external
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Fetch a record from an external source.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        binding: { kind: native, handler: test.fetch_external }
+      - kind: Tool
+        id: read_contact
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Read a contact.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        sensitivity: [pii]
+        binding: { kind: native, handler: test.read_contact }
+      - kind: Tool
+        id: send_note
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Send a note to an external address.
+        input:
+          type: object
+          additionalProperties: false
+          required: [text]
+          properties: { text: { type: string } }
+        effect: read
+        egress: true
+        binding: { kind: native, handler: test.send_note }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [fetch_external@1, read_contact@1, send_note@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # $sBlock
+        - parts: [{ type: tool_call, callId: c1, tool: fetch_external, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: read_contact, arguments: { key: k1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c3, tool: send_note, arguments: { text: "SYN-NOTE-0001" } }]
+          usage: { inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "The note could not be sent." }]
+          usage: { inputTokens: 50, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sNoLabel
+        - parts: [{ type: tool_call, callId: c1, tool: fetch_external, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c3, tool: send_note, arguments: { text: "SYN-NOTE-0002" } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Sent." }]
+          usage: { inputTokens: 40, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sUntainted
+        - parts: [{ type: tool_call, callId: c2, tool: read_contact, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c3, tool: send_note, arguments: { text: "SYN-NOTE-0003" } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Sent." }]
+          usage: { inputTokens: 40, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      fetch_external:
+        - ok: { output: { value: "SYN-UNTRUSTED-0001" } }
+        - ok: { output: { value: "SYN-UNTRUSTED-0001" } }
+      read_contact:
+        - ok: { output: { contact: "SYN-CONTACT-0001" } }
+        - ok: { output: { contact: "SYN-CONTACT-0001" } }
+      send_note:
+        - ok: { output: { sent: true } }
+        - ok: { output: { sent: true } }
+script:
+  - action: run
+    bind: $sBlock
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Fetch k1, read contact k1, then send a note" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sNoLabel
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Fetch k1, then send a note" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sUntainted
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Read contact k1, then send a note" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sBlock:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: c2, tool: read_contact } }
+          - { type: policy.decision, payload: { kind: taint, outcome: block, callId: c3, tool: send_note } }
+          - { type: tool.result, payload: { callId: c3, result: { error: { category: policy } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call, payload: { callId: c3 } }
+        - { type: escalation.raised }
+    $sNoLabel:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: c1, tool: fetch_external } }
+          - { type: tool.call, payload: { callId: c3, tool: send_note } }
+          - { type: tool.result, payload: { callId: c3, result: { ok: { output: { sent: true } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: policy.decision, payload: { kind: taint } }
+        - { type: escalation.raised }
+    $sUntainted:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: c2, tool: read_contact } }
+          - { type: tool.call, payload: { callId: c3, tool: send_note } }
+          - { type: tool.result, payload: { callId: c3, result: { ok: { output: { sent: true } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: policy.decision, payload: { kind: taint } }
+        - { type: escalation.raised }
+  stubCalls:
+    send_note: [{ arguments: { text: "SYN-NOTE-0002" } }, { arguments: { text: "SYN-NOTE-0003" } }]

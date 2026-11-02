@@ -1,0 +1,185 @@
+schemaVersion: "0.1.0"
+id: hook.source-remote-request
+title: A remote hook receives a HookRequest with the point's view of the session; its credential comes from a secret reference and is never exposed
+description: >-
+  One remote hook at beforeModelCall, beforeToolCall and afterToolCall,
+  answering `continue` every time. The model looks up k1, then responds, so
+  the hook is called four times, in this order: beforeModelCall (step 1),
+  beforeToolCall, afterToolCall, beforeModelCall (step 2). Each request
+  carries the hook, point, tenant, principal, session and run IDs, the
+  session view, and the content the point sees: the assembled request at
+  beforeModelCall; the tool and its call, and no result, at beforeToolCall;
+  the tool and its result, and no call, at afterToolCall.
+
+
+  The deployment's remote hook takes its API key by secret reference; the
+  in-memory secrets provider serves a synthetic value. That value never
+  appears in a persisted event, checkpoint or audit record
+  (`noPersistedContent`), nor anywhere in what the implementation sends
+  out — any recorded HookRequest or provider request
+  (`noTransmittedContent`); it may reach the endpoint only through its
+  transport credentials, which hook stub records do not hold. No request
+  carries a credential field.
+
+
+  `session.step` is the step the point belongs to (HOOK-091 as amended
+  2026-11-01), so the tool-call points of step 1 report step 1. lookup's
+  result enters context at delivery, so the session is untainted at both
+  tool points and tainted at step 2's beforeModelCall (the baseline trusts
+  no tools).
+requirements: [HOOK-091, HOOK-115]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        remoteHooks:
+          - { id: inspector, endpoint: "memory://hook-inspector", region: test-region, credentials: { apiKey: "secret://test/hook-key" } }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: Hook
+        id: inspector
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeModelCall, beforeToolCall, afterToolCall]
+        results: [annotate]
+        timeoutMs: 1000
+        source: { kind: remote, endpoint: inspector }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [inspector@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, roles: [analyst], assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Found it." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "SYN-VALUE-0091" } }
+    remoteHooks:
+      inspector:
+        - { result: continue }
+        - { result: continue }
+        - { result: continue }
+        - { result: continue }
+  secrets:
+    "secret://test/hook-key": "SYN-SECRET-HOOK-0091-DO-NOT-PERSIST"
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: run.started, runId: $r }
+          - { type: tool.call, payload: { callId: c1, tool: lookup } }
+          - { type: run.ended, runId: $r, payload: { reason: responded } }
+      absentEvents:
+        - { type: hook.decision }
+  stubCalls:
+    inspector:
+      - arguments:
+          hook: inspector@1
+          point: beforeModelCall
+          tenant: t1
+          sessionId: $s
+          runId: $r
+          principal: { subject: user-1, tenant: t1, roles: [analyst], assurance: multi_factor }
+          session: { persona: assistant@1, tainted: false, turn: 1, step: 1 }
+          content: { $contains: [{ type: text, text: "Look up k1" }] }
+          tool: { $absent: true }
+          call: { $absent: true }
+          result: { $absent: true }
+          credentials: { $absent: true }
+      - arguments:
+          hook: inspector@1
+          point: beforeToolCall
+          tenant: t1
+          sessionId: $s
+          runId: $r
+          principal: { subject: user-1, tenant: t1 }
+          session: { persona: assistant@1, tainted: false, turn: 1, step: 1 }
+          content: { $contains: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }] }
+          tool: { id: lookup, effect: read, egress: false }
+          call: { arguments: { key: k1 } }
+          result: { $absent: true }
+          credentials: { $absent: true }
+      - arguments:
+          hook: inspector@1
+          point: afterToolCall
+          tenant: t1
+          sessionId: $s
+          runId: $r
+          principal: { subject: user-1, tenant: t1 }
+          session: { persona: assistant@1, tainted: false, turn: 1, step: 1 }
+          tool: { id: lookup, effect: read, egress: false }
+          result: { ok: true, output: { value: "SYN-VALUE-0091" } }
+          call: { $absent: true }
+          credentials: { $absent: true }
+      - arguments:
+          hook: inspector@1
+          point: beforeModelCall
+          tenant: t1
+          sessionId: $s
+          runId: $r
+          principal: { subject: user-1, tenant: t1 }
+          session: { persona: assistant@1, tainted: true, turn: 1, step: 2 }
+          content:
+            $contains:
+              - { type: text, text: "Look up k1" }
+              - { type: tool_result, callId: c1 }
+          tool: { $absent: true }
+          call: { $absent: true }
+          result: { $absent: true }
+          credentials: { $absent: true }
+    lookup: [{ arguments: { key: k1 } }]
+  noPersistedContent:
+    - "SYN-SECRET-HOOK-0091-DO-NOT-PERSIST"
+  noTransmittedContent:
+    - "SYN-SECRET-HOOK-0091-DO-NOT-PERSIST"

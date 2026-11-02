@@ -9,7 +9,7 @@ description: >-
   model call. A message with no marker reaches the model. A lower layer
   replacing the list (override) or narrowing it (intersect) would leave at
   least one marker unblocked.
-requirements: [CFG-020, CFG-030]
+requirements: [CFG-020, CFG-030, HOOK-070]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:

@@ -1,0 +1,157 @@
+schemaVersion: "0.1.0"
+id: hook.taint-provenances-recorded
+title: Each taint decision lists the provenance that first tainted the session and every later untrusted provenance, and only those
+description: >-
+  The bundle trusts `lookup@1`; `fetch_external` is untrusted; the
+  principal attaches a file through `email`, which is not a trusted
+  attachment source. `set_status` is mutating with `onTainted: allow` and
+  is not in `trustedTools`, so each call records a taint decision and
+  continues, and its own result taints the session from the next step
+  (HOOK-126: a mutating tool's untrusted result counts).
+
+  - c1 set_status: only the attachment has tainted the session → the
+    decision lists exactly [attachment:email]. c1's result then enters
+    context (untrusted).
+  - c2 fetch_external (untrusted) and c3 lookup (trusted) then enter
+    context.
+  - c4 set_status: the decision lists exactly, in first-entry order,
+    [attachment:email, tool:set_status, tool:fetch_external] — not the
+    trusted tool:lookup, not principal or model.
+  - c4's result is untrusted too, but tool:set_status is already listed,
+    so the checkpoint records the same three provenances, in the same
+    order, without a duplicate (HOOK-126).
+requirements: [HOOK-126]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        trustedTools: [lookup@1]
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+      - kind: Tool
+        id: fetch_external
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Fetch a record from an external source.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        binding: { kind: native, handler: test.fetch_external }
+      - kind: Tool
+        id: set_status
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Set a record's status.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: mutating
+        idempotent: true
+        onTainted: allow
+        binding: { kind: native, handler: test.set_status }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, fetch_external@1, set_status@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { documents: true }
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: set_status, arguments: { key: k1 } }]
+          usage: { inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: fetch_external, arguments: { key: k2 } }]
+          usage: { inputTokens: 50, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c3, tool: lookup, arguments: { key: k3 } }]
+          usage: { inputTokens: 60, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c4, tool: set_status, arguments: { key: k2 } }]
+          usage: { inputTokens: 70, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Statuses set." }]
+          usage: { inputTokens: 80, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      set_status:
+        - ok: { output: { status: set } }
+        - ok: { output: { status: set } }
+      fetch_external:
+        - ok: { output: { value: "SYN-UNTRUSTED-0001" } }
+      lookup:
+        - ok: { output: { value: "SYN-TRUSTED-0001" } }
+  ports:
+    blobStore:
+      t1:
+        - id: blob-file-1
+          hash: "sha256:488b66a845535f2173fe026ad21ad4238ca6b733b00a24ba332adab6729a0a80"
+          mediaType: text/plain
+          size: 44
+          data: "U1lOVEhFVElDLUZJTEUtMDAwMTogcXVhcnRlcmx5IHdpZGdldCByZXBvcnQ="
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input:
+      - { type: text, text: "Apply the attached instructions" }
+      - type: file
+        mediaType: text/plain
+        name: instructions.txt
+        source: email
+        blob: { id: blob-file-1, hash: "sha256:488b66a845535f2173fe026ad21ad4238ca6b733b00a24ba332adab6729a0a80", mediaType: text/plain, size: 44 }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: policy.decision, payload: { kind: taint, outcome: allow, callId: c1, provenances: ["attachment:email"] } }
+          - { type: tool.result, payload: { callId: c2, tool: fetch_external } }
+          - { type: tool.result, payload: { callId: c3, tool: lookup } }
+          - type: policy.decision
+            payload:
+              kind: taint
+              outcome: allow
+              callId: c4
+              provenances: ["attachment:email", "tool:set_status", "tool:fetch_external"]
+          - { type: run.ended, payload: { reason: responded } }
+      checkpoint:
+        taint:
+          tainted: true
+          provenances: ["attachment:email", "tool:set_status", "tool:fetch_external"]
+  stubCalls:
+    set_status: [{ arguments: { key: k1 } }, { arguments: { key: k2 } }]

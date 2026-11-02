@@ -1,0 +1,46 @@
+schemaVersion: 0.1.0
+id: cel.macro-filter
+description: >-
+  `filter` over a list literal and over content parts, chained with `map`.
+requirements:
+- HOOK-110
+point: beforeModelCall
+expression: '[[1, 2, 3, 4].filter(x, x % 2 == 0), content.filter(p, ''phi'' in p.labels).map(p, p.provenance)]'
+variables:
+  principal:
+    subject: user-1
+    tenant: t1
+    roles:
+    - clinician
+    - reviewer
+    attributes:
+      department: SYN-cardiology
+      site: SYN-site-7
+      manager: null
+    assurance: multi_factor
+  session:
+    persona: assistant@1
+    tainted: false
+    turn: 3
+    step: 2
+  content:
+  - type: text
+    text: Look up record SYN-1001 please
+    provenance: principal
+    labels:
+    - pii
+  - type: image
+    mediaType: image/png
+    blob:
+      id: SYN-blob-1
+      hash: sha256:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1
+      mediaType: image/png
+      size: 2048
+    provenance: attachment:SYN-scan-1
+    labels:
+    - phi
+expect:
+  value:
+  - - 2
+    - 4
+  - - attachment:SYN-scan-1

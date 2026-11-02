@@ -1,0 +1,39 @@
+schemaVersion: 0.1.0
+id: cel.point-before-response
+description: >-
+  beforeResponse sees the final response parts, here a text part and a
+  structured part.
+requirements:
+- HOOK-110
+point: beforeResponse
+expression: size(content) == 2 && content[1].type == 'structured' && content.all(p, size(p.labels) ==
+  0)
+variables:
+  principal:
+    subject: user-1
+    tenant: t1
+    roles:
+    - clinician
+    - reviewer
+    attributes:
+      department: SYN-cardiology
+      site: SYN-site-7
+      manager: null
+    assurance: multi_factor
+  session:
+    persona: assistant@1
+    tainted: false
+    turn: 3
+    step: 2
+  content:
+  - type: text
+    text: Here is the summary.
+    provenance: model
+    labels: []
+  - type: structured
+    value:
+      verdict: SYN-ok
+    provenance: model
+    labels: []
+expect:
+  value: true

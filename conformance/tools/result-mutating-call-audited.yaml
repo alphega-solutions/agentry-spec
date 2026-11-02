@@ -14,7 +14,23 @@ features: []
 setup:
   clock: "2026-01-01T00:00:00Z"
   idSeed: 1
-  config: { base: baseline }
+  config:
+    base: baseline
+    artifacts:
+      # lookup and update_record are trusted so their results do not taint
+      # the session; otherwise the mutating calls would escalate (HOOK-120,
+      # HOOK-122) — c2 after lookup's result, c3 after c2's own result
+      # (HOOK-126).
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        trustedTools: [lookup@1, update_record@1]
+        sensitivityPolicies:
+          pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+          phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
   tenants:
     - id: t1
       principals: [{ id: p1, subject: user-1, assurance: multi_factor }]

@@ -1,0 +1,195 @@
+schemaVersion: "0.1.0"
+id: hook.fail-remote-hook-barred
+title: "A required remote hook that a sensitivity policy bars from the content has failed: fail-closed block, never a silent skip, and the endpoint gets nothing"
+description: >-
+  The bundle's pii policy allows only the remote hook endpoint
+  pii-scanner (allowedRemoteHooks). scanner, a required failClosed remote
+  afterToolCall hook declaring block, uses the endpoint scanner.
+  $sBarred: lookup (sensitivity pii) returns a pii-labelled result; scanner
+  may not receive it, so it has failed (HOOK-054): no request reaches the
+  scanner endpoint, an `error` event is emitted, and the failure is a
+  block at afterToolCall: the result is withheld and the model receives a
+  `policy` error (CORE-180). $sControl: note_lookup's result is unlabelled,
+  so scanner receives it and continues; the model receives the result.
+  scanner is called exactly once in all, for $sControl. The `error` event
+  has code agentry.hook.content_barred, category policy, retryable false,
+  source hook, and the block emits hook.decision {result: block,
+  reasonCode: agentry.hook.content_barred} (HOOK-051 as amended
+  2026-11-01).
+requirements: [HOOK-054, HOOK-092, HOOK-051]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        remoteHooks:
+          - { id: scanner, endpoint: "memory://hook-scanner", region: test-region }
+          - { id: pii-scanner, endpoint: "memory://hook-pii-scanner", region: test-region }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: Hook
+        id: scanner
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [afterToolCall]
+        results: [block]
+        timeoutMs: 1000
+        source: { kind: remote, endpoint: scanner }
+      - kind: Tool
+        id: lookup
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Look up a record by key.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        sensitivity: [pii]
+        binding: { kind: native, handler: test.lookup }
+      - kind: Tool
+        id: note_lookup
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Look up an unlabelled note.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        binding: { kind: native, handler: test.note_lookup }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+            allowedRemoteHooks: [pii-scanner]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, note_lookup@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [scanner@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Withheld." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: note_lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Got the note." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "SYN-PII-0054" } }
+      note_lookup:
+        - ok: { output: { value: "SYN-NOTE-0054" } }
+    remoteHooks:
+      scanner:
+        - result: continue
+script:
+  - action: run
+    bind: $sBarred
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sControl
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up the note k1" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sBarred:
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: lookup } }
+          - { type: error, payload: { error: { code: agentry.hook.content_barred, category: policy, retryable: false, source: hook } } }
+          - { type: tool.result, payload: { callId: c1, result: { error: { category: policy } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.result, payload: { result: { ok: { $any: true } } } }
+    $sControl:
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: c1, result: { ok: { output: { value: "SYN-NOTE-0054" } } } } }
+      absentEvents:
+        - { type: error }
+  ports:
+    eventLog:
+      t1:
+        $sBarred:
+          $all:
+            - $count: { of: { type: hook.decision }, equals: 1 }
+            - $count: { of: { type: hook.decision, payload: { hook: scanner@1, point: afterToolCall, result: block, reasonCode: agentry.hook.content_barred } }, equals: 1 }
+        $sControl:
+          $count: { of: { type: hook.decision }, equals: 0 }
+  stubCalls:
+    scanner:
+      - arguments: { sessionId: $sControl, point: afterToolCall, tool: { id: note_lookup } }
+  providerRequests:
+    scripted-a:
+      - {}
+      - messages:
+          $contains:
+            - role: tool
+              parts:
+                - { type: tool_result, callId: c1, result: { error: { category: policy } } }
+      - {}
+      - messages:
+          $contains:
+            - role: tool
+              parts:
+                - { type: tool_result, callId: c1, result: { ok: { output: { value: "SYN-NOTE-0054" } } } }

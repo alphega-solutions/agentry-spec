@@ -1,0 +1,53 @@
+schemaVersion: 0.1.0
+id: cel.point-after-tool-call
+description: >-
+  The afterToolCall variables: `tool`, `result` and `content`, which at the tool
+  points is exactly the call's one `tool_result` part (Area 5 amendment,
+  HOOK-091). `result.output` is dyn (HOOK-112). `session.tainted` does not yet
+  reflect the result being judged: it enters context at delivery (Area 4 stage
+  12).
+requirements:
+- HOOK-110
+point: afterToolCall
+expression: tool.id == 'lookup' && tool.effect == 'read' && !tool.egress && result.ok && result.output.status
+  == 'closed' && size(content) == 1 && content[0].type == 'tool_result' && content[0].provenance == 'tool:lookup'
+  && !session.tainted
+variables:
+  principal:
+    subject: user-1
+    tenant: t1
+    roles:
+    - clinician
+    - reviewer
+    attributes:
+      department: SYN-cardiology
+      site: SYN-site-7
+      manager: null
+    assurance: multi_factor
+  session:
+    persona: assistant@1
+    tainted: false
+    turn: 3
+    step: 2
+  content:
+  - type: tool_result
+    callId: SYN-call-1
+    tool: lookup
+    result:
+      ok:
+        output:
+          status: closed
+    provenance: tool:lookup
+    labels: []
+  tool:
+    id: lookup
+    effect: read
+    egress: false
+    idempotent: true
+    sensitivity: []
+  result:
+    ok: true
+    output:
+      status: closed
+expect:
+  value: true

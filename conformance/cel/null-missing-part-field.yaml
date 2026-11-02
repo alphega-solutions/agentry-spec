@@ -1,0 +1,55 @@
+schemaVersion: 0.1.0
+id: cel.null-missing-part-field
+description: >-
+  A part has `text` only if it is a text part and `value` only if it is a
+  structured part (HOOK-112); `has()` is false for the field a part lacks.
+requirements:
+- HOOK-110
+point: beforeModelCall
+expression: content.map(p, [has(p.text), has(p.value)])
+variables:
+  principal:
+    subject: user-1
+    tenant: t1
+    roles:
+    - clinician
+    - reviewer
+    attributes:
+      department: SYN-cardiology
+      site: SYN-site-7
+      manager: null
+    assurance: multi_factor
+  session:
+    persona: assistant@1
+    tainted: false
+    turn: 3
+    step: 2
+  content:
+  - type: text
+    text: Look up record SYN-1001 please
+    provenance: principal
+    labels:
+    - pii
+  - type: image
+    mediaType: image/png
+    blob:
+      id: SYN-blob-1
+      hash: sha256:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1
+      mediaType: image/png
+      size: 2048
+    provenance: attachment:SYN-scan-1
+    labels:
+    - phi
+  - type: structured
+    value:
+      verdict: SYN-ok
+    provenance: model
+    labels: []
+expect:
+  value:
+  - - true
+    - false
+  - - false
+    - false
+  - - false
+    - true

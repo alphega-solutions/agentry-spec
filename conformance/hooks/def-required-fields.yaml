@@ -1,0 +1,49 @@
+schemaVersion: "0.1.0"
+id: hook.def-required-fields
+title: A Hook artifact missing points, results, timeoutMs or source is rejected
+description: >-
+  Each failing load adds one `Hook` artifact `probe@1` that is complete
+  except for one missing required field: `points`, `results`, `timeoutMs`,
+  or `source`. A failed load leaves the previous snapshot in force, so each
+  step is independent. The final load adds the same hook with every
+  required field and only those (no `purpose`, `failureMode` or `match`,
+  which are optional) and succeeds, so each rejection can only come from the
+  missing field. (`id` and the other envelope fields are covered by
+  cfg.artifact-envelope-required.)
+requirements: [HOOK-001]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  # 0: no points
+  - load:
+      artifacts:
+        - { kind: Hook, id: probe, version: 1, schemaVersion: "0.1.0", results: [block], timeoutMs: 1000, source: { kind: native, handler: test.hook.probe } }
+    expect: { ok: false, error: { category: configuration } }
+  # 1: no results
+  - load:
+      artifacts:
+        - { kind: Hook, id: probe, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], timeoutMs: 1000, source: { kind: native, handler: test.hook.probe } }
+    expect: { ok: false, error: { category: configuration } }
+  # 2: no timeoutMs
+  - load:
+      artifacts:
+        - { kind: Hook, id: probe, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [block], source: { kind: native, handler: test.hook.probe } }
+    expect: { ok: false, error: { category: configuration } }
+  # 3: no source
+  - load:
+      artifacts:
+        - { kind: Hook, id: probe, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [block], timeoutMs: 1000 }
+    expect: { ok: false, error: { category: configuration } }
+  # 4: control — every required field, nothing optional
+  - load:
+      artifacts:
+        - { kind: Hook, id: probe, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [block], timeoutMs: 1000, source: { kind: native, handler: test.hook.probe } }
+    expect: { ok: true }
+expect: {}

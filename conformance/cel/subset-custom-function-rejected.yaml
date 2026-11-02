@@ -1,0 +1,37 @@
+schemaVersion: 0.1.0
+id: cel.subset-custom-function-rejected
+description: >-
+  Stage: `compile` is parsing plus the syntactic subset check (needs no
+  declarations); `type_check` is checking against the point's declarations. Both
+  are load-time configuration errors (HOOK-112). An unknown function is an
+  undeclared reference: `type_check`.
+requirements:
+- HOOK-111
+- HOOK-112
+point: beforeModelCall
+expression: isPhi(content[0].text)
+variables:
+  principal:
+    subject: user-1
+    tenant: t1
+    roles:
+    - clinician
+    - reviewer
+    attributes:
+      department: SYN-cardiology
+      site: SYN-site-7
+      manager: null
+    assurance: multi_factor
+  session:
+    persona: assistant@1
+    tainted: false
+    turn: 3
+    step: 2
+  content:
+  - type: text
+    text: Look up record SYN-1001 please
+    provenance: principal
+    labels:
+    - pii
+expect:
+  failure: type_check

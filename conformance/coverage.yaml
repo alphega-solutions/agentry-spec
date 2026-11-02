@@ -3,3 +3,4 @@ enforced:
   - CORE
   - CFG
   - TOOL
+  - HOOK

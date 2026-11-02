@@ -1,0 +1,130 @@
+schemaVersion: "0.1.0"
+id: hook.approval-rule-error-escalates
+title: An approval rule that fails to evaluate is treated as true, so the call escalates
+description: >-
+  `set_flag` has `approval: policy` and an optional `flag` argument. The
+  persona's only approval rule is `call.arguments.flag == 'on'`; it
+  type-checks at load (`call.arguments` is a dynamic map), but reading a
+  missing map key is a CEL evaluation error at run time (HOOK-113).
+
+  - $sOff: flag `off` → the rule evaluates to false → dispatched.
+  - $sOn: flag `on` → true → escalation from source `approval`.
+  - $sMissing: no `flag` → evaluation error → treated as true →
+    escalation from source `approval`; the call is not dispatched.
+
+  The spec does not say whether an approval-rule evaluation error emits an
+  `error` event (HOOK-113 is about hooks), so none is asserted either way.
+requirements: [HOOK-132]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: set_flag
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Set a flag on a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string }, flag: { type: string } }
+        effect: mutating
+        idempotent: true
+        approval: policy
+        binding: { kind: native, handler: test.set_flag }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [set_flag@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        approvalRules: ["call.arguments.flag == 'on'"]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # $sOff
+        - parts: [{ type: tool_call, callId: c1, tool: set_flag, arguments: { key: k1, flag: "off" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Flag set." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sOn
+        - parts: [{ type: tool_call, callId: c1, tool: set_flag, arguments: { key: k1, flag: "on" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sMissing
+        - parts: [{ type: tool_call, callId: c1, tool: set_flag, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      set_flag:
+        - ok: { output: { set: true } }
+script:
+  - action: run
+    bind: $sOff
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set the flag on k1 off" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sOn
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set the flag on k1 on" }]
+    expect: { ok: true, endReason: escalated }
+  - action: run
+    bind: $sMissing
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set the flag on k1" }]
+    expect: { ok: true, endReason: escalated }
+expect:
+  sessions:
+    $sOff:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: set_flag } }
+          - { type: tool.result, payload: { callId: c1, result: { ok: { output: { set: true } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: escalation.raised }
+    $sOn:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - { type: escalation.raised, payload: { escalation: { sources: [approval], pendingActions: [{ callId: c1, source: approval }] } } }
+          - { type: run.ended, payload: { reason: escalated } }
+      absentEvents:
+        - { type: tool.call }
+    $sMissing:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - { type: escalation.raised, payload: { escalation: { sources: [approval], pendingActions: [{ callId: c1, source: approval }] } } }
+          - { type: run.ended, payload: { reason: escalated } }
+      absentEvents:
+        - { type: tool.call }
+  stubCalls:
+    set_flag: [{ arguments: { key: k1, flag: "off" } }]

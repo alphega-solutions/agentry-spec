@@ -1,0 +1,53 @@
+schemaVersion: 0.1.0
+id: cel.point-before-tool-call
+description: >-
+  The beforeToolCall variables: `tool`, `call` and `content`, which at the tool
+  points is exactly the call's one `tool_call` part (Area 5 amendment,
+  HOOK-091). A content part shows only type, text, value, labels and provenance
+  (HOOK-112), so the arguments are read from `call.arguments`. `session.step` is
+  the step of the call (1-based).
+requirements:
+- HOOK-110
+point: beforeToolCall
+expression: session.tainted && tool.effect == 'mutating' && !tool.idempotent && 'pii' in tool.sensitivity
+  && call.arguments.recordId.startsWith('SYN-') && size(content) == 1 && content[0].type == 'tool_call'
+  && content[0].provenance == 'model'
+variables:
+  principal:
+    subject: user-1
+    tenant: t1
+    roles:
+    - clinician
+    - reviewer
+    attributes:
+      department: SYN-cardiology
+      site: SYN-site-7
+      manager: null
+    assurance: multi_factor
+  session:
+    persona: assistant@1
+    tainted: true
+    turn: 3
+    step: 2
+  content:
+  - type: tool_call
+    callId: SYN-call-1
+    tool: update_record
+    arguments:
+      recordId: SYN-1001
+      status: closed
+    provenance: model
+    labels: []
+  tool:
+    id: update_record
+    effect: mutating
+    egress: false
+    idempotent: false
+    sensitivity:
+    - pii
+  call:
+    arguments:
+      recordId: SYN-1001
+      status: closed
+expect:
+  value: true

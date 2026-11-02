@@ -1,0 +1,168 @@
+schemaVersion: "0.1.0"
+id: hook.source-model-tokens-not-budgeted
+title: A model hook's tokens count against its own limit, not the turn budget
+description: >-
+  The profile's per-turn token budget is 60 (PROV-071: input + output
+  tokens). A model hook at beforeModelCall, with its own `maxTokens` of 200,
+  calls scripted-judge before each session model call and answers
+  `continue`, using 70 tokens each time. The session alone uses 25 + 25 = 50
+  tokens over two steps (a lookup, then a text response), which fits the
+  budget; with either judge call counted, the turn would exceed it before
+  step 2 (or before step 1). The run responds, both session model calls are
+  made, and the judge is called twice.
+
+
+  Control, $sOver: the same profile, where the session's own model calls
+  exceed the budget (40, then 40 more with another tool call requested), so
+  the run ends `budget_exhausted` with no third model call. This shows the
+  budget is in force for the profile. Whether the budget check before step
+  3 comes before or after that step's beforeModelCall hooks is not
+  specified, so the judge is called twice or three times in $sOver: a spare
+  judge response is scripted and only "at least four judge calls in all"
+  is asserted.
+requirements: [HOOK-103]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          - { id: scripted-judge, adapter: scripted, endpoint: "memory://scripted-judge", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: Hook
+        id: judge
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeModelCall]
+        results: [block]
+        timeoutMs: 1000
+        source:
+          kind: model
+          model: { provider: scripted-judge, name: judge-1 }
+          instructions: "Classify the request. Answer with a HookResult."
+          maxTokens: 200
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 60 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [judge@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Found it." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: a } }]
+          usage: { inputTokens: 30, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: lookup, arguments: { key: b } }]
+          usage: { inputTokens: 30, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b: { responses: [] }
+    scripted-judge:
+      responses:
+        - parts: [{ type: structured, value: { result: continue } }]
+          usage: { inputTokens: 60, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: structured, value: { result: continue } }]
+          usage: { inputTokens: 60, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: structured, value: { result: continue } }]
+          usage: { inputTokens: 60, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: structured, value: { result: continue } }]
+          usage: { inputTokens: 60, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: structured, value: { result: continue } }]
+          usage: { inputTokens: 60, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "SYN-VALUE-0103" } }
+        - ok: { output: { value: "SYN-VALUE-A" } }
+        - ok: { output: { value: "SYN-VALUE-B" } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sOver
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Keep looking things up" }]
+    expect: { ok: true, endReason: budget_exhausted }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, step: 1, payload: { provider: scripted-a } }
+          - { type: tool.result, payload: { callId: c1, result: { ok: { output: { value: "SYN-VALUE-0103" } } } } }
+          - { type: model.request, step: 2, payload: { provider: scripted-a } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: run.ended, payload: { reason: budget_exhausted } }
+        - { type: error }
+    $sOver:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, step: 2, payload: { provider: scripted-a } }
+          - { type: run.ended, payload: { reason: budget_exhausted } }
+      absentEvents:
+        - { type: model.request, step: 3 }
+  providerRequests:
+    scripted-a: { count: 4 }
+    scripted-judge: { $count: { of: { provider: scripted-judge }, gte: 4 } }
+  delivered:
+    $s: { text: "Found it.", fallback: false }

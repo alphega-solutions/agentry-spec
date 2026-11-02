@@ -1,0 +1,153 @@
+schemaVersion: "0.1.0"
+id: hook.source-model-call-isolated
+title: A model hook's call has no tools, passes through no hooks, emits no model events, and its usage is recorded on the decision
+description: >-
+  A model guardrail hook `judge` at beforeToolCall, scoped to
+  `update_record`, calls its own scripted provider, scripted-judge, which
+  answers `block` with test.guard.blocked and a scripted usage. A native
+  telemetry hook `observer` at beforeModelCall and afterModelCall answers
+  `continue` and records each invocation.
+
+
+  The model asks to update k1; the judge blocks the call; the model gets a
+  `policy` error and responds. So there are two session model calls and one
+  judge call. The judge's request carries no tools. `observer` runs only
+  around the two session model calls (four invocations), never around the
+  judge's call. Every `model.request` and `model.response` event is for
+  scripted-a; none is for scripted-judge. The hook.decision records the
+  judge's usage exactly.
+
+
+  Reading chosen: a request with no tools is recorded with `tools: []`
+  (the provider-request record always lists the visible tools).
+requirements: [HOOK-102]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          - { id: scripted-judge, adapter: scripted, endpoint: "memory://scripted-judge", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: Hook
+        id: judge
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [block]
+        timeoutMs: 1000
+        match: "tool.id == 'update_record'"
+        source:
+          kind: model
+          model: { provider: scripted-judge, name: judge-1 }
+          instructions: "Decide whether this tool call is allowed. Answer with a HookResult."
+          maxTokens: 200
+      - kind: Hook
+        id: observer
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeModelCall, afterModelCall]
+        results: [annotate]
+        purpose: telemetry
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.observer }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [judge@1, observer@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "I could not update it." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b: { responses: [] }
+    scripted-judge:
+      responses:
+        - parts: [{ type: structured, value: { result: block, reasonCode: test.guard.blocked } }]
+          usage: { inputTokens: 37, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record: []
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, step: 1, payload: { provider: scripted-a } }
+          - { type: model.response, step: 1, payload: { provider: scripted-a } }
+          - type: hook.decision
+            payload:
+              hook: judge@1
+              point: beforeToolCall
+              result: block
+              reasonCode: test.guard.blocked
+              usage: { inputTokens: 37, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+          - { type: tool.result, payload: { callId: c1, result: { error: { category: policy } } } }
+          - { type: model.request, step: 2, payload: { provider: scripted-a } }
+          - { type: model.response, step: 2, payload: { provider: scripted-a } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: model.request, payload: { provider: scripted-judge } }
+        - { type: model.response, payload: { provider: scripted-judge } }
+        - { type: model.request, payload: { model: judge-1 } }
+        - { type: model.response, payload: { model: judge-1 } }
+        - { type: tool.call }
+  providerRequests:
+    scripted-judge:
+      - { tools: [] }
+    scripted-a:
+      - tools: { $contains: [{ name: update_record }] }
+      - {}
+  stubCalls:
+    observer:
+      - { arguments: { point: beforeModelCall, session: { step: 1 } } }
+      - { arguments: { point: afterModelCall, session: { step: 1 } } }
+      - { arguments: { point: beforeModelCall, session: { step: 2 } } }
+      - { arguments: { point: afterModelCall, session: { step: 2 } } }
+    update_record: { count: 0 }

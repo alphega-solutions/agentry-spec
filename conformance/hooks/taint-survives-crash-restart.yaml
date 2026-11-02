@@ -1,0 +1,143 @@
+schemaVersion: "0.1.0"
+id: hook.taint-survives-crash-restart
+title: Taint survives a crash and restart; the recovered session still applies the taint rule
+description: >-
+  The bundle trusts `lookup@1`; `fetch_external` is untrusted.
+
+  Turn 1 ($r1): an untrusted fetch_external result taints the session; the
+  run responds and the session is checkpointed idle.
+
+  Turn 2 ($r2): the model calls the trusted lookup. The implementation is
+  crashed at `after_dispatch`, so all in-process state is lost. After a
+  restart and a clock advance past the run lease, run() performs recovery
+  first (HITL-092; HITL-091 as amended 2026-11-01, step 2): the read call is
+  re-dispatched and the orphaned run continues to `responded`.
+
+  Turn 3 ($r3, the triggering run): the model calls the mutating
+  update_record. The only content added since the restart is trusted, so
+  the call can only be stopped if the taint was restored from storage: it
+  escalates at stage 5, and the decision names tool:fetch_external.
+requirements: [HOOK-121]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        trustedTools: [lookup@1]
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+      - kind: Tool
+        id: fetch_external
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Fetch a record from an external source.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        binding: { kind: native, handler: test.fetch_external }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, fetch_external@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # Turn 1
+        - parts: [{ type: tool_call, callId: c1, tool: fetch_external, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Fetched." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # Turn 2 (crashed, then recovered)
+        - parts: [{ type: tool_call, callId: c2, tool: lookup, arguments: { key: k2 } }]
+          usage: { inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Found it." }]
+          usage: { inputTokens: 50, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        # Turn 3
+        - parts: [{ type: tool_call, callId: c3, tool: update_record, arguments: { key: k2, value: v2 } }]
+          usage: { inputTokens: 60, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      fetch_external:
+        - ok: { output: { value: "SYN-UNTRUSTED-0001" } }
+      lookup:
+        - ok: { output: { value: "SYN-TRUSTED-0002" } }
+        - ok: { output: { value: "SYN-TRUSTED-0002" } }
+      update_record: []
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Fetch k1" }]
+    expect: { ok: true, endReason: responded }
+  - crash: { at: after_dispatch, session: $s }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Look up k2" }]
+  - restart: {}
+  - clock: { advance: PT1H }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Set k2 to v2" }]
+    expect: { ok: true, endReason: escalated }
+expect:
+  sessions:
+    $s:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, runId: $r1, payload: { callId: c1, tool: fetch_external } }
+          - { type: run.ended, runId: $r1, payload: { reason: responded } }
+          - { type: tool.call, runId: $r2, turn: 2, payload: { callId: c2, tool: lookup } }
+          - { type: tool.result, runId: $r2, turn: 2, payload: { callId: c2, tool: lookup } }
+          - { type: run.ended, runId: $r2, payload: { reason: responded } }
+          - { type: run.started, runId: { $all: [$r3, { $not: $r2 }] }, payload: { kind: run } }
+          - { type: turn.started, runId: $r3, turn: 3 }
+          - { type: policy.decision, runId: $r3, payload: { kind: taint, outcome: escalate, callId: c3, tool: update_record, provenances: ["tool:fetch_external"] } }
+          - { type: escalation.raised, runId: $r3, payload: { escalation: { sources: [taint], pendingActions: [{ callId: c3, source: taint }] } } }
+          - { type: run.ended, runId: $r3, payload: { reason: escalated } }
+      absentEvents:
+        - { type: tool.call, payload: { callId: c3 } }
+      checkpoint:
+        taint: { tainted: true, provenances: ["tool:fetch_external"] }
+  stubCalls:
+    fetch_external: { count: 1 }
+    lookup:
+      - { arguments: { key: k2 }, completed: false }
+      - { arguments: { key: k2 }, completed: true }
+    update_record: { count: 0 }

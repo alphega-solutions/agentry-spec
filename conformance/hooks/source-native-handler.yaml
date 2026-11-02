@@ -1,0 +1,143 @@
+schemaVersion: "0.1.0"
+id: hook.source-native-handler
+title: A native hook's registered handler receives the HookRequest view of its point, and its result applies
+description: >-
+  A native guardrail hook at beforeToolCall, scoped by `match` to
+  `update_record`. Its registered handler answers `continue` in $sAllow and
+  `block` with test.guard.blocked in $sDeny. In both sessions the model asks
+  to update k1. The handler is given the same HookRequest view a remote hook
+  receives (hook, point, tenant, principal, session and run IDs, session
+  view, tool and call, no result). `continue` lets the call through with no
+  hook.decision; `block` stops it: no dispatch, a hook.decision with the
+  reason code, and a `policy` error to the model.
+requirements: [HOOK-081, HOOK-091]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Hook
+        id: native-guard
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [block]
+        timeoutMs: 1000
+        match: "tool.id == 'update_record'"
+        source: { kind: native, handler: test.hook.native-guard }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [native-guard@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "I could not update it." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+    nativeHooks:
+      native-guard:
+        - { result: continue }
+        - { result: block, reasonCode: test.guard.blocked }
+script:
+  - action: run
+    bind: $sAllow
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sDeny
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sAllow:
+      events:
+        mode: subsequence
+        items:
+          - { type: run.started, runId: $rAllow }
+          - { type: tool.call, payload: { callId: c1, tool: update_record, arguments: { key: k1, value: v1 } } }
+          - { type: tool.result, payload: { callId: c1, result: { ok: { output: { updated: true } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: hook.decision }
+    $sDeny:
+      events:
+        mode: subsequence
+        items:
+          - { type: run.started, runId: $rDeny }
+          - { type: hook.decision, payload: { hook: native-guard@1, point: beforeToolCall, result: block, reasonCode: test.guard.blocked } }
+          - { type: tool.result, payload: { callId: c1, result: { error: { category: policy } } } }
+          - { type: model.request, step: 2 }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call }
+  stubCalls:
+    native-guard:
+      - arguments:
+          hook: native-guard@1
+          point: beforeToolCall
+          tenant: t1
+          sessionId: $sAllow
+          runId: $rAllow
+          principal: { subject: user-1, tenant: t1, assurance: multi_factor }
+          session: { persona: assistant@1, tainted: false, turn: 1, step: 1 }
+          content: { $contains: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }] }
+          tool: { id: update_record, effect: mutating, egress: false, idempotent: false }
+          call: { arguments: { key: k1, value: v1 } }
+          result: { $absent: true }
+      - arguments:
+          hook: native-guard@1
+          point: beforeToolCall
+          tenant: t1
+          sessionId: $sDeny
+          runId: $rDeny
+          principal: { subject: user-1, tenant: t1 }
+          session: { persona: assistant@1, turn: 1, step: 1 }
+          tool: { id: update_record }
+          call: { arguments: { key: k1, value: v1 } }
+          result: { $absent: true }
+    update_record: [{ arguments: { key: k1, value: v1 } }]
+  providerRequests:
+    scripted-a:
+      - {}
+      - {}
+      - {}
+      - messages:
+          $contains:
+            - role: tool
+              parts:
+                $contains:
+                  - { type: tool_result, callId: c1, result: { error: { category: policy } } }

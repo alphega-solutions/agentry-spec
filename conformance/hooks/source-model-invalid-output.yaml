@@ -1,0 +1,210 @@
+schemaVersion: "0.1.0"
+id: hook.source-model-invalid-output
+title: A model hook whose output is not a valid HookResult has failed, and a fail-closed model hook then blocks
+description: >-
+  A model guardrail hook at beforeModelCall declares `block` (so it is
+  `failClosed`, HOOK-101) and calls its own scripted provider,
+  scripted-judge. One session per judge answer:
+
+  - $sText: a text part that is not JSON;
+  - $sUnknownJson: a text part holding JSON whose `result` is not a hook
+    result;
+  - $sUnknownStructured: a structured part whose `result` is not a hook
+    result;
+  - $sNoReason: a structured `block` without the required `reasonCode`;
+  - $sControl: a structured `continue`.
+
+  Each of the first four is a hook failure: an `error` event from source
+  `hook`, then a block (CORE-180): the session's model is never called, the
+  run ends `blocked`, and the principal gets the fallback message. The
+  control session's model is called and the run responds, with no error.
+  Each failure's `error` event has code agentry.hook.invalid_result,
+  category fatal, retryable false, source hook, and its block emits
+  hook.decision {result: block, reasonCode: agentry.hook.invalid_result}
+  (HOOK-051 as amended 2026-11-01).
+requirements: [HOOK-101, HOOK-050, HOOK-051]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          - { id: scripted-judge, adapter: scripted, endpoint: "memory://scripted-judge", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: Hook
+        id: judge
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeModelCall]
+        results: [block]
+        timeoutMs: 1000
+        source:
+          kind: model
+          model: { provider: scripted-judge, name: judge-1 }
+          instructions: "Classify the request. Answer with a HookResult."
+          maxTokens: 200
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [judge@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b: { responses: [] }
+    scripted-judge:
+      responses:
+        - parts: [{ type: text, text: "SYN-VERDICT: this looks fine to me" }]
+          usage: { inputTokens: 40, outputTokens: 8, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "{\"result\": \"allow\"}" }]
+          usage: { inputTokens: 40, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: structured, value: { result: allow } }]
+          usage: { inputTokens: 40, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: structured, value: { result: block } }]
+          usage: { inputTokens: 40, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: structured, value: { result: continue } }]
+          usage: { inputTokens: 40, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $sText
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hello" }]
+    expect: { ok: true, endReason: blocked }
+  - action: run
+    bind: $sUnknownJson
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hello" }]
+    expect: { ok: true, endReason: blocked }
+  - action: run
+    bind: $sUnknownStructured
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hello" }]
+    expect: { ok: true, endReason: blocked }
+  - action: run
+    bind: $sNoReason
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hello" }]
+    expect: { ok: true, endReason: blocked }
+  - action: run
+    bind: $sControl
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hello" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sText:
+      events:
+        mode: subsequence
+        items:
+          - { type: error, payload: { error: { code: agentry.hook.invalid_result, category: fatal, retryable: false, source: hook } } }
+          - { type: run.ended, payload: { reason: blocked } }
+      absentEvents:
+        - { type: model.request }
+    $sUnknownJson:
+      events:
+        mode: subsequence
+        items:
+          - { type: error, payload: { error: { code: agentry.hook.invalid_result, category: fatal, retryable: false, source: hook } } }
+          - { type: run.ended, payload: { reason: blocked } }
+      absentEvents:
+        - { type: model.request }
+    $sUnknownStructured:
+      events:
+        mode: subsequence
+        items:
+          - { type: error, payload: { error: { code: agentry.hook.invalid_result, category: fatal, retryable: false, source: hook } } }
+          - { type: run.ended, payload: { reason: blocked } }
+      absentEvents:
+        - { type: model.request }
+    $sNoReason:
+      events:
+        mode: subsequence
+        items:
+          - { type: error, payload: { error: { code: agentry.hook.invalid_result, category: fatal, retryable: false, source: hook } } }
+          - { type: run.ended, payload: { reason: blocked } }
+      absentEvents:
+        - { type: model.request }
+    $sControl:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, payload: { provider: scripted-a } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: error }
+        - { type: hook.decision }
+  ports:
+    eventLog:
+      t1:
+        $sText:
+          $all:
+            - $count: { of: { type: hook.decision }, equals: 1 }
+            - $count: { of: { type: hook.decision, payload: { hook: judge@1, point: beforeModelCall, result: block, reasonCode: agentry.hook.invalid_result } }, equals: 1 }
+        $sUnknownJson:
+          $all:
+            - $count: { of: { type: hook.decision }, equals: 1 }
+            - $count: { of: { type: hook.decision, payload: { hook: judge@1, point: beforeModelCall, result: block, reasonCode: agentry.hook.invalid_result } }, equals: 1 }
+        $sUnknownStructured:
+          $all:
+            - $count: { of: { type: hook.decision }, equals: 1 }
+            - $count: { of: { type: hook.decision, payload: { hook: judge@1, point: beforeModelCall, result: block, reasonCode: agentry.hook.invalid_result } }, equals: 1 }
+        $sNoReason:
+          $all:
+            - $count: { of: { type: hook.decision }, equals: 1 }
+            - $count: { of: { type: hook.decision, payload: { hook: judge@1, point: beforeModelCall, result: block, reasonCode: agentry.hook.invalid_result } }, equals: 1 }
+  providerRequests:
+    scripted-judge: { count: 5 }
+    scripted-a: { count: 1 }
+    scripted-b: { count: 0 }
+  delivered:
+    $sText: { text: "This request was blocked.", fallback: true }
+    $sUnknownJson: { text: "This request was blocked.", fallback: true }
+    $sUnknownStructured: { text: "This request was blocked.", fallback: true }
+    $sNoReason: { text: "This request was blocked.", fallback: true }
+    $sControl: { text: "Hello.", fallback: false }

@@ -1,0 +1,33 @@
+schemaVersion: 0.1.0
+id: cel.point-after-model-call
+description: >-
+  afterModelCall sees the model's response parts; text parts expose `text`.
+requirements:
+- HOOK-110
+point: afterModelCall
+expression: content.filter(p, p.provenance == 'model' && p.type == 'text').exists(p, p.text.matches('SYN-[0-9]{4}'))
+variables:
+  principal:
+    subject: user-1
+    tenant: t1
+    roles:
+    - clinician
+    - reviewer
+    attributes:
+      department: SYN-cardiology
+      site: SYN-site-7
+      manager: null
+    assurance: multi_factor
+  session:
+    persona: assistant@1
+    tainted: false
+    turn: 3
+    step: 2
+  content:
+  - type: text
+    text: Record SYN-1001 belongs to user-1
+    provenance: model
+    labels:
+    - pii
+expect:
+  value: true

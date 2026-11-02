@@ -1,0 +1,118 @@
+schemaVersion: "0.1.0"
+id: hook.load-model-provider-disallowed
+title: A model hook must declare a model, instructions and a token limit, and its provider must be allowed
+description: >-
+  The deployment declares a judge provider, `scripted-judge`. The persona
+  requires `judge@1`, a model hook at beforeModelCall on
+  `scripted-judge/judge-1`, which loads in setup (the baseline bundle and
+  persona restrict no providers). Failing loads:
+
+  - the bundle's `allowedProviders` is [scripted-a, scripted-b] →
+    rejected;
+  - the persona's own `allowedProviders` is [scripted-a, scripted-b] (the
+    bundle unrestricted) → rejected;
+  - the hook omits `instructions`, or `maxTokens` → rejected (HOOK-100:
+    a model hook declares a model, instructions, and a token limit).
+
+  Controls load: the bundle listing scripted-judge as well, and the persona
+  listing it as well. In each failing case the session model
+  (scripted-a/model-a with fallback scripted-b/model-b) is allowed, so the
+  hook's provider is the only error.
+requirements: [HOOK-100]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          - { id: scripted-judge, adapter: scripted, endpoint: "memory://scripted-judge", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - { kind: Hook, id: judge, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [block], timeoutMs: 5000, source: { kind: model, model: { provider: scripted-judge, name: judge-1 }, instructions: "Classify the request. Answer with a HookResult.", maxTokens: 200 } }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [judge@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  # Bundle excludes the judge provider.
+  - load:
+      artifacts:
+        - kind: PolicyBundle
+          id: org
+          version: 1
+          schemaVersion: "0.1.0"
+          policyInstructions: "Follow organisational policy."
+          defaultFallbackMessage: "I can't help with that request."
+          allowedProviders: [scripted-a, scripted-b]
+          sensitivityPolicies:
+            pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+            phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+    expect: { ok: false, error: { category: configuration } }
+  # Persona excludes the judge provider.
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], allowedProviders: [scripted-a, scripted-b], requiredHooks: [judge@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }] } }
+    expect: { ok: false, error: { category: configuration } }
+  # Missing instructions.
+  - load:
+      artifacts:
+        - { kind: Hook, id: judge, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [block], timeoutMs: 5000, source: { kind: model, model: { provider: scripted-judge, name: judge-1 }, maxTokens: 200 } }
+    expect: { ok: false, error: { category: configuration } }
+  # Missing token limit.
+  - load:
+      artifacts:
+        - { kind: Hook, id: judge, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [block], timeoutMs: 5000, source: { kind: model, model: { provider: scripted-judge, name: judge-1 }, instructions: "Classify the request. Answer with a HookResult." } }
+    expect: { ok: false, error: { category: configuration } }
+  # Controls: the judge provider allowed by each restricting layer.
+  - load:
+      artifacts:
+        - kind: PolicyBundle
+          id: org
+          version: 1
+          schemaVersion: "0.1.0"
+          policyInstructions: "Follow organisational policy."
+          defaultFallbackMessage: "I can't help with that request."
+          allowedProviders: [scripted-a, scripted-b, scripted-judge]
+          sensitivityPolicies:
+            pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+            phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+    expect: { ok: true }
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], allowedProviders: [scripted-a, scripted-b, scripted-judge], requiredHooks: [judge@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }] } }
+    expect: { ok: true }
+expect: {}

@@ -8,6 +8,7 @@ required: [schemaVersion, id, requirements, point, expression, expect]
 properties:
   schemaVersion: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/contractVersion" }
   id: { type: string, pattern: "^cel\\.[a-z0-9-]+(\\.[a-z0-9-]+)*$" }
+  description: { type: string }
   requirements:
     type: array
     minItems: 1
@@ -16,7 +17,13 @@ properties:
     description: Hook point whose variables are in scope (HOOK §9.1).
     enum: [sessionStart, beforeModelCall, afterModelCall, beforeToolCall, afterToolCall, beforeResponse, onError, sessionEnd]
   expression: { type: string, minLength: 1 }
-  variables: { type: object }
+  variables:
+    description: >-
+      Values of the point's variables (Area 5 §9.1), in the shape a
+      `HookRequest` carries them. Variables not given are absent at the
+      point. Only `principal`, `session`, `content`, `tool`, `call`, `result`
+      and `error` are CEL variables; `summary` is not.
+    $ref: "https://alphega.io/agentry/schemas/core/hook/v1.json#/$defs/variables"
   expect:
     type: object
     additionalProperties: false
@@ -24,5 +31,10 @@ properties:
       - required: [value]
       - required: [failure]
     properties:
-      value: {}
+      value:
+        description: >-
+          The expected result, compared by CEL type and value: a YAML integer
+          is a CEL `int`, a YAML float (e.g. `3.0`) a `double`, so `3` does
+          not match `3.0`. Strings, booleans, null, lists and maps map
+          directly.
       failure: { enum: [compile, type_check, runtime] }
