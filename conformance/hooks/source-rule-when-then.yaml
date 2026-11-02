@@ -1,0 +1,175 @@
+schemaVersion: "0.1.0"
+id: hook.source-rule-when-then
+title: A rule hook returns its `then` result when `when` is true and `continue` when it is false
+description: >-
+  Three rule hooks at beforeToolCall, one per `then` result, each keyed on
+  the `lookup` call's `key` argument. In every session the model calls
+  `lookup` once.
+
+  - $sFalse: key k-none — every `when` is false → `continue` for all three:
+    no hook.decision, the call is dispatched.
+  - $sAnnotate: key k-annotate → annotate with `pii`: one hook.decision,
+    the call is still dispatched.
+  - $sBlock: key k-block → block with test.guard.blocked: the call is not
+    dispatched and the model gets a `policy` error result.
+  - $sEscalate: key k-escalate → escalate with test.guard.review: the run
+    ends `escalated` with a hook-sourced escalation and the session is
+    suspended; the call is not dispatched.
+requirements: [HOOK-090]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Hook
+        id: rule-annotate
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [annotate]
+        timeoutMs: 1000
+        source: { kind: rule, when: "call.arguments.key == 'k-annotate'", then: { result: annotate, labels: [pii] } }
+      - kind: Hook
+        id: rule-block
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [block]
+        timeoutMs: 1000
+        source: { kind: rule, when: "call.arguments.key == 'k-block'", then: { result: block, reasonCode: test.guard.blocked } }
+      - kind: Hook
+        id: rule-escalate
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [escalate]
+        timeoutMs: 1000
+        source: { kind: rule, when: "call.arguments.key == 'k-escalate'", then: { result: escalate, reasonCode: test.guard.review } }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [rule-annotate@1, rule-block@1, rule-escalate@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k-none } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Found it." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k-annotate } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Found it." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k-block } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "I could not look it up." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k-escalate } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "SYN-VALUE-NONE" } }
+        - ok: { output: { value: "SYN-VALUE-ANNOTATE" } }
+script:
+  - action: run
+    bind: $sFalse
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k-none" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sAnnotate
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k-annotate" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sBlock
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k-block" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sEscalate
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k-escalate" }]
+    expect: { ok: true, endReason: escalated }
+expect:
+  sessions:
+    $sFalse:
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: lookup, arguments: { key: k-none } } }
+          - { type: tool.result, payload: { callId: c1, result: { ok: { output: { value: "SYN-VALUE-NONE" } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: hook.decision }
+        - { type: escalation.raised }
+    $sAnnotate:
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: rule-annotate@1, point: beforeToolCall, result: annotate, labelsAdded: { $contains: [pii] } } }
+          - { type: tool.call, payload: { callId: c1, tool: lookup, arguments: { key: k-annotate } } }
+          - { type: tool.result, payload: { callId: c1, result: { ok: { output: { value: "SYN-VALUE-ANNOTATE" } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: hook.decision, payload: { hook: rule-block@1 } }
+        - { type: hook.decision, payload: { hook: rule-escalate@1 } }
+        - { type: escalation.raised }
+    $sBlock:
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: rule-block@1, point: beforeToolCall, result: block, reasonCode: test.guard.blocked } }
+          - { type: tool.result, payload: { callId: c1, result: { error: { category: policy } } } }
+          - { type: model.request, step: 2 }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call }
+        - { type: hook.decision, payload: { hook: rule-annotate@1 } }
+        - { type: hook.decision, payload: { hook: rule-escalate@1 } }
+        - { type: escalation.raised }
+    $sEscalate:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: rule-escalate@1, point: beforeToolCall, result: escalate, reasonCode: test.guard.review } }
+          - { type: escalation.raised, payload: { escalation: { sources: [hook], pendingActions: [{ callId: c1, arguments: { key: k-escalate } }] } } }
+          - { type: run.ended, payload: { reason: escalated } }
+      absentEvents:
+        - { type: tool.call }
+        - { type: hook.decision, payload: { hook: rule-annotate@1 } }
+        - { type: hook.decision, payload: { hook: rule-block@1 } }
+  stubCalls:
+    lookup:
+      - { arguments: { key: k-none } }
+      - { arguments: { key: k-annotate } }
+  providerRequests:
+    scripted-a: { count: 7 }
