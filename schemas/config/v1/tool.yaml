@@ -15,8 +15,10 @@ description: >-
   field, since output trust is granted only by a policy bundle's
   `trustedTools` (TOOL-004, CFG-071); `onTaintedEgress` never `allow`
   (TOOL-001); a retrieval tool's `effect` is `read` (CTX-020); binding
-  fields per kind (TOOL-010, `conformance/shared/NAMES.md`); credentials only
-  as secret references (TOOL-011, CFG-061).
+  fields per kind (TOOL-010); `credentials` only on `native` and `langchain`
+  bindings, and only as secret references (TOOL-011, CFG-061, Area 4
+  amendment 2026-11-01); an agent-bound tool never declares `idempotent:
+  false` (ORCH-002).
 
 
   Checked at load time, not here: that `input` and `output` are valid JSON
@@ -34,6 +36,18 @@ allOf:
       properties: { binding: { required: [kind], properties: { kind: { const: retrieval } } } }
     then:
       properties: { effect: { const: read } }
+  - description: >-
+      An agent-bound tool is idempotent by construction (ORCH-002): its
+      started record holds the child session ID, so recovery resumes the
+      same child rather than starting a new one. Declaring `idempotent:
+      false` on it is a configuration error (Area 4 amendment 2026-11-01).
+      Omitting `idempotent` is allowed; the default does not apply to agent
+      tools.
+    if:
+      required: [binding]
+      properties: { binding: { required: [kind], properties: { kind: { const: agent } } } }
+    then:
+      properties: { idempotent: { const: true } }
 unevaluatedProperties: false
 required: [description, input, effect, binding]
 properties:
@@ -61,7 +75,11 @@ properties:
     description: >-
       JSON Schema (draft 2020-12) for the expected `ok` output. Absent: none.
       An `ok` result that does not validate is replaced by a `fatal` error
-      (TOOL-070).
+      (TOOL-070). Only object schemas are accepted, although JSON Schema
+      also allows the booleans `true` and `false` as schemas: `true` means
+      the same as leaving `output` out (every output is accepted), and
+      `false` would reject every output, making every successful call
+      `fatal`. Neither adds anything a tool needs.
     type: object
   effect:
     description: Whether the tool changes state.
@@ -73,7 +91,9 @@ properties:
   idempotent:
     description: >-
       Whether repeating a call with the same idempotency key is safe (TOOL-052,
-      TOOL-062). Agent-bound tools are idempotent by construction (ORCH-002).
+      TOOL-062). Default `false`, except for agent-bound tools, which are
+      idempotent by construction (ORCH-002): for them the value is always
+      `true`, and `false` is rejected.
     type: boolean
     default: false
   approval:
@@ -120,9 +140,13 @@ $defs:
 
   credentials:
     description: >-
-      Credential name → secret reference (TOOL-011, CFG-060). The only place a
-      binding takes secrets; each value must be a `secret://` reference, never
-      a literal (CFG-061). Names are binding-defined, e.g. `apiKey`.
+      Credential name → secret reference (TOOL-011, CFG-060). Allowed on
+      `native` and `langchain` bindings only (Area 4 amendment 2026-11-01):
+      `mcp` and `http` bindings use the credentials declared on their
+      deployment server or endpoint, and `agent` and `retrieval` bindings take
+      none. Each value must be a `secret://` reference, never a literal
+      (CFG-061). With `credentialMode: principal` the references are resolved
+      per principal (CFG-062). Names are binding-defined, e.g. `apiKey`.
     type: object
     propertyNames: { pattern: "^[A-Za-z][A-Za-z0-9_.-]{0,63}$" }
     additionalProperties:
@@ -132,8 +156,8 @@ $defs:
   binding:
     description: >-
       How the tool is invoked (Area 4 §4, as amended by Area 7). Discriminated
-      by `kind`; each kind has exactly the fields below plus optional
-      `credentials`. Unknown kinds and fields are rejected. Implementations
+      by `kind`; each kind has exactly the fields below (`credentials` only
+      on `native` and `langchain`). Unknown kinds and fields are rejected. Implementations
       must support `native`, `mcp`, `http` and `agent`; `langchain` is
       optional (TOOL-013).
     type: object
@@ -167,7 +191,9 @@ $defs:
       credentials: { $ref: "#/$defs/credentials" }
 
   mcpBinding:
-    description: A tool on an MCP server declared in the deployment (TOOL-093).
+    description: >-
+      A tool on an MCP server declared in the deployment (TOOL-093). Takes no
+      `credentials`: the server's deployment entry holds them.
     type: object
     additionalProperties: false
     required: [kind, server, tool]
@@ -180,10 +206,12 @@ $defs:
         description: The tool's name on that server.
         type: string
         minLength: 1
-      credentials: { $ref: "#/$defs/credentials" }
 
   httpBinding:
-    description: An HTTP endpoint, declaratively mapped (e.g. from an OpenAPI operation).
+    description: >-
+      An HTTP endpoint, declaratively mapped (e.g. from an OpenAPI
+      operation). Takes no `credentials`: the endpoint's deployment entry
+      holds them.
     type: object
     additionalProperties: false
     required: [kind, endpoint, operation]
@@ -196,7 +224,6 @@ $defs:
         description: Operation ID.
         type: string
         minLength: 1
-      credentials: { $ref: "#/$defs/credentials" }
 
   agentBinding:
     description: >-
@@ -210,7 +237,6 @@ $defs:
       persona:
         description: The persona, as `id@version`.
         $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/artifactRef"
-      credentials: { $ref: "#/$defs/credentials" }
 
   retrievalBinding:
     description: >-
@@ -224,7 +250,6 @@ $defs:
       source:
         description: A vector store source ID from the deployment's `ports.vectorStore.sources`.
         $ref: "#/$defs/id"
-      credentials: { $ref: "#/$defs/credentials" }
 
   langchainBinding:
     description: A LangChain tool, through the optional adapter (ADR-0013).

@@ -7,6 +7,7 @@ from __future__ import annotations
 import re
 import sys
 
+import yaml
 from jsonschema import Draft202012Validator, FormatChecker
 
 from common import ROOT, fixture_files, load_schemas, load_yaml, registry, spec_requirements
@@ -549,28 +550,52 @@ def _apply(arts: dict, add, remove) -> dict:
     return out
 
 
-def _native(arts: dict) -> list[tuple[str, str]]:
+def _native(arts: dict, hooks: bool = False) -> list[tuple[str, str]]:
+    """(artifact ID, handler) of native-bound Tools, and with `hooks` also of
+    Hooks whose `source` is native (NAMES.md)."""
     found = []
     for a in arts.values():
-        b = a.get("binding") if a.get("kind") == "Tool" else None
+        if a.get("kind") == "Tool":
+            b = a.get("binding")
+        elif hooks and a.get("kind") == "Hook":
+            b = a.get("source")
+        else:
+            continue
         if isinstance(b, dict) and b.get("kind") == "native" and isinstance(b.get("handler"), str):
             found.append((str(a.get("id")), b["handler"]))
     return sorted(found)
 
 
-def check_handlers(doc: dict) -> list[str]:
-    """Native bindings resolve to registered handlers (TOOL-010, fixture `setup.handlers`).
+def _load_succeeds(step: dict) -> bool:
+    """A load is expected to succeed unless its `expect` says `ok: false` or names an error."""
+    exp = step.get("expect") or {}
+    return exp.get("ok") is not False and "error" not in exp
 
-    By default every native handler is registered except names beginning
-    `unregistered.`; `setup.handlers`, when given, restricts registration to
-    exactly those names. A handler that is not registered may appear only in a
-    load expected to fail, which is how fixtures test an unresolved binding.
+
+def _load_artifacts(load: dict) -> list:
+    """Artifacts a load step adds: `artifacts` plus parsed `raw` YAML texts."""
+    arts = list(load.get("artifacts") or [])
+    for text in load.get("raw") or []:
+        try:
+            doc = yaml.safe_load(text)
+        except Exception:  # noqa: BLE001
+            continue
+        if isinstance(doc, dict):
+            arts.append(doc)
+    return arts
+
+
+def _configs(doc: dict) -> list[tuple[str, dict, bool]] | None:
+    """Every configuration the fixture loads: (where, artifacts, expected to succeed).
+
+    A load starts from the last load expected to succeed (initially setup.config).
+    None when the base set is unknown.
     """
     setup = doc.get("setup") or {}
     cfg = setup.get("config") or {}
     arts = _base_artifacts(cfg.get("base", "")) if cfg.get("base") else None
     if arts is None:
-        return []
+        return None
     arts = _apply(arts, cfg.get("artifacts"), cfg.get("remove"))
     configs = [("setup.config", arts, True)]
     current = arts
@@ -578,11 +603,29 @@ def check_handlers(doc: dict) -> list[str]:
         if "load" not in step:
             continue
         load = step["load"] or {}
-        nxt = _apply(current, load.get("artifacts"), load.get("remove"))
-        ok = (step.get("expect") or {}).get("ok")
-        configs.append((f"script[{i}].load", nxt, ok is not False))
-        if ok is True:
+        nxt = _apply(current, _load_artifacts(load), load.get("remove"))
+        ok = _load_succeeds(step)
+        configs.append((f"script[{i}].load", nxt, ok))
+        if ok:
             current = nxt
+    return configs
+
+
+def check_handlers(doc: dict) -> list[str]:
+    """Native bindings resolve to registered handlers (TOOL-010, fixture `setup.handlers`).
+
+    Covers native-bound Tools and Hooks with a native `source`. By default
+    every native handler is registered except names beginning
+    `unregistered.`; `setup.handlers`, when given, restricts registration to
+    exactly those names. A handler that is not registered may appear only in a
+    load expected to fail (`expect.ok: false` or `expect.error`), which is how
+    fixtures test an unresolved binding; a load with no `expect.ok` is
+    expected to succeed.
+    """
+    setup = doc.get("setup") or {}
+    configs = _configs(doc)
+    if configs is None:
+        return []
     explicit = set(setup["handlers"]) if "handlers" in setup else None
 
     def registered(h: str) -> bool:
@@ -592,19 +635,51 @@ def check_handlers(doc: dict) -> list[str]:
 
     problems = []
     for where, a, must in configs:
-        for tid, h in _native(a):
+        for aid, h in _native(a, hooks=True):
             if must and not registered(h):
-                problems.append(f"{where}: native handler {h} of tool {tid} is not registered "
+                problems.append(f"{where}: native handler {h} of {aid} is not registered "
                                 f"(setup.handlers, TOOL-010)")
     return sorted(set(problems))
 
 
+MATCHERS = {"$any", "$absent", "$regex", "$len", "$contains", "$not", "$every",
+            "$gte", "$lte", "$all", "$count"}
+
+
+def _pattern_sites(doc: dict):
+    """(path, value) of every place matchers and placeholders may appear:
+    step `expect`, `capture` and `startAfter` (inside `concurrently` too), then
+    the top-level `expect`, in document order."""
+    def step_sites(step: dict, where: str):
+        if "concurrently" in step:
+            for k, sub in enumerate(step["concurrently"] or []):
+                yield from step_sites(sub, f"{where}.concurrently[{k}]")
+        for j, cap in enumerate(step.get("capture") or []):
+            yield f"{where}.capture[{j}]", cap
+        if "startAfter" in step:
+            yield f"{where}.startAfter", step["startAfter"]
+        if "expect" in step:
+            yield f"{where}.expect", step["expect"]
+
+    for i, step in enumerate(doc.get("script", []) or []):
+        if isinstance(step, dict):
+            yield from step_sites(step, f"script[{i}]")
+    yield "expect", doc.get("expect")
+
+
 def check_matchers(doc: dict) -> list[str]:
-    """`$count` is well formed; `$not` never wraps `$contains` (use `$count`)."""
+    """Matcher keys come from the known list; `$count` is well formed; `$not`
+    never wraps `$contains` (use `$count`). Any other `$`-key must be a
+    placeholder. Walks expectations, captures and `startAfter` patterns."""
     problems: list[str] = []
 
     def walk(v, path: str) -> None:
         if isinstance(v, dict):
+            for k in v:
+                if (isinstance(k, str) and k.startswith("$") and k not in MATCHERS
+                        and not PLACEHOLDER.match(k)):
+                    problems.append(f"{path}: {k!r} is neither a known matcher "
+                                    f"({', '.join(sorted(MATCHERS))}) nor a placeholder")
             if "$count" in v:
                 c = v["$count"]
                 bounds = [k for k in ("equals", "gte", "lte") if isinstance(c, dict) and k in c]
@@ -620,20 +695,81 @@ def check_matchers(doc: dict) -> list[str]:
             for i, x in enumerate(v):
                 walk(x, f"{path}/{i}")
 
-    walk(doc.get("expect"), "expect")
+    for where, value in _pattern_sites(doc):
+        walk(value, where)
+    return problems
+
+
+def check_placeholder_keys(doc: dict) -> list[str]:
+    """A placeholder map key must be bound before `$absent` is applied under it.
+
+    Expectations are evaluated in document order, depth-first (step
+    expectations as their steps run, then the top-level `expect`). A key
+    placeholder binds where it is first matched; under `$absent` nothing can
+    be matched, so the key must already be bound, earlier in document order or
+    by a step's `bind` or `capture`.
+    """
+    problems: list[str] = []
+    bound: set[str] = set()
+
+    def step_binds(step: dict) -> None:
+        if "concurrently" in step:
+            for sub in step["concurrently"] or []:
+                step_binds(sub)
+        if isinstance(step.get("bind"), str):
+            bound.add(step["bind"])
+        for cap in step.get("capture") or []:
+            bound.update((cap.get("bind") or {}).values())
+
+    def has_absent(v) -> bool:
+        return isinstance(v, dict) and "$absent" in v
+
+    def walk(v, path: str, binding: bool) -> None:
+        if isinstance(v, str) and PLACEHOLDER.match(v) and binding:
+            bound.add(v)
+        elif isinstance(v, dict):
+            for k, x in v.items():
+                is_ph = isinstance(k, str) and PLACEHOLDER.match(k) and k not in MATCHERS
+                if is_ph and has_absent(x) and k not in bound:
+                    problems.append(f"{path}: placeholder key {k} is used under $absent before it is bound "
+                                    f"(bind it earlier in document order or by a capture)")
+                if is_ph and binding and not has_absent(x):
+                    bound.add(k)
+                # Nothing under $not or $absent binds.
+                walk(x, f"{path}/{k}", binding and k not in ("$not", "$absent"))
+        elif isinstance(v, list):
+            for i, x in enumerate(v):
+                walk(x, f"{path}/{i}", binding)
+
     for i, step in enumerate(doc.get("script", []) or []):
-        walk(step.get("expect"), f"script[{i}].expect")
+        if isinstance(step, dict):
+            step_binds(step)
+            if "expect" in step:
+                walk(step["expect"], f"script[{i}].expect", True)
+    walk(doc.get("expect"), "expect", True)
     return problems
 
 
 def check_stub_call_keys(doc: dict) -> list[str]:
     """`expect.stubCalls` keys name a stub: a native tool ID, `<server>/<tool>`,
-    `<endpoint>/<operation>`, or a remote hook ID."""
-    calls = (doc.get("expect") or {}).get("stubCalls") or {}
-    if not calls:
-        return []
+    `<endpoint>/<operation>`, or a remote hook ID. Every `stubs.tools` key is
+    the ID of a native-bound tool in some configuration the fixture loads."""
+    problems: list[str] = []
     setup = doc.get("setup") or {}
     stubs = setup.get("stubs") or {}
+    configs = _configs(doc)
+    if configs is not None and stubs.get("tools"):
+        tool_ids = {str(a.get("id")) for _, arts, _ in configs for a in arts.values() if a.get("kind") == "Tool"}
+        native_ids = {tid for _, arts, _ in configs for tid, _ in _native(arts)}
+        for k in stubs["tools"]:
+            if k not in tool_ids:
+                problems.append(f"setup.stubs.tools: {k} is not a tool ID in any configuration the fixture loads")
+            elif k not in native_ids:
+                problems.append(f"setup.stubs.tools: {k} is not native-bound in any configuration the fixture loads "
+                                f"(use stubs.mcpServers or stubs.httpEndpoints)")
+    calls = (doc.get("expect") or {}).get("stubCalls") or {}
+    if not calls:
+        return problems
     valid = set(stubs.get("tools") or {}) | set(stubs.get("remoteHooks") or {})
     for srv, server in (stubs.get("mcpServers") or {}).items():
         names = set((server or {}).get("tools") or {})
@@ -647,27 +783,43 @@ def check_stub_call_keys(doc: dict) -> list[str]:
     arts = _apply(arts or {}, cfg.get("artifacts"), cfg.get("remove"))
     for step in doc.get("script", []) or []:
         if "load" in step:
-            arts = _apply(arts, (step["load"] or {}).get("artifacts"), (step["load"] or {}).get("remove"))
+            arts = _apply(arts, _load_artifacts(step["load"] or {}), (step["load"] or {}).get("remove"))
     explicit = set(setup["handlers"]) if "handlers" in setup else None
     valid |= {tid for tid, h in _native(arts)
               if not h.startswith("unregistered.") and (explicit is None or h in explicit)}
-    return [f"expect.stubCalls: {k} names no stub (tool ID, <server>/<tool>, <endpoint>/<operation> or remote hook ID)"
-            for k in calls if k not in valid]
+    return problems + [f"expect.stubCalls: {k} names no stub (tool ID, <server>/<tool>, <endpoint>/<operation> "
+                       f"or remote hook ID)" for k in calls if k not in valid]
 
 
 def check_crashes(doc: dict) -> list[str]:
-    """A crash step arms a crash for a later action step on its session."""
+    """A crash step arms a crash for a later action step on its session, and the
+    crashed action is followed by a `restart` step before the next action step."""
     problems: list[str] = []
     script = doc.get("script", []) or []
+
+    def is_action(st) -> bool:
+        return isinstance(st, dict) and ("action" in st or "concurrently" in st)
+
     for i, step in enumerate(script):
         if "crash" not in step:
             continue
         target = (step["crash"] or {}).get("session")
-        for later in script[i + 1:]:
+        crashed = None
+        for j in range(i + 1, len(script)):
+            later = script[j]
             if "action" in later and (target is None or target in (later.get("session"), later.get("bind"))):
+                crashed = j
                 break
-        else:
+        if crashed is None:
             problems.append(f"script[{i}]: crash has no later action step on {target or 'any session'}")
+            continue
+        nxt = next((k for k in range(crashed + 1, len(script))
+                    if "restart" in script[k] or is_action(script[k])), None)
+        if nxt is None:
+            problems.append(f"script[{crashed}]: crashed action is not followed by a `restart` step")
+        elif "restart" not in script[nxt]:
+            problems.append(f"script[{crashed}]: crashed action is followed by action script[{nxt}] "
+                            f"without a `restart` step first")
     return problems
 
 
@@ -724,6 +876,7 @@ def main() -> int:
             errors += [f"{fx.relative_to(ROOT)}: {e}" for e in check_inline_config(doc, schemas, reg)]
             errors += [f"{fx.relative_to(ROOT)}: {e}" for e in check_handlers(doc)]
             errors += [f"{fx.relative_to(ROOT)}: {e}" for e in check_matchers(doc)]
+            errors += [f"{fx.relative_to(ROOT)}: {e}" for e in check_placeholder_keys(doc)]
             errors += [f"{fx.relative_to(ROOT)}: {e}" for e in check_crashes(doc)]
             errors += [f"{fx.relative_to(ROOT)}: {e}" for e in check_stub_call_keys(doc)]
 

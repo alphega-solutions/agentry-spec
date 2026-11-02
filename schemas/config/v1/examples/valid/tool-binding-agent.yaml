@@ -1,4 +1,4 @@
-# TOOL-100: agent binding references a persona by id@version.
+# TOOL-100: agent binding references a persona by id@version; `idempotent: true` is allowed (ORCH-002).
 schema: https://alphega.io/agentry/schemas/config/tool/v1.json
 instance:
   kind: Tool
@@ -8,4 +8,5 @@ instance:
   description: Ask the writer persona.
   input: { type: object, required: [task], properties: { task: { type: string } } }
   effect: read
+  idempotent: true
   binding: { kind: agent, persona: writer@1 }

@@ -15,7 +15,7 @@ Fixtures in Areas 1–4 need `Hook` artifacts before their schema exists (Area 5
 | `retrieval` | `source` — a vector store source ID |
 | `langchain` | `tool` — the LangChain tool name |
 
-Credentials a binding needs are given in `credentials`, a map of names to secret references (`secret://<provider>/<name>`), never inline.
+Credentials a `native` or `langchain` binding needs are given in `credentials`, a map of names to secret references (`secret://<provider>/<name>`), never inline. Other binding kinds take no `credentials`: `mcp` and `http` bindings use their deployment server's or endpoint's credentials; `agent` and `retrieval` bindings take none.
 
 ## Hook `source` — interim
 

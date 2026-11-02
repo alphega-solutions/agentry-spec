@@ -8,4 +8,4 @@ instance:
   description: Search support tickets.
   input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }
   effect: read
-  binding: { kind: mcp, server: tickets, tool: search, credentials: { token: "secret://vault/mcp/tickets" } }
+  binding: { kind: mcp, server: tickets, tool: search }

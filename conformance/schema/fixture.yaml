@@ -14,11 +14,33 @@ description: >-
   array: the number of elements matching `of` (exactly one of `equals`,
   `gte`, `lte`). Write "none matches" and "exactly one matches" with
   `$count`, never as `$not` around `$contains`. Matcher names are reserved
-  and are never placeholders. Placeholders may be bound in `expect`
+  and are never placeholders; a "$"-key in an expectation is either one of
+  these matchers or a placeholder. Placeholders may be bound in `expect`
   or by a step's `capture`; a placeholder used in a step must be bound by an
-  earlier step's capture. Arrays in expectations match exactly — same
-  length, same order — unless wrapped in {"$contains": [...]}; objects match
-  partially. `delayMs` and timeouts are measured on the virtual clock.
+  earlier step's capture. Placeholders may also be used as map keys (e.g. an
+  idempotency key or session ID under `ports`). `expect` is evaluated in
+  document order, depth-first; a placeholder key binds where it is first
+  matched, and must already be bound (earlier in document order, or by a
+  capture) before a matcher such as `$absent` is applied to the value under
+  it, since an unbound key cannot be looked up. Arrays in expectations match
+  exactly — same length, same order — unless wrapped in {"$contains":
+  [...]}; objects match partially.
+
+
+  Events are persisted when emitted: at any point, including a crash point,
+  every event emitted before it is in the event log.
+
+
+  Virtual clock: time advances only through `clock` steps, with one
+  exception (discrete-event simulation): when every piece of pending work is
+  waiting on a timer (a stub's `delayMs`, a tool or hook timeout, a run
+  lease), the runner advances the virtual clock to the earliest such timer
+  and lets that work proceed. `delayMs`, timeouts and leases are measured on
+  the virtual clock. A `startAfter` pattern is evaluated before any
+  automatic advance, so an action waiting on it starts at the virtual time
+  its event was persisted.
+
+
   Scripted provider `capabilities` are merged over defaults in which every
   boolean capability is true and limits are 1,000,000 tokens. Record shapes
   (stub calls, provider requests, port records) are defined under `expect`.
@@ -122,15 +144,18 @@ $defs:
           never registered; a binding naming one is unresolved, a
           configuration error at load. Set this only to restrict
           registration to exactly the listed names. A registered native tool
-          with no `stubs.tools` entry records its calls and returns `ok` with
-          an empty output object.
+          with no `stubs.tools` entry gets the default stub: it records its
+          calls and returns `ok` with output `{}` on every call.
         type: array
         uniqueItems: true
         items: { type: string, pattern: "^(?!unregistered\\.)[A-Za-z0-9_.-]{1,128}$" }
       stubs:
         description: >-
           Scripted stand-ins (EVAL-032). Behaviours are consumed in order,
-          one per call (a retry is a call). Calls are recorded under
+          one per call (a retry is a call). A call made after a stub's
+          behaviour list has run out fails the test (the fixture is wrong,
+          not the implementation under test); this does not apply to the
+          default native stub (`handlers`). Calls are recorded under
           `expect.stubCalls`.
         type: object
         additionalProperties: false
@@ -138,8 +163,11 @@ $defs:
           tools:
             description: >-
               Native tool stubs, keyed by tool ID: the behaviours of the tool's
-              registered handler (`handlers`). A registered handler whose tool
-              has no entry has no behaviours, as with an empty list.
+              registered handler (`handlers`). Every key must be the ID of a
+              native-bound tool in some configuration the fixture loads. A
+              registered handler whose tool has no entry gets the default stub
+              (records its calls, returns `ok` with output `{}`); an entry
+              with an empty list fails the test on the tool's first call.
             type: object
             additionalProperties:
               type: array
@@ -155,7 +183,9 @@ $defs:
             description: >-
               HTTP endpoint stubs, keyed by the endpoint ID declared in the
               deployment, then by operation ID: the behaviours of that
-              operation (TOOL-010 as amended 2026-11-01).
+              operation (TOOL-010 as amended 2026-11-01). A call's recorded
+              `arguments` are the tool's arguments, as validated (and as
+              hooks left them), not an HTTP request.
             type: object
             propertyNames: { pattern: "^[A-Za-z0-9_.-]{1,128}$" }
             additionalProperties:
@@ -268,8 +298,16 @@ $defs:
         items: { $ref: "#/$defs/toolBehaviour" }
 
   toolBehaviour:
+    description: >-
+      One call's scripted behaviour: exactly one of `ok` (succeed with
+      `output`), `error` (fail), or `hang` (never complete unless
+      cancelled). `delayMs` delays `ok` or `error` on the virtual clock.
     type: object
     additionalProperties: false
+    oneOf:
+      - required: [ok]
+      - required: [error]
+      - required: [hang]
     properties:
       ok: { type: object, properties: { output: {} } }
       error:
@@ -281,7 +319,7 @@ $defs:
           retryable: { type: boolean }
           message: { type: string }
       delayMs: { type: integer, minimum: 0 }
-      hang: { type: boolean, description: Never completes unless cancelled. }
+      hang: { const: true, description: Never completes unless cancelled. }
       ignoreCancel:
         description: >-
           When false (the default), a delayed or hanging stub honours the
@@ -380,7 +418,10 @@ $defs:
         type: array
         items: { $ref: "#/$defs/capture" }
       startAfter:
-        description: Inside `concurrently` only — start this action once an event matching this pattern has been persisted.
+        description: >-
+          Inside `concurrently` only — start this action once an event
+          matching this pattern has been persisted. Evaluated before any
+          automatic clock advance (see the virtual clock rule above).
         type: object
       expect:
         description: Not checked, and may be omitted, when an earlier `crash` step armed a crash for this action.
@@ -468,6 +509,10 @@ $defs:
       expect: { $ref: "#/$defs/stepOutcome" }
 
   clockStep:
+    description: >-
+      The only way fixtures move the virtual clock, apart from the runner's
+      automatic advance to the earliest timer when all pending work is
+      waiting on timers (see the top-level description).
     type: object
     additionalProperties: false
     required: [clock]
@@ -490,19 +535,32 @@ $defs:
       `session`, the next action step). That action runs until the
       implementation first reaches the named point, where the
       implementation stops abruptly: in-process state is lost, port
-      contents written so far are kept, the lease is not renewed, and the
-      host receives no outcome. The action's own `expect` is not checked and
-      may be omitted. If the action completes without reaching the point,
-      the fixture fails. A `restart` step restarts the implementation
-      against the same ports. Crash points (EVAL-035):
+      contents written so far are kept (including every event emitted
+      before the point, since events are persisted when emitted), the lease
+      is not renewed, and the host receives no outcome. The action's own
+      `expect` is not checked and may be omitted. If the action completes
+      without reaching the point, the fixture fails. The crashed action
+      must be followed, later in the script, by a `restart` step before the
+      next action step; `restart` restarts the implementation against the
+      same ports. Crash points (EVAL-035):
       `after_started_record` — the call's started record is in the
       idempotency store; the call is not dispatched.
-      `after_dispatch` — the stub has received the call; no outcome is
-      recorded.
+      `after_dispatch` — the stub ran: its behaviour is consumed and its
+      side effect happened, but its result never reached the
+      implementation; no outcome is recorded, and the stub-call record has
+      `completed: false`.
       `after_outcome_recorded` — the call's outcome is in the idempotency
       store; its `tool.result` is not appended.
-      `after_event_append` — events are appended; the checkpoint is not
-      saved.
+      `after_event_append` — immediately after the event-log append that
+      contains the next `tool.call` event; the checkpoint is not saved.
+
+
+      Recovery after a restart follows HITL-091 as amended 2026-11-01. An
+      orphaned run that continues keeps its `runId` and emits no new
+      `run.started`. The host call that triggered recovery (HITL-092) then
+      runs its own run, with its own `run.started`, and that step's
+      `expect` is matched against the triggering call's own outcome, not
+      the orphaned run's.
     type: object
     additionalProperties: false
     required: [crash]
@@ -648,7 +706,10 @@ $defs:
           Requests captured by scripted providers, keyed by provider ID,
           matched in order (partial match). Each record is `{ provider,
           model, messages, tools, outputSchema }`: `messages` is the
-          assembled context as content messages; `tools` lists the visible
+          assembled context as content messages, in which a step's tool
+          results are ONE message with role `tool` holding every
+          `tool_result` part of that step, in request order (TOOL-032);
+          `tools` lists the visible
           tool definitions as `{ name, description, input }`, where `name` is
           the tool ID and `input` its input schema (nothing else of the
           definition is sent); `outputSchema` is the output schema requested,
@@ -669,11 +730,14 @@ $defs:
           `<endpointId>/<operationId>` for HTTP endpoint stubs; the remote
           hook ID for remote hook stubs. A tool call record is `{ arguments,
           context: { sessionId, runId, principal, idempotencyKey, deadline,
-          traceContext }, cancelled, completed }`: `context` is the tool
-          context (TOOL-040), with `principal` the principal as the host
-          supplied it and `deadline` a UTC timestamp; `cancelled` is whether
-          the cancellation signal was received; `completed` is whether the
-          stub produced its scripted result. A remote hook call record is `{
+          traceContext }, cancelled, completed }`: `arguments` are the
+          tool's arguments (for HTTP endpoint stubs too, not an HTTP
+          request); `context` is the tool context (TOOL-040), with
+          `principal` the principal as the host supplied it and `deadline` a
+          UTC timestamp; `cancelled` is whether the cancellation signal was
+          received; `completed` is whether the stub's result reached the
+          implementation (`false` for a hang, a cancellation honoured, or a
+          crash at `after_dispatch`). A remote hook call record is `{
           arguments }`, holding the hook request. `{count: n}` asserts only
           the number of calls.
         type: object
