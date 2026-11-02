@@ -1,0 +1,153 @@
+schemaVersion: "0.1.0"
+id: context.retrieval-port-filters-tenant-access
+title: The vector store port filters automatic retrieval by tenant and principal rights before anything sees the results, then applies the limit
+description: >-
+  Automatic retrieval from `kb`, limit 2. Principal p1 (subject user-1)
+  has role analyst; p2 (subject user-2) has no roles. For each session the
+  unfiltering backend returns the same records, in rank order:
+
+  1. x1 — tenant t2 (SYN-OTHER-TENANT-0041);
+  2. a1 — t1, access subjects [user-9] (SYN-NO-ACCESS-0041);
+  3. a2 — t1, access roles [analyst] (SYN-ROLE-ANALYST-0041);
+  4. a3 — t1, access subjects [user-2] (SYN-SUBJECT-USER2-0041);
+  5. a4 — t1, no access restriction (SYN-OPEN-0041);
+  6. a5 — t1, no access restriction (SYN-BEYOND-LIMIT-0041).
+
+  The port is queried with the principal's `{subject, tenant, roles}`
+  (PORT-080 as amended), so it can filter by role as well as by subject;
+  the recorded queries carry p1's role analyst and p2's empty role list.
+  The port filters by tenant and access first, then applies the limit
+  (CTX-041, PORT-080). p1 may read a2, a4, a5 and gets a2, a4; p2 may
+  read a3, a4, a5 and gets a3, a4. Had the limit been applied before
+  filtering, both would get nothing (x1 and a1 are first).
+
+  The other tenant's record, the record no principal here may read, and
+  the record cut by the limit never reach context, events, blobs or any
+  outgoing request (noPersistedContent / noTransmittedContent). Each
+  session's model request carries only that principal's permitted
+  results.
+requirements: [CTX-041, PORT-080]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+          vectorStore: { adapter: memory, region: test-region, sources: [kb] }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+        context: { retrieval: { auto: true, source: kb, limit: 2 } }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, roles: [analyst], assurance: multi_factor }
+        - { id: p2, subject: user-2, assurance: multi_factor }
+    - id: t2
+      principals:
+        - { id: p3, subject: user-3, assurance: multi_factor }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Answer for p1." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Answer for p2." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    vectorStores:
+      kb:
+        - results:
+            - { id: x1, text: "SYN-OTHER-TENANT-0041", tenant: t2 }
+            - { id: a1, text: "SYN-NO-ACCESS-0041", tenant: t1, access: { subjects: [user-9] } }
+            - { id: a2, text: "SYN-ROLE-ANALYST-0041", tenant: t1, access: { roles: [analyst] } }
+            - { id: a3, text: "SYN-SUBJECT-USER2-0041", tenant: t1, access: { subjects: [user-2] } }
+            - { id: a4, text: "SYN-OPEN-0041", tenant: t1 }
+            - { id: a5, text: "SYN-BEYOND-LIMIT-0041", tenant: t1 }
+        - results:
+            - { id: x1, text: "SYN-OTHER-TENANT-0041", tenant: t2 }
+            - { id: a1, text: "SYN-NO-ACCESS-0041", tenant: t1, access: { subjects: [user-9] } }
+            - { id: a2, text: "SYN-ROLE-ANALYST-0041", tenant: t1, access: { roles: [analyst] } }
+            - { id: a3, text: "SYN-SUBJECT-USER2-0041", tenant: t1, access: { subjects: [user-2] } }
+            - { id: a4, text: "SYN-OPEN-0041", tenant: t1 }
+            - { id: a5, text: "SYN-BEYOND-LIMIT-0041", tenant: t1 }
+script:
+  - action: run
+    bind: $s1
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Summarise the plan notes" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $s2
+    tenant: t1
+    principal: p2
+    persona: assistant@1
+    input: [{ type: text, text: "Summarise the plan notes" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s1:
+      events:
+        mode: subsequence
+        items:
+          - { type: context.retrieved, payload: { source: kb, limit: 2, results: { $len: 2 } } }
+    $s2:
+      events:
+        mode: subsequence
+        items:
+          - { type: context.retrieved, payload: { source: kb, limit: 2, results: { $len: 2 } } }
+  providerRequests:
+    scripted-a:
+      - messages:
+          $contains:
+            - role: principal
+              parts:
+                - { type: text, text: "Summarise the plan notes", provenance: principal }
+                - { type: text, text: "SYN-ROLE-ANALYST-0041", provenance: "retrieval:kb" }
+                - { type: text, text: "SYN-OPEN-0041", provenance: "retrieval:kb" }
+      - messages:
+          $contains:
+            - role: principal
+              parts:
+                - { type: text, text: "Summarise the plan notes", provenance: principal }
+                - { type: text, text: "SYN-SUBJECT-USER2-0041", provenance: "retrieval:kb" }
+                - { type: text, text: "SYN-OPEN-0041", provenance: "retrieval:kb" }
+  stubCalls:
+    vectorStore/kb:
+      - arguments: { tenant: t1, principal: { subject: user-1, tenant: t1, roles: [analyst] }, text: "Summarise the plan notes", limit: 2 }
+      - arguments: { tenant: t1, principal: { subject: user-2, tenant: t1, roles: [] }, text: "Summarise the plan notes", limit: 2 }
+  noPersistedContent: ["SYN-OTHER-TENANT-0041", "SYN-NO-ACCESS-0041", "SYN-BEYOND-LIMIT-0041"]
+  noTransmittedContent: ["SYN-OTHER-TENANT-0041", "SYN-NO-ACCESS-0041", "SYN-BEYOND-LIMIT-0041"]

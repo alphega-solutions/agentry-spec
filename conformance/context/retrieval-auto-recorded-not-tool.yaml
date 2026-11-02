@@ -1,0 +1,131 @@
+schemaVersion: "0.1.0"
+id: context.retrieval-auto-recorded-not-tool
+title: Each automatic retrieval is recorded as `context.retrieved` with blob references, and is never shown to the model as a tool
+description: >-
+  The profile enables automatic retrieval from `kb` with limit 3; no
+  retrieval tool exists. The backend returns two unlabelled records and
+  the profile sets no defaultLabels.
+
+  `context.retrieved` (CTX-032) records the source, the query (the
+  principal's text), the effective limit, and one entry per result, in
+  the port's order, holding a BlobStore reference (the result part stored
+  in full, CTX-003) and its labels (empty here). The event carries
+  provenance `retrieval:kb` and the turn it served. Both blobs are in the
+  tenant's BlobStore as `application/json` (each result part's JSON;
+  Area 7 amendment, readings settled with the fixtures).
+
+  Automatic retrieval is not a tool call (CTX-033): no `tool.call` or
+  `tool.result` event is emitted; the model request's tools are exactly
+  the persona's two tools, none named for retrieval; no message has role
+  `tool` and no part is a `tool_call` or `tool_result`. The retrieved
+  content reaches the model only as text parts of the principal message.
+requirements: [CTX-032, CTX-033]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+          vectorStore: { adapter: memory, region: test-region, sources: [kb] }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+        context: { retrieval: { auto: true, source: kb, limit: 3 } }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Refunds take five days." }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    vectorStores:
+      kb:
+        - results:
+            - { id: r1, text: "SYN-KB-0032-A refunds take five days", tenant: t1 }
+            - { id: r2, text: "SYN-KB-0032-B refunds go to the original card", tenant: t1 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "How long do refunds take?" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: turn.started, turn: 1 }
+          - type: context.retrieved
+            turn: 1
+            provenances: ["retrieval:kb"]
+            labels: []
+            payload:
+              source: kb
+              query: "How long do refunds take?"
+              limit: 3
+              results:
+                - { blob: { id: $b1, hash: { $regex: "^sha256:" }, size: { $gte: 1 } }, labels: [] }
+                - { blob: { id: $b2, hash: { $regex: "^sha256:" }, size: { $gte: 1 } }, labels: [] }
+          - { type: model.request, turn: 1, step: 1 }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call }
+        - { type: tool.result }
+  ports:
+    blobStore:
+      t1:
+        $contains:
+          - { id: $b1, mediaType: application/json }
+          - { id: $b2, mediaType: application/json }
+  providerRequests:
+    scripted-a:
+      - tools: { $all: [{ $len: 2 }, { $contains: [{ name: lookup }, { name: update_record }] }] }
+        messages:
+          $all:
+            - $count: { of: { role: tool }, equals: 0 }
+            - $every: { parts: { $count: { of: { type: { $regex: "^tool_(call|result)$" } }, equals: 0 } } }
+            - $contains:
+                - role: principal
+                  parts:
+                    - { type: text, text: "How long do refunds take?", provenance: principal, labels: [] }
+                    - { type: text, text: "SYN-KB-0032-A refunds take five days", provenance: "retrieval:kb", labels: [] }
+                    - { type: text, text: "SYN-KB-0032-B refunds go to the original card", provenance: "retrieval:kb", labels: [] }
+  stubCalls:
+    vectorStore/kb: [{ arguments: { tenant: t1, text: "How long do refunds take?", limit: 3 } }]

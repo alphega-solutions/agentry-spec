@@ -1,0 +1,139 @@
+schemaVersion: "0.1.0"
+id: context.overflow-mode-none
+title: "With `compaction.mode: none`, context that does not fit overflows even when dropping history would make it fit"
+description: >-
+  Both candidate models (scripted-a and its fallback scripted-b, PROV-044)
+  declare contextLimit 100 and maxOutputTokens 20; reserveOutputTokens
+  defaults to the largest maxOutputTokens among the candidates, 20, so the
+  available space is 100 − 20 = 80 and
+  the trigger level is 90% of 80 = 72. The profile sets compaction.mode
+  none. System content is 8 tokens ("Follow organisational policy." 3 +
+  "You are a test assistant." 5).
+
+
+  $none, turn 1: 8 + 30 (input A01..A30) = 38 ≤ 80, so the call is made; the
+  reply is 10 words (R01..R10). Turn 2: 8 + 30 + 10 + 40 (input B01..B40) =
+  88 > 80. Under truncate, dropping turn 1 would leave 48, but mode none
+  never compacts, so no model call is made: an error event (limit,
+  agentry.context.overflow), run end context_limit, session idle. Turn 3
+  ("Hi"): the run is accepted (the session is idle, not busy or closed), and
+  context is 8 + 30 + 10 + 40 + 1 = 89 > 80 (turn 2's principal message is an
+  event of an earlier turn, so it is history), so it overflows again in the
+  same way.
+
+
+  Control $fit, same profile: 8 + 70 (C01..C70) = 78. That is above the
+  trigger level (72) but fits the space (80), so the call is made with no
+  compaction and no error.
+
+
+  As settled (Area 7 amendment): with mode none only exceeding the
+  available space matters; crossing triggerPercent alone neither compacts
+  nor overflows.
+requirements: [CTX-090]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+        context: { compaction: { mode: none } }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { contextLimit: 100, maxOutputTokens: 20 }
+      responses:
+        # $none turn 1
+        - parts: [{ type: text, text: "R01 R02 R03 R04 R05 R06 R07 R08 R09 R10" }]
+          usage: { inputTokens: 38, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $fit turn 1
+        - parts: [{ type: text, text: "Done." }]
+          usage: { inputTokens: 78, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      capabilities: { contextLimit: 100, maxOutputTokens: 20 }
+      responses: []
+script:
+  - action: run
+    bind: $none
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "A01 A02 A03 A04 A05 A06 A07 A08 A09 A10 A11 A12 A13 A14 A15 A16 A17 A18 A19 A20 A21 A22 A23 A24 A25 A26 A27 A28 A29 A30" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $none
+    principal: p1
+    input: [{ type: text, text: "B01 B02 B03 B04 B05 B06 B07 B08 B09 B10 B11 B12 B13 B14 B15 B16 B17 B18 B19 B20 B21 B22 B23 B24 B25 B26 B27 B28 B29 B30 B31 B32 B33 B34 B35 B36 B37 B38 B39 B40" }]
+    expect: { ok: true, endReason: context_limit }
+  - action: run
+    session: $none
+    principal: p1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: context_limit }
+  - action: run
+    bind: $fit
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "C01 C02 C03 C04 C05 C06 C07 C08 C09 C10 C11 C12 C13 C14 C15 C16 C17 C18 C19 C20 C21 C22 C23 C24 C25 C26 C27 C28 C29 C30 C31 C32 C33 C34 C35 C36 C37 C38 C39 C40 C41 C42 C43 C44 C45 C46 C47 C48 C49 C50 C51 C52 C53 C54 C55 C56 C57 C58 C59 C60 C61 C62 C63 C64 C65 C66 C67 C68 C69 C70" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $none:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: turn.started, runId: $r1, turn: 1 }
+          - { type: model.request, runId: $r1, turn: 1 }
+          - { type: run.ended, runId: $r1, payload: { reason: responded } }
+          - { type: turn.started, runId: $r2, turn: 2 }
+          - { type: error, runId: $r2, payload: { error: { category: limit, code: agentry.context.overflow } } }
+          - { type: run.ended, runId: $r2, payload: { reason: context_limit } }
+          - { type: turn.started, runId: $r3, turn: 3 }
+          - { type: error, runId: $r3, payload: { error: { category: limit, code: agentry.context.overflow } } }
+          - { type: run.ended, runId: $r3, payload: { reason: context_limit } }
+      absentEvents:
+        - { type: model.request, turn: 2 }
+        - { type: model.request, turn: 3 }
+        - { type: context.compacted }
+        - { type: session.closed }
+    $fit:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, turn: 1 }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: context.compacted }
+        - { type: error }
+  providerRequests:
+    scripted-a:
+      - messages:
+          $contains:
+            - role: principal
+              parts: [{ type: text, text: "A01 A02 A03 A04 A05 A06 A07 A08 A09 A10 A11 A12 A13 A14 A15 A16 A17 A18 A19 A20 A21 A22 A23 A24 A25 A26 A27 A28 A29 A30", provenance: principal }]
+      - messages:
+          $contains:
+            - role: principal
+              parts: [{ type: text, text: "C01 C02 C03 C04 C05 C06 C07 C08 C09 C10 C11 C12 C13 C14 C15 C16 C17 C18 C19 C20 C21 C22 C23 C24 C25 C26 C27 C28 C29 C30 C31 C32 C33 C34 C35 C36 C37 C38 C39 C40 C41 C42 C43 C44 C45 C46 C47 C48 C49 C50 C51 C52 C53 C54 C55 C56 C57 C58 C59 C60 C61 C62 C63 C64 C65 C66 C67 C68 C69 C70", provenance: principal }]
+    scripted-b: { count: 0 }

@@ -1,0 +1,213 @@
+schemaVersion: "0.1.0"
+id: context.config-context-layers
+title: "`reserveOutputTokens` (min), `retrieval.source` and `compaction.model` (locked) and `retrieval.defaultLabels` (union) merge from bundles to profile; the merged values apply at run time"
+description: >-
+  Complements cfg.bundle-context-merge and cfg.strictness-orders-layers,
+  which cover mode, triggerPercent, retrieval.limit, changing the summarizer
+  model from the profile and enabling retrieval against a bundle's false.
+  Stack: org@1 then dept@1. org@1 sets reserveOutputTokens 15, pins
+  compaction.model scripted-a/model-a, and sets retrieval.source kb and
+  defaultLabels [pii]. The deployment declares sources kb and docs, so
+  naming docs is wrong only because the field is locked.
+
+  | Load | Field | Value | Outcome |
+  |---|---|---|---|
+  | dept@1 | reserveOutputTokens | 18 (> 15) | rejected, layer policyBundle |
+  | profile | reserveOutputTokens | 18 (> 15) | rejected, layer harnessProfile |
+  | dept@1 | compaction.model | scripted-b/model-b | rejected (locked) |
+  | profile | retrieval.source | docs | rejected (locked) |
+  | profile | reserveOutputTokens 10, same compaction.model, same source, auto true, defaultLabels [phi] | | accepted |
+
+  The last profile restates both locked values, enables retrieval where no
+  layer set auto (the default false is not a layer value), and adds a
+  label. Each rejection names the artifact, field and layer (CFG-032).
+
+
+  Run time, on the accepted configuration. Both candidate models declare
+  contextLimit 100 and maxOutputTokens 20. Effective reserveOutputTokens is
+  min(15, 10) = 10: space 90, trigger level 81 (bundle's 15 would give 76.5;
+  the default, the largest candidate maxOutputTokens, 20, would give 72). System content is 11 tokens ("Follow
+  organisational policy." 3 + "Follow department policy." 3 + persona 5).
+  Each turn retrieves one unlabelled record (1 word), which carries the
+  union of defaultLabels, pii and phi (both allowed for scripted-a).
+
+  - Turn 1: 11 + 30 (A01..A30) + 1 = 42; reply "Reply one." (2 words).
+
+  - Turn 2: 11 + 33 + 35 (B01..B35) + 1 = 80 ≤ 81: no compaction; the
+    request carries both turns. With reserve 15 it would have compacted.
+requirements: [CTX-100, CTX-102]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1, dept@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+          vectorStore: { adapter: memory, region: test-region, sources: [kb, docs] }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+        context:
+          reserveOutputTokens: 15
+          compaction:
+            model: { provider: scripted-a, name: model-a }
+          retrieval:
+            source: kb
+            defaultLabels: [pii]
+      - kind: PolicyBundle
+        id: dept
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow department policy."
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { contextLimit: 100, maxOutputTokens: 20 }
+      responses:
+        - parts: [{ type: text, text: "Reply one." }]
+          usage: { inputTokens: 42, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Reply two." }]
+          usage: { inputTokens: 80, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      capabilities: { contextLimit: 100, maxOutputTokens: 20 }
+      responses: []
+  stubs:
+    vectorStores:
+      kb:
+        - results: [{ id: kb-1, text: "SYN-KB-0001", tenant: t1 }]
+        - results: [{ id: kb-2, text: "SYN-KB-0002", tenant: t1 }]
+script:
+  # A lower bundle raises a min field.
+  - load:
+      artifacts:
+        - { kind: PolicyBundle, id: dept, version: 1, schemaVersion: "0.1.0", policyInstructions: "Follow department policy.", context: { reserveOutputTokens: 18 } }
+    expect: { ok: false, error: { category: configuration, details: { artifact: dept@1, field: /context/reserveOutputTokens, layer: policyBundle } } }
+  # The profile raises a min field.
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, context: { reserveOutputTokens: 18 } }
+    expect: { ok: false, error: { category: configuration, details: { artifact: default@1, field: /context/reserveOutputTokens, layer: harnessProfile } } }
+  # A lower bundle changes the pinned summarizer model (locked).
+  - load:
+      artifacts:
+        - { kind: PolicyBundle, id: dept, version: 1, schemaVersion: "0.1.0", policyInstructions: "Follow department policy.", context: { compaction: { model: { provider: scripted-b, name: model-b } } } }
+    expect: { ok: false, error: { category: configuration, details: { artifact: dept@1, layer: policyBundle } } }
+  # The profile changes the retrieval source (locked).
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, context: { retrieval: { source: docs } } }
+    expect: { ok: false, error: { category: configuration, details: { artifact: default@1, field: /context/retrieval/source, layer: harnessProfile } } }
+  # Tightened, restated, enabled and added to: accepted.
+  - load:
+      artifacts:
+        - kind: HarnessProfile
+          id: default
+          version: 1
+          schemaVersion: "0.1.0"
+          idleTtl: PT24H
+          suspendedTtl: PT72H
+          stepLimit: 8
+          deliveryMode: buffered
+          budget: { tokens: 100000 }
+          timeouts: { run: PT5M, tool: PT30S }
+          retry: { unavailable: 2 }
+          outputRetryLimit: 2
+          limits: { partSize: 1048576, sessionSize: 10485760 }
+          defaultAttachmentLabels: []
+          context:
+            reserveOutputTokens: 10
+            compaction:
+              model: { provider: scripted-a, name: model-a }
+            retrieval:
+              auto: true
+              source: kb
+              defaultLabels: [phi]
+    expect: { ok: true }
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "A01 A02 A03 A04 A05 A06 A07 A08 A09 A10 A11 A12 A13 A14 A15 A16 A17 A18 A19 A20 A21 A22 A23 A24 A25 A26 A27 A28 A29 A30" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "B01 B02 B03 B04 B05 B06 B07 B08 B09 B10 B11 B12 B13 B14 B15 B16 B17 B18 B19 B20 B21 B22 B23 B24 B25 B26 B27 B28 B29 B30 B31 B32 B33 B34 B35" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - type: context.retrieved
+            runId: $r1
+            payload:
+              source: kb
+              results:
+                - labels: { $all: [{ $len: 2 }, { $contains: [pii, phi] }] }
+          - { type: model.request, runId: $r1 }
+          - { type: context.retrieved, runId: $r2, payload: { source: kb } }
+          - { type: model.request, runId: $r2 }
+          - { type: run.ended, runId: $r2, payload: { reason: responded } }
+      absentEvents:
+        - { type: context.compacted }
+  providerRequests:
+    scripted-a:
+      - messages:
+          $contains:
+            - role: principal
+              parts:
+                - { type: text, text: "A01 A02 A03 A04 A05 A06 A07 A08 A09 A10 A11 A12 A13 A14 A15 A16 A17 A18 A19 A20 A21 A22 A23 A24 A25 A26 A27 A28 A29 A30", provenance: principal }
+                - type: text
+                  text: "SYN-KB-0001"
+                  provenance: "retrieval:kb"
+                  labels: { $all: [{ $len: 2 }, { $contains: [pii, phi] }] }
+      - messages:
+          $all:
+            - $count: { of: { role: principal }, equals: 2 }
+            - $contains:
+                - role: principal
+                  parts:
+                    - { type: text, text: "A01 A02 A03 A04 A05 A06 A07 A08 A09 A10 A11 A12 A13 A14 A15 A16 A17 A18 A19 A20 A21 A22 A23 A24 A25 A26 A27 A28 A29 A30", provenance: principal }
+                    - { type: text, text: "SYN-KB-0001", provenance: "retrieval:kb" }
+                - role: principal
+                  parts:
+                    - { type: text, text: "B01 B02 B03 B04 B05 B06 B07 B08 B09 B10 B11 B12 B13 B14 B15 B16 B17 B18 B19 B20 B21 B22 B23 B24 B25 B26 B27 B28 B29 B30 B31 B32 B33 B34 B35", provenance: principal }
+                    - { type: text, text: "SYN-KB-0002", provenance: "retrieval:kb" }
+    scripted-b: { count: 0 }
+  stubCalls:
+    vectorStore/kb: { count: 2 }

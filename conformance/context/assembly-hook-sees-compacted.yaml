@@ -1,0 +1,180 @@
+schemaVersion: "0.1.0"
+id: context.assembly-hook-sees-compacted
+title: A `beforeModelCall` hook sees the context after compaction, and a label it adds to retrieved content takes effect
+description: >-
+  Automatic retrieval from `kb` is on; compaction is truncate. The
+  persona's primary model is scripted-b with fallback scripted-a, and the
+  baseline `phi` policy allows only scripted-a. Both models declare
+  contextLimit 100 and maxOutputTokens 20: space 80, compaction above 72
+  tokens. System content is 8 tokens ("Follow organisational policy." 3 +
+  "You are a test assistant." 5).
+
+  - Turn 1: input 60 words, nothing retrieved; 8 + 60 = 68 ≤ 72, sent to
+    the primary scripted-b. Answer 2 words; turn 1 costs 62.
+  - Turn 2: input 4 words + one retrieved record (5 words) = 9; 8 + 62 + 9
+    = 79 > 72, so turn 1 is truncated: 8 + 9 = 17.
+
+  The native beforeModelCall hook `inspector` answers continue in turn 1.
+  In turn 2 its HookRequest content must be exactly the compacted context:
+  the two system parts, the principal's input and the retrieved part, with
+  nothing from turn 1. It annotates the retrieved part (index 3) with phi.
+  Routing runs after beforeModelCall hooks (PROV-050): phi is not allowed
+  on scripted-b, so the call switches to scripted-a, where the retrieved
+  part carries [phi] and the principal's part none.
+
+  The hook's `content` is the parts of the assembled messages in order,
+  system parts included and reasoning parts excluded (Area 7 amendment,
+  readings settled with the fixtures and in review); the annotate index
+  relies on it. The `hook.decision` records the labels per part
+  (`annotations`). The scripted-a request is asserted exactly: one
+  `system` message with one text part per instruction source, then the
+  turn-2 principal message. Persistence of such a label in later
+  requests is shown in context.assembly-annotation-persists.
+requirements: [CTX-011]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+          vectorStore: { adapter: memory, region: test-region, sources: [kb] }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+        context:
+          compaction: { mode: truncate }
+          retrieval: { auto: true, source: kb }
+      - kind: Hook
+        id: inspector
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeModelCall]
+        results: [annotate]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.inspector }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [inspector@1]
+        model:
+          provider: scripted-b
+          name: model-b
+          fallbacks:
+            - { provider: scripted-a, name: model-a }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { contextLimit: 100, maxOutputTokens: 20 }
+      responses:
+        - parts: [{ type: text, text: "Weekly." }]
+          usage: { inputTokens: 17, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      capabilities: { contextLimit: 100, maxOutputTokens: 20 }
+      responses:
+        - parts: [{ type: text, text: "First answer." }]
+          usage: { inputTokens: 68, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    vectorStores:
+      kb:
+        - results: []
+        - results: [{ id: kb-5, text: "SYN-KB-0005 widget schedule is weekly", tenant: t1 }]
+    nativeHooks:
+      inspector:
+        - result: continue
+        - result: annotate
+          labels: [{ part: 3, labels: [phi] }]
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYNTHETIC-FILLER-0000 SYNTHETIC-FILLER-0001 SYNTHETIC-FILLER-0002 SYNTHETIC-FILLER-0003 SYNTHETIC-FILLER-0004 SYNTHETIC-FILLER-0005 SYNTHETIC-FILLER-0006 SYNTHETIC-FILLER-0007 SYNTHETIC-FILLER-0008 SYNTHETIC-FILLER-0009 SYNTHETIC-FILLER-0010 SYNTHETIC-FILLER-0011 SYNTHETIC-FILLER-0012 SYNTHETIC-FILLER-0013 SYNTHETIC-FILLER-0014 SYNTHETIC-FILLER-0015 SYNTHETIC-FILLER-0016 SYNTHETIC-FILLER-0017 SYNTHETIC-FILLER-0018 SYNTHETIC-FILLER-0019 SYNTHETIC-FILLER-0020 SYNTHETIC-FILLER-0021 SYNTHETIC-FILLER-0022 SYNTHETIC-FILLER-0023 SYNTHETIC-FILLER-0024 SYNTHETIC-FILLER-0025 SYNTHETIC-FILLER-0026 SYNTHETIC-FILLER-0027 SYNTHETIC-FILLER-0028 SYNTHETIC-FILLER-0029 SYNTHETIC-FILLER-0030 SYNTHETIC-FILLER-0031 SYNTHETIC-FILLER-0032 SYNTHETIC-FILLER-0033 SYNTHETIC-FILLER-0034 SYNTHETIC-FILLER-0035 SYNTHETIC-FILLER-0036 SYNTHETIC-FILLER-0037 SYNTHETIC-FILLER-0038 SYNTHETIC-FILLER-0039 SYNTHETIC-FILLER-0040 SYNTHETIC-FILLER-0041 SYNTHETIC-FILLER-0042 SYNTHETIC-FILLER-0043 SYNTHETIC-FILLER-0044 SYNTHETIC-FILLER-0045 SYNTHETIC-FILLER-0046 SYNTHETIC-FILLER-0047 SYNTHETIC-FILLER-0048 SYNTHETIC-FILLER-0049 SYNTHETIC-FILLER-0050 SYNTHETIC-FILLER-0051 SYNTHETIC-FILLER-0052 SYNTHETIC-FILLER-0053 SYNTHETIC-FILLER-0054 SYNTHETIC-FILLER-0055 SYNTHETIC-FILLER-0056 SYNTHETIC-FILLER-0057 SYNTHETIC-FILLER-0058 SYNTHETIC-FILLER-0059" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Check the widget schedule" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-b, role: primary } }
+          - { type: turn.started, turn: 2 }
+          - { type: context.compacted, turn: 2, step: 1, payload: { mode: truncate, units: [{ turn: 1 }] } }
+          - { type: hook.decision, payload: { hook: inspector@1, point: beforeModelCall, result: annotate, labelsAdded: [phi], annotations: [{ part: 3, labels: [phi] }] } }
+          - { type: policy.decision, payload: { kind: routing, outcome: switch } }
+          - { type: model.request, turn: 2, step: 1, payload: { provider: scripted-a, role: fallback, fallbackReason: routing } }
+      absentEvents:
+        - { type: model.request, turn: 2, payload: { provider: scripted-b } }
+  stubCalls:
+    inspector:
+      - arguments: { point: beforeModelCall, session: { turn: 1, step: 1 } }
+      - arguments:
+          point: beforeModelCall
+          session: { turn: 2, step: 1 }
+          content:
+            - { type: text, text: "Follow organisational policy.", provenance: system, labels: [] }
+            - { type: text, text: "You are a test assistant.", provenance: system, labels: [] }
+            - { type: text, text: "Check the widget schedule", provenance: principal, labels: [] }
+            - { type: text, text: "SYN-KB-0005 widget schedule is weekly", provenance: "retrieval:kb", labels: [] }
+  providerRequests:
+    scripted-b:
+      - messages:
+          $contains:
+            - role: principal
+              parts: [{ type: text, text: { $regex: "^SYNTHETIC-FILLER-0000 " }, provenance: principal }]
+    scripted-a:
+      - messages:
+          - role: system
+            parts:
+              - { type: text, text: "Follow organisational policy.", provenance: system, labels: [] }
+              - { type: text, text: "You are a test assistant.", provenance: system, labels: [] }
+          - role: principal
+            parts:
+              - { type: text, text: "Check the widget schedule", provenance: principal, labels: [] }
+              - { type: text, text: "SYN-KB-0005 widget schedule is weekly", provenance: "retrieval:kb", labels: [phi] }

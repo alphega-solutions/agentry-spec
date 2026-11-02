@@ -1,0 +1,157 @@
+schemaVersion: "0.1.0"
+id: context.retrieval-auto-requires-source
+title: Enabling automatic retrieval without an effective `retrieval.source`, or naming a source the deployment does not declare, is a configuration error
+description: >-
+  The deployment declares vector store source `kb`. Rejected, each with
+  category configuration (CTX-101):
+
+  - a harness profile with `retrieval.auto: true` and no source, when no
+    other layer sets one;
+  - a policy bundle with `retrieval.auto: true` and no source, when no
+    other layer sets one;
+  - a harness profile with `retrieval.auto: true` and `retrieval.source:
+    archive`, which the deployment's `ports.vectorStore.sources` does not
+    declare (CTX-101 as amended, readings settled with the fixtures).
+
+  Control: the profile with `retrieval.auto: true` and the declared
+  `retrieval.source: kb` loads.
+
+  Then the bundle sets `retrieval.source: kb` (a `locked` field) and
+  the profile sets `retrieval.auto: true`; the effective block has both,
+  and the load succeeds. The rule applies to the effective (merged)
+  value, as the contextBlock schema's `auto` description says
+  ("Requires an effective `source`").
+requirements: [CTX-101]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+          vectorStore: { adapter: memory, region: test-region, sources: [kb] }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  # Profile enables automatic retrieval; no layer sets a source.
+  - load:
+      artifacts:
+        - kind: HarnessProfile
+          id: default
+          version: 1
+          schemaVersion: "0.1.0"
+          idleTtl: PT24H
+          suspendedTtl: PT72H
+          stepLimit: 8
+          deliveryMode: buffered
+          budget: { tokens: 100000 }
+          timeouts: { run: PT5M, tool: PT30S }
+          retry: { unavailable: 2 }
+          outputRetryLimit: 2
+          limits: { partSize: 1048576, sessionSize: 10485760 }
+          defaultAttachmentLabels: []
+          context: { retrieval: { auto: true } }
+    expect: { ok: false, error: { category: configuration } }
+  # Bundle enables automatic retrieval; no layer sets a source.
+  - load:
+      artifacts:
+        - kind: PolicyBundle
+          id: org
+          version: 1
+          schemaVersion: "0.1.0"
+          policyInstructions: "Follow organisational policy."
+          defaultFallbackMessage: "I can't help with that request."
+          context: { retrieval: { auto: true } }
+          sensitivityPolicies:
+            pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+            phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+    expect: { ok: false, error: { category: configuration } }
+  # Profile names a source the deployment does not declare.
+  - load:
+      artifacts:
+        - kind: HarnessProfile
+          id: default
+          version: 1
+          schemaVersion: "0.1.0"
+          idleTtl: PT24H
+          suspendedTtl: PT72H
+          stepLimit: 8
+          deliveryMode: buffered
+          budget: { tokens: 100000 }
+          timeouts: { run: PT5M, tool: PT30S }
+          retry: { unavailable: 2 }
+          outputRetryLimit: 2
+          limits: { partSize: 1048576, sessionSize: 10485760 }
+          defaultAttachmentLabels: []
+          context: { retrieval: { auto: true, source: archive } }
+    expect: { ok: false, error: { category: configuration } }
+  # Control: the profile names the declared source.
+  - load:
+      artifacts:
+        - kind: HarnessProfile
+          id: default
+          version: 1
+          schemaVersion: "0.1.0"
+          idleTtl: PT24H
+          suspendedTtl: PT72H
+          stepLimit: 8
+          deliveryMode: buffered
+          budget: { tokens: 100000 }
+          timeouts: { run: PT5M, tool: PT30S }
+          retry: { unavailable: 2 }
+          outputRetryLimit: 2
+          limits: { partSize: 1048576, sessionSize: 10485760 }
+          defaultAttachmentLabels: []
+          context: { retrieval: { auto: true, source: kb } }
+    expect: { ok: true }
+  # Control: the source comes from the bundle, `auto` from the profile.
+  - load:
+      artifacts:
+        - kind: PolicyBundle
+          id: org
+          version: 1
+          schemaVersion: "0.1.0"
+          policyInstructions: "Follow organisational policy."
+          defaultFallbackMessage: "I can't help with that request."
+          context: { retrieval: { source: kb } }
+          sensitivityPolicies:
+            pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+            phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+        - kind: HarnessProfile
+          id: default
+          version: 1
+          schemaVersion: "0.1.0"
+          idleTtl: PT24H
+          suspendedTtl: PT72H
+          stepLimit: 8
+          deliveryMode: buffered
+          budget: { tokens: 100000 }
+          timeouts: { run: PT5M, tool: PT30S }
+          retry: { unavailable: 2 }
+          outputRetryLimit: 2
+          limits: { partSize: 1048576, sessionSize: 10485760 }
+          defaultAttachmentLabels: []
+          context: { retrieval: { auto: true } }
+    expect: { ok: true }
+expect: {}

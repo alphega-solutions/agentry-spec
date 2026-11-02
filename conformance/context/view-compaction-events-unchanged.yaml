@@ -1,0 +1,270 @@
+schemaVersion: "0.1.0"
+id: context.view-compaction-events-unchanged
+title: A truncate or summarize compaction leaves every earlier event in the log unchanged and in order
+description: >-
+  Both scripted models declare contextLimit 100 and maxOutputTokens 20, so
+  the space available is 100 − 20 = 80 tokens and compaction triggers above
+  90% of it, i.e. above 72 tokens; mode truncate. Token counts (one per word
+  of a text part): system content 8 ("Follow organisational policy." 3 +
+  "You are a test assistant." 5).
+
+  - Turn 1: input 30 words; context 8 + 30 = 38 ≤ 72. Answer 10 words, so
+    turn 1 costs 40.
+  - Turn 2: input 10 words; context 8 + 40 + 10 = 58 ≤ 72. Answer 4
+    words; turn 2 costs 14.
+  - Turn 3: input 15 words; context 8 + 40 + 14 + 15 = 77 > 72, so turn 1
+    is dropped: 8 + 14 + 15 = 37 ≤ 72.
+
+  Each turn-1 and turn-2 run captures, as its events are persisted, the
+  eventId and seq of its turn.started, model.request, model.response and
+  run.ended, and the full payloads of its model.request and model.response
+  (and the response's timestamp, provenances and labels). After the
+  turn-3 compaction the event log must still hold every captured event with
+  the same eventId, seq and deep-equal payload, in the same order. Because
+  seq is gap-free (CORE-160), unchanged seq values for the last event of
+  each earlier run mean no earlier event was removed or inserted; the
+  counts of turn.started, model.request and model.response (three each)
+  confirm nothing was duplicated. The turn-3 request shows the compaction
+  took effect: no turn-1 content, turn 2 kept.
+
+  $sSum does the same with profile summarizing@1 (summarize with
+  scripted-sum/sum-1). Turn 1: input 30 words, 8 + 30 = 38; answer 10
+  words. Turn 2: input 40 words → 8 + 40 + 40 = 88 > 72. The smallest
+  prefix whose removal fits, not counting the summary, is turn 1 (8 + 40
+  = 48); the summarizer is called once and its 3-word summary gives 51 ≤
+  72. Turn 1's captured events must be unchanged after the compaction,
+  with exactly one `context.compacted`, and the turn-2 request shows the
+  summary in place of turn 1.
+
+  Every candidate (scripted-a, scripted-b) sets maxOutputTokens 20, so the
+  default reserve is 20.
+requirements: [CTX-002]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+        context: { compaction: { mode: truncate } }
+      - kind: HarnessProfile
+        id: summarizing
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+        context: { compaction: { mode: summarize, model: { provider: scripted-sum, name: sum-1 } } }
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          - { id: scripted-sum, adapter: scripted, endpoint: "memory://scripted-sum", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1, summarizing@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { contextLimit: 100, maxOutputTokens: 20 }
+      responses:
+        - parts: [{ type: text, text: "Turn one answer with exactly ten words in this reply." }]
+          usage: { inputTokens: 38, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Second answer is here." }]
+          usage: { inputTokens: 58, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Done." }]
+          usage: { inputTokens: 37, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sSum
+        - parts: [{ type: text, text: "SYN-SR-01 SYN-SR-02 SYN-SR-03 SYN-SR-04 SYN-SR-05 SYN-SR-06 SYN-SR-07 SYN-SR-08 SYN-SR-09 SYN-SR-10" }]
+          usage: { inputTokens: 38, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Done." }]
+          usage: { inputTokens: 51, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      capabilities: { contextLimit: 100, maxOutputTokens: 20 }
+      responses: []
+    scripted-sum:
+      responses:
+        - parts: [{ type: text, text: "SYN-SUMMARY-0001 SYN-SUMMARY-0002 SYN-SUMMARY-0003" }]
+          usage: { inputTokens: 40, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYNTHETIC-FILLER-0000 SYNTHETIC-FILLER-0001 SYNTHETIC-FILLER-0002 SYNTHETIC-FILLER-0003 SYNTHETIC-FILLER-0004 SYNTHETIC-FILLER-0005 SYNTHETIC-FILLER-0006 SYNTHETIC-FILLER-0007 SYNTHETIC-FILLER-0008 SYNTHETIC-FILLER-0009 SYNTHETIC-FILLER-0010 SYNTHETIC-FILLER-0011 SYNTHETIC-FILLER-0012 SYNTHETIC-FILLER-0013 SYNTHETIC-FILLER-0014 SYNTHETIC-FILLER-0015 SYNTHETIC-FILLER-0016 SYNTHETIC-FILLER-0017 SYNTHETIC-FILLER-0018 SYNTHETIC-FILLER-0019 SYNTHETIC-FILLER-0020 SYNTHETIC-FILLER-0021 SYNTHETIC-FILLER-0022 SYNTHETIC-FILLER-0023 SYNTHETIC-FILLER-0024 SYNTHETIC-FILLER-0025 SYNTHETIC-FILLER-0026 SYNTHETIC-FILLER-0027 SYNTHETIC-FILLER-0028 SYNTHETIC-FILLER-0029" }]
+    capture:
+      - event: { type: turn.started }
+        bind: { eventId: $t1StartId, seq: $t1StartSeq }
+      - event: { type: model.request }
+        bind: { eventId: $t1ReqId, seq: $t1ReqSeq, payload: $t1ReqPayload }
+      - event: { type: model.response }
+        bind: { eventId: $t1RespId, seq: $t1RespSeq, timestamp: $t1RespTs, payload: $t1RespPayload, provenances: $t1RespProv, labels: $t1RespLabels }
+      - event: { type: run.ended }
+        bind: { eventId: $t1EndId, seq: $t1EndSeq }
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Second question with ten words to keep the history short." }]
+    capture:
+      - event: { type: turn.started }
+        bind: { eventId: $t2StartId, seq: $t2StartSeq }
+      - event: { type: model.request }
+        bind: { eventId: $t2ReqId, seq: $t2ReqSeq, payload: $t2ReqPayload }
+      - event: { type: model.response }
+        bind: { eventId: $t2RespId, seq: $t2RespSeq, timestamp: $t2RespTs, payload: $t2RespPayload, provenances: $t2RespProv, labels: $t2RespLabels }
+      - event: { type: run.ended }
+        bind: { eventId: $t2EndId, seq: $t2EndSeq }
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Third question carries fifteen words so that the assembled context crosses the trigger level now." }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sSum
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    profile: summarizing@1
+    input: [{ type: text, text: "SYN-SP-01 SYN-SP-02 SYN-SP-03 SYN-SP-04 SYN-SP-05 SYN-SP-06 SYN-SP-07 SYN-SP-08 SYN-SP-09 SYN-SP-10 SYN-SP-11 SYN-SP-12 SYN-SP-13 SYN-SP-14 SYN-SP-15 SYN-SP-16 SYN-SP-17 SYN-SP-18 SYN-SP-19 SYN-SP-20 SYN-SP-21 SYN-SP-22 SYN-SP-23 SYN-SP-24 SYN-SP-25 SYN-SP-26 SYN-SP-27 SYN-SP-28 SYN-SP-29 SYN-SP-30" }]
+    capture:
+      - event: { type: turn.started }
+        bind: { eventId: $u1StartId, seq: $u1StartSeq }
+      - event: { type: model.request }
+        bind: { eventId: $u1ReqId, seq: $u1ReqSeq, payload: $u1ReqPayload }
+      - event: { type: model.response }
+        bind: { eventId: $u1RespId, seq: $u1RespSeq, timestamp: $u1RespTs, payload: $u1RespPayload, provenances: $u1RespProv, labels: $u1RespLabels }
+      - event: { type: run.ended }
+        bind: { eventId: $u1EndId, seq: $u1EndSeq }
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $sSum
+    principal: p1
+    input: [{ type: text, text: "SYN-SQ-01 SYN-SQ-02 SYN-SQ-03 SYN-SQ-04 SYN-SQ-05 SYN-SQ-06 SYN-SQ-07 SYN-SQ-08 SYN-SQ-09 SYN-SQ-10 SYN-SQ-11 SYN-SQ-12 SYN-SQ-13 SYN-SQ-14 SYN-SQ-15 SYN-SQ-16 SYN-SQ-17 SYN-SQ-18 SYN-SQ-19 SYN-SQ-20 SYN-SQ-21 SYN-SQ-22 SYN-SQ-23 SYN-SQ-24 SYN-SQ-25 SYN-SQ-26 SYN-SQ-27 SYN-SQ-28 SYN-SQ-29 SYN-SQ-30 SYN-SQ-31 SYN-SQ-32 SYN-SQ-33 SYN-SQ-34 SYN-SQ-35 SYN-SQ-36 SYN-SQ-37 SYN-SQ-38 SYN-SQ-39 SYN-SQ-40" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { eventId: $t1StartId, seq: $t1StartSeq, type: turn.started, turn: 1 }
+          - { eventId: $t1ReqId, seq: $t1ReqSeq, type: model.request, turn: 1, step: 1, payload: $t1ReqPayload }
+          - { eventId: $t1RespId, seq: $t1RespSeq, type: model.response, turn: 1, step: 1, timestamp: $t1RespTs, payload: $t1RespPayload, provenances: $t1RespProv, labels: $t1RespLabels }
+          - { eventId: $t1EndId, seq: $t1EndSeq, type: run.ended }
+          - { eventId: $t2StartId, seq: $t2StartSeq, type: turn.started, turn: 2 }
+          - { eventId: $t2ReqId, seq: $t2ReqSeq, type: model.request, turn: 2, step: 1, payload: $t2ReqPayload }
+          - { eventId: $t2RespId, seq: $t2RespSeq, type: model.response, turn: 2, step: 1, timestamp: $t2RespTs, payload: $t2RespPayload, provenances: $t2RespProv, labels: $t2RespLabels }
+          - { eventId: $t2EndId, seq: $t2EndSeq, type: run.ended }
+          - { type: turn.started, turn: 3 }
+          - { type: context.compacted, turn: 3, step: 1, payload: { mode: truncate, units: [{ turn: 1 }] } }
+          - { type: model.request, turn: 3, step: 1 }
+          - { type: run.ended, payload: { reason: responded } }
+    $sSum:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { eventId: $u1StartId, seq: $u1StartSeq, type: turn.started, turn: 1 }
+          - { eventId: $u1ReqId, seq: $u1ReqSeq, type: model.request, turn: 1, step: 1, payload: $u1ReqPayload }
+          - { eventId: $u1RespId, seq: $u1RespSeq, type: model.response, turn: 1, step: 1, timestamp: $u1RespTs, payload: $u1RespPayload, provenances: $u1RespProv, labels: $u1RespLabels }
+          - { eventId: $u1EndId, seq: $u1EndSeq, type: run.ended }
+          - { type: turn.started, turn: 2 }
+          - { type: context.compacted, turn: 2, step: 1, payload: { mode: summarize, units: [{ turn: 1 }] } }
+          - { type: model.request, turn: 2, step: 1 }
+          - { type: run.ended, payload: { reason: responded } }
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $all:
+            - $count: { of: { type: turn.started }, equals: 3 }
+            - $count: { of: { type: model.request }, equals: 3 }
+            - $count: { of: { type: model.response }, equals: 3 }
+            - $count: { of: { type: context.compacted }, equals: 1 }
+        $sSum:
+          $all:
+            - $count: { of: { type: turn.started }, equals: 2 }
+            - $count: { of: { type: model.request }, equals: 2 }
+            - $count: { of: { type: model.response }, equals: 2 }
+            - $count: { of: { type: context.compacted }, equals: 1 }
+  providerRequests:
+    scripted-a:
+      - {}
+      - {}
+      - messages:
+          $all:
+            - $count: { of: { parts: { $contains: [{ type: text, text: { $regex: "SYNTHETIC-FILLER" } }] } }, equals: 0 }
+            - $count: { of: { parts: { $contains: [{ type: text, text: "Turn one answer with exactly ten words in this reply." }] } }, equals: 0 }
+            - $contains:
+                - role: principal
+                  parts: [{ type: text, text: "Second question with ten words to keep the history short." }]
+                - role: assistant
+                  parts: [{ type: text, text: "Second answer is here." }]
+      # $sSum turn 1, turn 2
+      - {}
+      - messages:
+          - role: system
+            parts:
+              - { type: text, text: "Follow organisational policy.", provenance: system }
+              - { type: text, text: "You are a test assistant.", provenance: system }
+          - role: assistant
+            parts: [{ type: text, text: "SYN-SUMMARY-0001 SYN-SUMMARY-0002 SYN-SUMMARY-0003", provenance: model }]
+          - role: principal
+            parts: [{ type: text, text: "SYN-SQ-01 SYN-SQ-02 SYN-SQ-03 SYN-SQ-04 SYN-SQ-05 SYN-SQ-06 SYN-SQ-07 SYN-SQ-08 SYN-SQ-09 SYN-SQ-10 SYN-SQ-11 SYN-SQ-12 SYN-SQ-13 SYN-SQ-14 SYN-SQ-15 SYN-SQ-16 SYN-SQ-17 SYN-SQ-18 SYN-SQ-19 SYN-SQ-20 SYN-SQ-21 SYN-SQ-22 SYN-SQ-23 SYN-SQ-24 SYN-SQ-25 SYN-SQ-26 SYN-SQ-27 SYN-SQ-28 SYN-SQ-29 SYN-SQ-30 SYN-SQ-31 SYN-SQ-32 SYN-SQ-33 SYN-SQ-34 SYN-SQ-35 SYN-SQ-36 SYN-SQ-37 SYN-SQ-38 SYN-SQ-39 SYN-SQ-40", provenance: principal }]
+    scripted-b: { count: 0 }
+    scripted-sum: { count: 1 }

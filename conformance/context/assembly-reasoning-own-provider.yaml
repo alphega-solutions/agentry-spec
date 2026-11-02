@@ -1,0 +1,125 @@
+schemaVersion: "0.1.0"
+id: context.assembly-reasoning-own-provider
+title: A reasoning part is sent back only to the provider that produced it, and is withheld from a fallback provider
+description: >-
+  Turn 1: scripted-a answers step 1 with a reasoning part and a lookup
+  call; the step-2 request, to the same provider, carries the reasoning
+  part in the assistant message before the call. Turn 2: the first call
+  to scripted-a fails with a non-retryable `unavailable` (authentication),
+  so the turn fails over to scripted-b before its first completed model
+  call (PROV-060, PROV-062). The failed request to scripted-a still carries
+  the reasoning part; the request to scripted-b carries the turn-1 tool
+  call but no reasoning part at all. Turn 3 starts again from the primary
+  (PROV-063), and the request back to scripted-a carries the reasoning
+  part again.
+
+
+  As settled (Area 7 amendment, readings settled with the fixtures), a
+  reasoning part stays in history, in the assistant message where it was
+  produced, and is sent only to the provider that produced it (CTX-013,
+  CORE-142, PROV-055). Failover to a different provider is
+  allowed only before a turn's first model call (PROV-062), so the switch
+  to scripted-b and the return to scripted-a happen at turn boundaries.
+  Context limits are the defaults; nothing is compacted.
+requirements: [CTX-013]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { reasoning: true, toolUse: true }
+      responses:
+        # Turn 1
+        - parts:
+            - { type: reasoning, provider: scripted-a, data: "SYNTHETIC-REASONING-A-0013", opaque: true }
+            - { type: tool_call, callId: c1, tool: lookup, arguments: { key: a } }
+          usage: { inputTokens: 20, outputTokens: 30, cachedInputTokens: 0, reasoningTokens: 24 }
+        - parts: [{ type: text, text: "Found a." }]
+          usage: { inputTokens: 40, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        # Turn 2: fails over to scripted-b
+        - error: { category: unavailable, code: agentry.provider.auth, retryable: false }
+        # Turn 3
+        - parts: [{ type: text, text: "Hello again from a." }]
+          usage: { inputTokens: 60, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      capabilities: { reasoning: true, toolUse: true }
+      responses:
+        - parts: [{ type: text, text: "Hello from b." }]
+          usage: { inputTokens: 50, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "synthetic-a" } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up a" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Anything else?" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "One more thing" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-a } }
+          - { type: model.request, turn: 1, step: 2, payload: { provider: scripted-a } }
+          - { type: model.request, turn: 2, step: 1, payload: { provider: scripted-a } }
+          - { type: error, payload: { error: { category: unavailable, code: agentry.provider.auth } } }
+          - { type: model.request, turn: 2, step: 1, payload: { provider: scripted-b, role: fallback, fallbackReason: failover } }
+          - { type: model.request, turn: 3, step: 1, payload: { provider: scripted-a, role: primary } }
+  providerRequests:
+    scripted-a:
+      - {}
+      # Turn 1, step 2: same provider continues
+      - messages:
+          $contains:
+            - role: assistant
+              parts:
+                - { type: reasoning, provider: scripted-a, data: "SYNTHETIC-REASONING-A-0013" }
+                - { type: tool_call, callId: c1, tool: lookup }
+            - role: tool
+              parts: [{ type: tool_result, callId: c1 }]
+      # Turn 2, the failed call
+      - messages:
+          $contains:
+            - role: assistant
+              parts:
+                - { type: reasoning, provider: scripted-a, data: "SYNTHETIC-REASONING-A-0013" }
+                - { type: tool_call, callId: c1, tool: lookup }
+      # Turn 3, back on the primary
+      - messages:
+          $contains:
+            - role: assistant
+              parts:
+                - { type: reasoning, provider: scripted-a, data: "SYNTHETIC-REASONING-A-0013" }
+                - { type: tool_call, callId: c1, tool: lookup }
+            - role: assistant
+              parts: [{ type: text, text: "Hello from b." }]
+    scripted-b:
+      - messages:
+          $all:
+            - $count: { of: { parts: { $contains: [{ type: reasoning }] } }, equals: 0 }
+            - $contains:
+                - role: assistant
+                  parts: [{ type: tool_call, callId: c1, tool: lookup }]
+                - role: tool
+                  parts: [{ type: tool_result, callId: c1 }]

@@ -177,3 +177,51 @@ This block replaces the provisional `context` field (CFG-090, CFG-092).
 
 - CTX-010: "policy-bundle `instructions`" is now the bundle field `policyInstructions` (CFG amendment).
 
+
+## Amendment 2026-11-01 — from Phase 4 (schemas and fixtures)
+
+Schemas: the `context.retrieved` and `context.compacted` payloads in `schemas/core/v1/event.yaml`; the `context` block in `schemas/config/v1/defs.yaml`; retrieval bindings in `schemas/config/v1/tool.yaml`.
+
+**Trust order** (also used by HOOK-021 and ORCH-011)
+
+- Provenances rank, most trusted first: `system`; `reviewer`; `principal`; `model`; trusted external content (`tool:` in `trustedTools`, `attachment:` in `trustedAttachmentSources`, `agent:` whose output is trusted); untrusted content (every other `tool:`, `attachment:` and `agent:`, and every `retrieval:`, HOOK-120). The **least-trusted** provenance of a set is its lowest-ranked one; ties go to the one that entered context first.
+
+**Measuring context** (CTX-050, CTX-090)
+
+- Context size is counted in tokens by the provider adapter of each candidate model (PROV-045); the context manager compacts until the context fits every candidate (PROV-044). Tool definitions are not part of the assembled context.
+
+**Units** (CTX-061, CTX-070)
+
+- An earlier **turn** unit is every message of that turn. A **step** unit of the current turn is one model response and its tool calls and results. A **summary** unit is an earlier summary. A unit is removed or summarized whole; `context.compacted` lists the units covered, in drop order.
+- A summary is one `assistant`-role message with one text part, placed after system content in the order summaries were made (CTX-010). Its part has the least-trusted provenance of the content it replaces and the union of its labels; the event's `provenances` lists every provenance it replaces, in order of first entry (CTX-081). Folding (CTX-062) summarizes earlier summaries together with the units being dropped; a folded summary is a unit of the new one.
+- The summarizer request carries no tools and only the content being summarized; its instructions are implementation-defined. Its usage is recorded on `context.compacted` and counts toward the turn budget (CTX-084).
+- CTX-085: a fallback emits `context.compacted` with `mode: truncate` and `fallback: summarizer_failed` (with an `error` event, `source: provider`) or `fallback: policy_denied` (with a `policy.decision` of kind `summarizer`, outcome `block`).
+
+**Retrieval**
+
+- CTX-031: the automatic retrieval query is the text of the principal message's text parts, after hook rewrites, joined with a newline. The port is queried with the session's tenant and principal, the source, that text, and the effective `retrieval.limit`. Each result becomes one `text` part appended to the principal message, in the order the port returned them, with provenance `retrieval:<source>` and its labels (CTX-042).
+- If the vector store fails during automatic retrieval, an `error` event is emitted (`source: port`), no `context.retrieved` is emitted, and the turn continues without retrieved content; nothing entered context, so the session is not tainted.
+- CTX-020: a retrieval tool's `input` declares a required string `query` and may declare an integer `limit` (default 5). Its `ok` output is `{results: [{id, text}]}` in the port's order; its `tool_result` part carries provenance `retrieval:<source>` and the union of the results' labels (stored labels, or the profile's `retrieval.defaultLabels` for results stored without any).
+- CTX-012: provider requests carry every part's provenance, which is what an adapter delimits by. Whether a given provider's formatting delimits untrusted content is verified per adapter, not by the core fixtures; the core fixtures check that untrusted parts reach the adapter with their provenance.
+
+**Readings settled with the Area 7 fixtures**
+
+- CTX-050, CTX-070: context **fits** when its size is at or below the trigger level (`triggerPercent` of the available space), counting any new summary. Compaction removes or summarizes units until it fits or no droppable unit remains. Then, if context exceeds the available space, the run overflows (CTX-090); if it lies between the trigger level and the available space, the call proceeds. With `compaction.mode: none`, only exceeding the available space matters.
+- CTX-060: at the model call of step *N*, the **current step** is step *N−1*'s model response with its tool calls and results, which the call answers; earlier steps of the turn are droppable units. The reasoning parts the provider requires are those in that response.
+- CTX-010: system content is one `system`-role message with one text part per instruction source: each policy bundle's `policyInstructions` in stack order, then the persona's `instructions`. A principal message keeps its automatically retrieved parts in history. Reasoning parts stay in history and are sent only to the provider that produced them (CORE-142, PROV-055).
+- CTX-011: the `content` a `beforeModelCall` hook sees is the parts of the assembled messages, in order, system parts included; `annotate` part indices refer to that list.
+- CTX-003: the full content behind a redacted event is referenced by the event's `contentRef`. Retrieved results, summaries and `contentRef` blobs are `application/json`: the part, or the payload content.
+- CTX-031: a failing vector store is retried as the profile's `retry.unavailable` allows; if it still fails, the amendment's error handling applies and the turn continues, notwithstanding CORE-191's `fatal` handling of exhausted retries. A vector store query is made with the principal's `{subject, tenant, roles}` (PORT-080 as amended).
+- CTX-101: a `retrieval.source` that the deployment's `ports.vectorStore.sources` does not declare is a configuration error, as is a retrieval tool's.
+- CTX-080: summarizer calls are provider requests like any other and appear in a scripted provider's recorded requests; they emit no events. On a fallback (CTX-085), the `error` or `policy.decision` precedes `context.compacted`. A folded summary's `provenances` are those recorded for the earlier summary followed by those of the new units, in order of first entry. If the turn budget runs out during summarization (CTX-084), the compaction is not recorded.
+- `context.retrieved` carries the turn and `context.compacted` the turn and step of the model call it prepared.
+
+**Further readings settled in review**
+
+- CTX-011, HOOK-091: `annotate` part indices at `beforeModelCall` count the assembled parts in order, system parts included and reasoning parts excluded. Labels a `beforeModelCall` hook adds persist on the parts they label for the rest of the session (labels only grow, HOOK-022); the `hook.decision` records them per part (`annotations`), and later assembly reapplies them (CTX-001). A `beforeModelCall` `rewrite` applies to that model request only; the hooks run again before every call.
+- CTX-050, PROV-044, PROV-045: context fits when, for every candidate model, its adapter's count is at or below the trigger level of the available space, where the available space is the smallest `contextLimit` among the candidates minus `reserveOutputTokens`, which defaults to the largest `maxOutputTokens` among them.
+- CTX-070: `summarize` chooses the smallest prefix of droppable units (in drop order) whose removal makes the remaining context fit, not counting the summary; it calls the summarizer once; the ordinary fit and overflow rules then apply with the summary counted. If the content compaction may never drop already exceeds the available space, the run overflows (CTX-090) without compacting: no summarizer call and no `context.compacted`.
+- CTX-084: if the turn budget runs out during summarization, no `context.compacted` is emitted, and the summarizer's usage is recorded as `unrecordedUsage` on `run.ended`.
+- CTX-085: summarizer errors are handled by CTX-085, notwithstanding CORE-191/192: an `unavailable` error is retried as `retry.unavailable` allows; the summarizer has no fallback models; any remaining failure falls back to `truncate`.
+- CTX-040, CTX-081: an empty automatic retrieval taints the session (its provenance is recorded in the session's taint provenances, HOOK-126) but adds no part, so it contributes no provenance to the units of its turn or to a summary of them.
+- CTX-090, CTX-001: a turn that overflowed before any model call keeps its principal message in history, since context derives from the session's events; later compaction may drop it like any earlier turn.

@@ -1,0 +1,196 @@
+schemaVersion: "0.1.0"
+id: context.summary-fallback-truncate
+title: A failed summarizer or a sensitivity policy that forbids it makes that compaction fall back to truncation, recorded
+description: >-
+  Both session models declare contextLimit 120 and maxOutputTokens 20:
+  available space 100, compaction above 90 (default triggerPercent). The
+  profile summarizes with scripted-sum/sum-1. `lookup` declares
+  sensitivity `phi`, whose baseline policy allows only scripted-a. System
+  content is 8 tokens ("Follow organisational policy." 3 + "You are a
+  test assistant." 5).
+
+  - $sFail: turn 1 has a 20-word principal text and a 20-word response;
+    turn 2's text is 45 words → 93 > 90. The summarizer's scripted
+    response is an error (fatal, not retryable), so the compaction falls
+    back to truncation: an `error` event with source `provider`, and
+    `context.compacted` with mode `truncate`, fallback
+    `summarizer_failed` and units `[{turn: 1}]`. The request holds only
+    system content and turn 2's principal message (8 + 45 = 53) — no
+    summary.
+  - $sDenied: turn 1 has a 10-word principal text, a lookup call (10)
+    whose result is labelled `phi` (10), and a 10-word response: 40.
+    Turn 2's text is 45 words → 93 > 90. Sending turn 1 to scripted-sum is
+    forbidden by the `phi` policy, so the summarizer is not called: a
+    `policy.decision` of kind `summarizer`, outcome `block`, and
+    `context.compacted` with mode `truncate`, fallback `policy_denied`,
+    units `[{turn: 1}]`. The request holds only turn 2's principal message.
+
+  scripted-sum receives exactly one request, $sFail's; $sDenied's phi
+  content never reaches it. On a fallback the `error` or `policy.decision`
+  precedes `context.compacted` (Area 7 amendment, readings settled with
+  the fixtures), which precedes turn 2's model call, so events are
+  matched as a subsequence. Every candidate sets maxOutputTokens 20, so
+  the default reserve is 20. Turn-2 requests are asserted exactly: one
+  `system` message (one text part per instruction source) and turn 2's
+  principal message.
+requirements: [CTX-085]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          - { id: scripted-sum, adapter: scripted, endpoint: "memory://scripted-sum", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+        context: { compaction: { mode: summarize, model: { provider: scripted-sum, name: sum-1 } } }
+      - kind: Tool
+        id: lookup
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Look up a record by key.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        sensitivity: [phi]
+        binding: { kind: native, handler: test.lookup }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { contextLimit: 120, maxOutputTokens: 20 }
+      responses:
+        # $sFail
+        - parts: [{ type: text, text: "SYN-FR-01 SYN-FR-02 SYN-FR-03 SYN-FR-04 SYN-FR-05 SYN-FR-06 SYN-FR-07 SYN-FR-08 SYN-FR-09 SYN-FR-10 SYN-FR-11 SYN-FR-12 SYN-FR-13 SYN-FR-14 SYN-FR-15 SYN-FR-16 SYN-FR-17 SYN-FR-18 SYN-FR-19 SYN-FR-20" }]
+          usage: { inputTokens: 28, outputTokens: 20, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Done." }]
+          usage: { inputTokens: 53, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sDenied
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 18, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "SYN-DR-01 SYN-DR-02 SYN-DR-03 SYN-DR-04 SYN-DR-05 SYN-DR-06 SYN-DR-07 SYN-DR-08 SYN-DR-09 SYN-DR-10" }]
+          usage: { inputTokens: 38, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Done." }]
+          usage: { inputTokens: 53, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      capabilities: { contextLimit: 120, maxOutputTokens: 20 }
+      responses: []
+    scripted-sum:
+      responses:
+        - error: { category: fatal, code: agentry.provider.bad_request, retryable: false }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "SYN-PHI-RECORD-0001" } }
+script:
+  - action: run
+    bind: $sFail
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYN-FP-01 SYN-FP-02 SYN-FP-03 SYN-FP-04 SYN-FP-05 SYN-FP-06 SYN-FP-07 SYN-FP-08 SYN-FP-09 SYN-FP-10 SYN-FP-11 SYN-FP-12 SYN-FP-13 SYN-FP-14 SYN-FP-15 SYN-FP-16 SYN-FP-17 SYN-FP-18 SYN-FP-19 SYN-FP-20" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $sFail
+    principal: p1
+    input: [{ type: text, text: "SYN-FQ-01 SYN-FQ-02 SYN-FQ-03 SYN-FQ-04 SYN-FQ-05 SYN-FQ-06 SYN-FQ-07 SYN-FQ-08 SYN-FQ-09 SYN-FQ-10 SYN-FQ-11 SYN-FQ-12 SYN-FQ-13 SYN-FQ-14 SYN-FQ-15 SYN-FQ-16 SYN-FQ-17 SYN-FQ-18 SYN-FQ-19 SYN-FQ-20 SYN-FQ-21 SYN-FQ-22 SYN-FQ-23 SYN-FQ-24 SYN-FQ-25 SYN-FQ-26 SYN-FQ-27 SYN-FQ-28 SYN-FQ-29 SYN-FQ-30 SYN-FQ-31 SYN-FQ-32 SYN-FQ-33 SYN-FQ-34 SYN-FQ-35 SYN-FQ-36 SYN-FQ-37 SYN-FQ-38 SYN-FQ-39 SYN-FQ-40 SYN-FQ-41 SYN-FQ-42 SYN-FQ-43 SYN-FQ-44 SYN-FQ-45" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sDenied
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYN-DP-01 SYN-DP-02 SYN-DP-03 SYN-DP-04 SYN-DP-05 SYN-DP-06 SYN-DP-07 SYN-DP-08 SYN-DP-09 SYN-DP-10" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $sDenied
+    principal: p1
+    input: [{ type: text, text: "SYN-DQ-01 SYN-DQ-02 SYN-DQ-03 SYN-DQ-04 SYN-DQ-05 SYN-DQ-06 SYN-DQ-07 SYN-DQ-08 SYN-DQ-09 SYN-DQ-10 SYN-DQ-11 SYN-DQ-12 SYN-DQ-13 SYN-DQ-14 SYN-DQ-15 SYN-DQ-16 SYN-DQ-17 SYN-DQ-18 SYN-DQ-19 SYN-DQ-20 SYN-DQ-21 SYN-DQ-22 SYN-DQ-23 SYN-DQ-24 SYN-DQ-25 SYN-DQ-26 SYN-DQ-27 SYN-DQ-28 SYN-DQ-29 SYN-DQ-30 SYN-DQ-31 SYN-DQ-32 SYN-DQ-33 SYN-DQ-34 SYN-DQ-35 SYN-DQ-36 SYN-DQ-37 SYN-DQ-38 SYN-DQ-39 SYN-DQ-40 SYN-DQ-41 SYN-DQ-42 SYN-DQ-43 SYN-DQ-44 SYN-DQ-45" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sFail:
+      events:
+        mode: subsequence
+        items:
+          - { type: error, payload: { error: { source: provider } } }
+          - { type: context.compacted, turn: 2, step: 1, payload: { mode: truncate, fallback: summarizer_failed, units: [{ turn: 1 }], summary: { $absent: true } } }
+          - { type: model.request, turn: 2, step: 1 }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: context.compacted, payload: { mode: summarize } }
+        - { type: policy.decision, payload: { kind: summarizer } }
+    $sDenied:
+      events:
+        mode: subsequence
+        items:
+          - { type: policy.decision, payload: { kind: summarizer, outcome: block } }
+          - { type: context.compacted, turn: 2, step: 1, payload: { mode: truncate, fallback: policy_denied, units: [{ turn: 1 }], summary: { $absent: true } } }
+          - { type: model.request, turn: 2, step: 1 }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: context.compacted, payload: { mode: summarize } }
+  providerRequests:
+    scripted-sum:
+      - messages:
+          $contains:
+            - role: principal
+              parts: [{ type: text, text: "SYN-FP-01 SYN-FP-02 SYN-FP-03 SYN-FP-04 SYN-FP-05 SYN-FP-06 SYN-FP-07 SYN-FP-08 SYN-FP-09 SYN-FP-10 SYN-FP-11 SYN-FP-12 SYN-FP-13 SYN-FP-14 SYN-FP-15 SYN-FP-16 SYN-FP-17 SYN-FP-18 SYN-FP-19 SYN-FP-20" }]
+    scripted-a:
+      # $sFail
+      - {}
+      - messages:
+          - role: system
+            parts:
+              - { type: text, text: "Follow organisational policy.", provenance: system }
+              - { type: text, text: "You are a test assistant.", provenance: system }
+          - role: principal
+            parts: [{ type: text, text: "SYN-FQ-01 SYN-FQ-02 SYN-FQ-03 SYN-FQ-04 SYN-FQ-05 SYN-FQ-06 SYN-FQ-07 SYN-FQ-08 SYN-FQ-09 SYN-FQ-10 SYN-FQ-11 SYN-FQ-12 SYN-FQ-13 SYN-FQ-14 SYN-FQ-15 SYN-FQ-16 SYN-FQ-17 SYN-FQ-18 SYN-FQ-19 SYN-FQ-20 SYN-FQ-21 SYN-FQ-22 SYN-FQ-23 SYN-FQ-24 SYN-FQ-25 SYN-FQ-26 SYN-FQ-27 SYN-FQ-28 SYN-FQ-29 SYN-FQ-30 SYN-FQ-31 SYN-FQ-32 SYN-FQ-33 SYN-FQ-34 SYN-FQ-35 SYN-FQ-36 SYN-FQ-37 SYN-FQ-38 SYN-FQ-39 SYN-FQ-40 SYN-FQ-41 SYN-FQ-42 SYN-FQ-43 SYN-FQ-44 SYN-FQ-45", provenance: principal, labels: [] }]
+      # $sDenied
+      - {}
+      - {}
+      - messages:
+          - role: system
+            parts:
+              - { type: text, text: "Follow organisational policy.", provenance: system }
+              - { type: text, text: "You are a test assistant.", provenance: system }
+          - role: principal
+            parts: [{ type: text, text: "SYN-DQ-01 SYN-DQ-02 SYN-DQ-03 SYN-DQ-04 SYN-DQ-05 SYN-DQ-06 SYN-DQ-07 SYN-DQ-08 SYN-DQ-09 SYN-DQ-10 SYN-DQ-11 SYN-DQ-12 SYN-DQ-13 SYN-DQ-14 SYN-DQ-15 SYN-DQ-16 SYN-DQ-17 SYN-DQ-18 SYN-DQ-19 SYN-DQ-20 SYN-DQ-21 SYN-DQ-22 SYN-DQ-23 SYN-DQ-24 SYN-DQ-25 SYN-DQ-26 SYN-DQ-27 SYN-DQ-28 SYN-DQ-29 SYN-DQ-30 SYN-DQ-31 SYN-DQ-32 SYN-DQ-33 SYN-DQ-34 SYN-DQ-35 SYN-DQ-36 SYN-DQ-37 SYN-DQ-38 SYN-DQ-39 SYN-DQ-40 SYN-DQ-41 SYN-DQ-42 SYN-DQ-43 SYN-DQ-44 SYN-DQ-45", provenance: principal, labels: [] }]
+    scripted-b: { count: 0 }

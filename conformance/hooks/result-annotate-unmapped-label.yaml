@@ -13,16 +13,16 @@ description: >-
   failure: an `error` event with code agentry.hook.invalid_result, category
   fatal, retryable false, source hook, and the label is not applied.
 
-  - $sUnmappedBlock: guard-ann annotates part 0 with test.example:unmapped
+  - $sUnmappedBlock: guard-ann annotates part 2 (the principal's input; parts 0 and 1 are the system parts, Area 7 amendment 2026-11-01, CTX-011) with test.example:unmapped
     → failure → block (HOOK-051): hook.decision {result: block,
     reasonCode: agentry.hook.invalid_result}, no model call, fallback.
-  - $sUnmappedContinue: ann-only annotates part 0 with
+  - $sUnmappedContinue: ann-only annotates part 2 with
     test.example:unmapped → failure → continue, since it declares neither
     block nor escalate (HOOK-053): no hook.decision, and the model is
     called with the input unlabelled.
-  - $sOutOfRange: guard-ann annotates part 5 (the content has one part)
+  - $sOutOfRange: guard-ann annotates part 5 (the content has three parts)
     with pii → failure → block, as in $sUnmappedBlock.
-  - $sMapped (control): guard-ann annotates part 0 with pii → applied:
+  - $sMapped (control): guard-ann annotates part 2 with pii → applied:
     hook.decision {result: annotate, labelsAdded: [pii]}, no error, and
     the model receives the input labelled pii.
 requirements: [HOOK-022, HOOK-020, HOOK-050, HOOK-051, HOOK-053]
@@ -106,14 +106,14 @@ setup:
     remoteHooks:
       guard-ann:
         - result: annotate
-          labels: [{ part: 0, labels: ["test.example:unmapped"] }]
+          labels: [{ part: 2, labels: ["test.example:unmapped"] }]
         - result: annotate
           labels: [{ part: 5, labels: [pii] }]
         - result: annotate
-          labels: [{ part: 0, labels: [pii] }]
+          labels: [{ part: 2, labels: [pii] }]
       ann-only:
         - result: annotate
-          labels: [{ part: 0, labels: ["test.example:unmapped"] }]
+          labels: [{ part: 2, labels: ["test.example:unmapped"] }]
 script:
   - action: run
     bind: $sUnmappedBlock

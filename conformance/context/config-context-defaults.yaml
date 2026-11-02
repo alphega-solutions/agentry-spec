@@ -1,0 +1,224 @@
+schemaVersion: "0.1.0"
+id: context.config-context-defaults
+title: "With no `context` block set, compaction truncates at 90% of the space left after reserving the largest candidate maxOutputTokens, and automatic retrieval is off; when enabled, it takes 5 results"
+description: >-
+  No policy bundle or profile sets any of reserveOutputTokens,
+  compaction.mode, compaction.triggerPercent or retrieval.limit. Both
+  candidate models declare contextLimit 100; the primary scripted-a
+  declares maxOutputTokens 10 and the fallback scripted-b 20. System
+  content is 8 tokens (3 + 5).
+
+
+  $s on default@1 (no context block at all). reserveOutputTokens defaults
+  to the largest maxOutputTokens among the candidates (Area 7 amendment,
+  further readings settled in review), 20, and triggerPercent to 90, so
+  the trigger level is 0.9 × (100 − 20) = 72.
+
+  - Turn 1: 8 + 30 (A01..A30) = 38; reply 4 words (R01..R04).
+
+  - Turn 2: 8 + 30 + 4 + 30 (B01..B30) = 72, exactly 90% of 80 and not
+    above it: no compaction, the request carries both principal messages
+    (this rules out any smaller effective space × percentage, e.g. a reserve
+    above 20). Reply "Okay." (1 word).
+
+  - Turn 3: 72 + 1 + 1 ("Next") = 74 > 72: compaction runs in the default
+    mode truncate (no summarizer call — no provider has a response for one —
+    and no overflow), dropping turn 1 (34 tokens) to leave 40. One
+    context.compacted with mode truncate and units [turn 1]; the request
+    carries turn 2's and turn 3's principal messages only. Compacting at 74
+    rules out a larger effective trigger level: the primary's own
+    maxOutputTokens (10) would give 81, a reserve of 0 would give 90.
+
+  Automatic retrieval is off by default: no context.retrieved event on $s,
+  and the vector store is queried only once in the fixture.
+
+
+  $r on retrieve@1, which sets only retrieval.auto true and retrieval.source
+  kb. The backend returns 7 unlabelled records for t1; the port is queried
+  with limit 5, the context.retrieved event records limit 5 and five
+  results, and the principal message carries its text part plus the first
+  five records, in port order, each with provenance retrieval:kb and the
+  default (empty) defaultLabels. Context is 8 + 2 + 5 = 15.
+requirements: [CTX-100]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+          vectorStore: { adapter: memory, region: test-region, sources: [kb] }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: HarnessProfile
+        id: retrieve
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+        context: { retrieval: { auto: true, source: kb } }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1, retrieve@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { contextLimit: 100, maxOutputTokens: 10 }
+      responses:
+        # $s turn 1
+        - parts: [{ type: text, text: "R01 R02 R03 R04" }]
+          usage: { inputTokens: 38, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $s turn 2
+        - parts: [{ type: text, text: "Okay." }]
+          usage: { inputTokens: 72, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $s turn 3
+        - parts: [{ type: text, text: "Done." }]
+          usage: { inputTokens: 40, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $r turn 1
+        - parts: [{ type: text, text: "Found." }]
+          usage: { inputTokens: 15, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      capabilities: { contextLimit: 100, maxOutputTokens: 20 }
+      responses: []
+  stubs:
+    vectorStores:
+      kb:
+        - results:
+            - { id: kb-1, text: "SYN-KB-0001", tenant: t1 }
+            - { id: kb-2, text: "SYN-KB-0002", tenant: t1 }
+            - { id: kb-3, text: "SYN-KB-0003", tenant: t1 }
+            - { id: kb-4, text: "SYN-KB-0004", tenant: t1 }
+            - { id: kb-5, text: "SYN-KB-0005", tenant: t1 }
+            - { id: kb-6, text: "SYN-KB-0006", tenant: t1 }
+            - { id: kb-7, text: "SYN-KB-0007", tenant: t1 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "A01 A02 A03 A04 A05 A06 A07 A08 A09 A10 A11 A12 A13 A14 A15 A16 A17 A18 A19 A20 A21 A22 A23 A24 A25 A26 A27 A28 A29 A30" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "B01 B02 B03 B04 B05 B06 B07 B08 B09 B10 B11 B12 B13 B14 B15 B16 B17 B18 B19 B20 B21 B22 B23 B24 B25 B26 B27 B28 B29 B30" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Next" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $r
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    profile: retrieve@1
+    input: [{ type: text, text: "Find notes" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, runId: $r1, turn: 1 }
+          - { type: model.request, runId: $r2, turn: 2 }
+          - { type: context.compacted, runId: $r3, turn: 3, step: 1, payload: { mode: truncate, units: [{ turn: 1 }] } }
+          - { type: model.request, runId: $r3, turn: 3 }
+          - { type: run.ended, runId: $r3, payload: { reason: responded } }
+      absentEvents:
+        - { type: context.compacted, runId: $r1 }
+        - { type: context.compacted, runId: $r2 }
+        - { type: context.retrieved }
+    $r:
+      events:
+        mode: subsequence
+        items:
+          - type: context.retrieved
+            payload:
+              source: kb
+              limit: 5
+              results:
+                - { labels: [] }
+                - { labels: [] }
+                - { labels: [] }
+                - { labels: [] }
+                - { labels: [] }
+          - { type: model.request }
+          - { type: run.ended, payload: { reason: responded } }
+  providerRequests:
+    scripted-a:
+      - {}
+      - messages:
+          $all:
+            - $count: { of: { role: principal }, equals: 2 }
+            - $contains:
+                - role: principal
+                  parts: [{ type: text, text: "A01 A02 A03 A04 A05 A06 A07 A08 A09 A10 A11 A12 A13 A14 A15 A16 A17 A18 A19 A20 A21 A22 A23 A24 A25 A26 A27 A28 A29 A30", provenance: principal }]
+      - messages:
+          $all:
+            - $count: { of: { role: principal }, equals: 2 }
+            - $count: { of: { role: assistant }, equals: 1 }
+            - $contains:
+                - role: principal
+                  parts: [{ type: text, text: "B01 B02 B03 B04 B05 B06 B07 B08 B09 B10 B11 B12 B13 B14 B15 B16 B17 B18 B19 B20 B21 B22 B23 B24 B25 B26 B27 B28 B29 B30", provenance: principal }]
+                - role: assistant
+                  parts: [{ type: text, text: "Okay." }]
+                - role: principal
+                  parts: [{ type: text, text: "Next", provenance: principal }]
+      - messages:
+          $contains:
+            - role: principal
+              parts:
+                - { type: text, text: "Find notes", provenance: principal }
+                - { type: text, text: "SYN-KB-0001", provenance: "retrieval:kb", labels: [] }
+                - { type: text, text: "SYN-KB-0002", provenance: "retrieval:kb", labels: [] }
+                - { type: text, text: "SYN-KB-0003", provenance: "retrieval:kb", labels: [] }
+                - { type: text, text: "SYN-KB-0004", provenance: "retrieval:kb", labels: [] }
+                - { type: text, text: "SYN-KB-0005", provenance: "retrieval:kb", labels: [] }
+    scripted-b: { count: 0 }
+  stubCalls:
+    vectorStore/kb:
+      - { arguments: { tenant: t1, text: "Find notes", limit: 5 } }

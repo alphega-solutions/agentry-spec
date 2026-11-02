@@ -1,0 +1,171 @@
+schemaVersion: "0.1.0"
+id: context.assembly-untrusted-provenance
+title: Untrusted content reaches the provider adapter carrying its provenance (attachment, automatic retrieval, tool and retrieval-tool results)
+description: >-
+  Per the Area 7 amendment 2026-11-01 (CTX-012), the core fixtures check
+  that untrusted parts reach the adapter with their provenance, which is
+  what an adapter delimits by; whether a given provider's formatting
+  delimits them is verified per adapter.
+
+
+  The baseline bundle trusts no tools and no attachment sources. The
+  principal sends text with a file attached through `upload`; automatic
+  retrieval from `kb` appends one record; the model then calls, in one
+  step, the native read tool lookup and the retrieval tool search_kb. The
+  step-2 request carries every part with its own provenance: the input
+  `principal`, the attachment
+  `attachment:upload`, the retrieved part and the search_kb result
+  `retrieval:kb`, the lookup result `tool:lookup`, and the model's calls
+  `model`. Context limits are the defaults; nothing is compacted.
+requirements: [CTX-012]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+          vectorStore: { adapter: memory, region: test-region, sources: [kb] }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+        context: { retrieval: { auto: true, source: kb } }
+      - kind: Tool
+        id: search_kb
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Search the knowledge base.
+        input:
+          type: object
+          additionalProperties: false
+          required: [query]
+          properties: { query: { type: string } }
+        effect: read
+        binding: { kind: retrieval, source: kb }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, search_kb@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { documents: true }
+      responses:
+        - parts:
+            - { type: tool_call, callId: c1, tool: lookup, arguments: { key: k6 } }
+            - { type: tool_call, callId: c2, tool: search_kb, arguments: { query: "widget notes" } }
+          usage: { inputTokens: 40, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Checked." }]
+          usage: { inputTokens: 80, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b: { responses: [] }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "SYN-VALUE-0006" } }
+    vectorStores:
+      kb:
+        # automatic retrieval
+        - results: [{ id: kb-6, text: "SYN-KB-0006 automatically retrieved note", tenant: t1 }]
+        # search_kb call
+        - results: [{ id: kb-7, text: "SYN-KB-0007 note found by the tool", tenant: t1 }]
+  ports:
+    blobStore:
+      t1:
+        - id: blob-file-1
+          hash: "sha256:488b66a845535f2173fe026ad21ad4238ca6b733b00a24ba332adab6729a0a80"
+          mediaType: text/plain
+          size: 44
+          data: "U1lOVEhFVElDLUZJTEUtMDAwMTogcXVhcnRlcmx5IHdpZGdldCByZXBvcnQ="
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input:
+      - { type: text, text: "Check the attached file and the records" }
+      - type: file
+        mediaType: text/plain
+        name: report.txt
+        source: upload
+        blob: { id: blob-file-1, hash: "sha256:488b66a845535f2173fe026ad21ad4238ca6b733b00a24ba332adab6729a0a80", mediaType: text/plain, size: 44 }
+    expect: { ok: true, endReason: responded }
+expect:
+  providerRequests:
+    scripted-a:
+      - messages:
+          $contains:
+            - role: principal
+              parts:
+                - { type: text, text: "Check the attached file and the records", provenance: principal }
+                - { type: file, blob: { id: blob-file-1 }, provenance: "attachment:upload" }
+                - { type: text, text: "SYN-KB-0006 automatically retrieved note", provenance: "retrieval:kb" }
+      - messages:
+          $contains:
+            - role: principal
+              parts:
+                - { type: text, text: "Check the attached file and the records", provenance: principal }
+                - { type: file, blob: { id: blob-file-1 }, provenance: "attachment:upload" }
+                - { type: text, text: "SYN-KB-0006 automatically retrieved note", provenance: "retrieval:kb" }
+            - role: assistant
+              parts:
+                - { type: tool_call, callId: c1, tool: lookup, provenance: model }
+                - { type: tool_call, callId: c2, tool: search_kb, provenance: model }
+            - role: tool
+              parts:
+                - { type: tool_result, callId: c1, tool: lookup, provenance: "tool:lookup", result: { ok: { output: { value: "SYN-VALUE-0006" } } } }
+                - type: tool_result
+                  callId: c2
+                  tool: search_kb
+                  provenance: "retrieval:kb"
+                  result: { ok: { output: { results: [{ id: kb-7, text: "SYN-KB-0007 note found by the tool" }] } } }
+    scripted-b: { count: 0 }
+  stubCalls:
+    vectorStore/kb:
+      - arguments: { tenant: t1, text: "Check the attached file and the records", limit: 5 }
+      - arguments: { tenant: t1, text: "widget notes", limit: 5 }
+    lookup: { count: 1 }

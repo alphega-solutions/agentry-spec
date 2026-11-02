@@ -1,0 +1,203 @@
+schemaVersion: "0.1.0"
+id: context.summary-fold
+title: A later summarization folds the earlier summary into the new one, so summaries do not accumulate
+description: >-
+  Both scripted models declare contextLimit 120 and maxOutputTokens 20:
+  available space 100, compaction above 90 (default triggerPercent). The
+  profile summarizes with scripted-sum/sum-1 (declared in the Deployment).
+  System content is 8 tokens ("Follow organisational policy." 3 + "You
+  are a test assistant." 5). Each summary the summarizer returns is 4
+  words.
+
+  - Turns 1 and 2: 10-word principal text, 10-word response (20 each).
+  - Turn 3: principal text 45 words → 8 + 40 + 45 = 93 > 90. Replacing
+    turn 1 with summary S1 gives 8 + 4 + 20 + 45 = 77: one compaction,
+    `units: [{turn: 1}]`. Turn 3's response is 10 words.
+  - Turn 4: principal text 20 words → 8 + 4 + 20 + 55 + 20 = 107 > 90.
+    Droppable units, oldest first: S1, turn 2, turn 3 (CTX-061). S1 alone
+    is not enough (at least 103 without it, above the space of 100); S1
+    and turn 2 replaced by S2 give 8 + 4 + 55 + 20 = 87, which fits. So
+    the second compaction's units are exactly `[{summary: <eventId of the
+    first context.compacted>}, {turn: 2}]`.
+
+  The second summarizer request carries S1's text and turn 2, not turn 3
+  or turn 4. Turn 4's request holds exactly one summary message, S2 (S1
+  is gone), then turn 3 and turn 4's principal message. S1 replaces
+  principal and model content, so its event lists [principal, model] and
+  its part has provenance `model`, the least trusted of the two. A folded
+  summary's `provenances` are those recorded for the earlier summary
+  followed by those of the new units, in order of first entry (Area 7
+  amendment, readings settled with the fixtures): S1's [principal, model]
+  then turn 2's (principal, model, already present), so exactly
+  [principal, model]. Taking S1's part provenance instead would give
+  [model, principal].
+
+  Every candidate sets maxOutputTokens 20, so the default reserve is 20.
+  Compactions are recorded with the turn and step of the call they
+  prepared. Turn-3 and turn-4 requests are asserted exactly, starting with
+  the one `system` message (one text part per instruction source).
+requirements: [CTX-062, CTX-061]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          - { id: scripted-sum, adapter: scripted, endpoint: "memory://scripted-sum", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+        context: { compaction: { mode: summarize, model: { provider: scripted-sum, name: sum-1 } } }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { contextLimit: 120, maxOutputTokens: 20 }
+      responses:
+        - parts: [{ type: text, text: "SYN-AR-01 SYN-AR-02 SYN-AR-03 SYN-AR-04 SYN-AR-05 SYN-AR-06 SYN-AR-07 SYN-AR-08 SYN-AR-09 SYN-AR-10" }]
+          usage: { inputTokens: 18, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "SYN-BR-01 SYN-BR-02 SYN-BR-03 SYN-BR-04 SYN-BR-05 SYN-BR-06 SYN-BR-07 SYN-BR-08 SYN-BR-09 SYN-BR-10" }]
+          usage: { inputTokens: 38, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "SYN-CR-01 SYN-CR-02 SYN-CR-03 SYN-CR-04 SYN-CR-05 SYN-CR-06 SYN-CR-07 SYN-CR-08 SYN-CR-09 SYN-CR-10" }]
+          usage: { inputTokens: 77, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Done." }]
+          usage: { inputTokens: 87, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      capabilities: { contextLimit: 120, maxOutputTokens: 20 }
+      responses: []
+    scripted-sum:
+      responses:
+        - parts: [{ type: text, text: "SYN-SUMMARY-A-0001 SYN-SUMMARY-A-0002 SYN-SUMMARY-A-0003 SYN-SUMMARY-A-0004" }]
+          usage: { inputTokens: 20, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "SYN-SUMMARY-B-0001 SYN-SUMMARY-B-0002 SYN-SUMMARY-B-0003 SYN-SUMMARY-B-0004" }]
+          usage: { inputTokens: 24, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYN-AP-01 SYN-AP-02 SYN-AP-03 SYN-AP-04 SYN-AP-05 SYN-AP-06 SYN-AP-07 SYN-AP-08 SYN-AP-09 SYN-AP-10" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "SYN-BP-01 SYN-BP-02 SYN-BP-03 SYN-BP-04 SYN-BP-05 SYN-BP-06 SYN-BP-07 SYN-BP-08 SYN-BP-09 SYN-BP-10" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "SYN-CP-01 SYN-CP-02 SYN-CP-03 SYN-CP-04 SYN-CP-05 SYN-CP-06 SYN-CP-07 SYN-CP-08 SYN-CP-09 SYN-CP-10 SYN-CP-11 SYN-CP-12 SYN-CP-13 SYN-CP-14 SYN-CP-15 SYN-CP-16 SYN-CP-17 SYN-CP-18 SYN-CP-19 SYN-CP-20 SYN-CP-21 SYN-CP-22 SYN-CP-23 SYN-CP-24 SYN-CP-25 SYN-CP-26 SYN-CP-27 SYN-CP-28 SYN-CP-29 SYN-CP-30 SYN-CP-31 SYN-CP-32 SYN-CP-33 SYN-CP-34 SYN-CP-35 SYN-CP-36 SYN-CP-37 SYN-CP-38 SYN-CP-39 SYN-CP-40 SYN-CP-41 SYN-CP-42 SYN-CP-43 SYN-CP-44 SYN-CP-45" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "SYN-DP-01 SYN-DP-02 SYN-DP-03 SYN-DP-04 SYN-DP-05 SYN-DP-06 SYN-DP-07 SYN-DP-08 SYN-DP-09 SYN-DP-10 SYN-DP-11 SYN-DP-12 SYN-DP-13 SYN-DP-14 SYN-DP-15 SYN-DP-16 SYN-DP-17 SYN-DP-18 SYN-DP-19 SYN-DP-20" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - type: context.compacted
+            eventId: $c1
+            turn: 3
+            step: 1
+            payload: { mode: summarize, units: [{ turn: 1 }], provenances: [principal, model] }
+          - { type: model.request, turn: 3, step: 1 }
+          - type: context.compacted
+            turn: 4
+            step: 1
+            payload:
+              mode: summarize
+              units: [{ summary: $c1 }, { turn: 2 }]
+              provenances: [principal, model]
+          - { type: model.request, turn: 4, step: 1 }
+          - { type: run.ended, payload: { reason: responded } }
+  providerRequests:
+    scripted-sum:
+      - tools: []
+        messages:
+          $all:
+            - $contains:
+                - role: principal
+                  parts: [{ type: text, text: "SYN-AP-01 SYN-AP-02 SYN-AP-03 SYN-AP-04 SYN-AP-05 SYN-AP-06 SYN-AP-07 SYN-AP-08 SYN-AP-09 SYN-AP-10" }]
+                - role: assistant
+                  parts: [{ type: text, text: "SYN-AR-01 SYN-AR-02 SYN-AR-03 SYN-AR-04 SYN-AR-05 SYN-AR-06 SYN-AR-07 SYN-AR-08 SYN-AR-09 SYN-AR-10" }]
+            - $count: { of: { parts: { $contains: [{ text: "SYN-BP-01 SYN-BP-02 SYN-BP-03 SYN-BP-04 SYN-BP-05 SYN-BP-06 SYN-BP-07 SYN-BP-08 SYN-BP-09 SYN-BP-10" }] } }, equals: 0 }
+      - tools: []
+        messages:
+          $all:
+            - $contains:
+                - role: assistant
+                  parts: [{ type: text, text: "SYN-SUMMARY-A-0001 SYN-SUMMARY-A-0002 SYN-SUMMARY-A-0003 SYN-SUMMARY-A-0004", provenance: model }]
+                - role: principal
+                  parts: [{ type: text, text: "SYN-BP-01 SYN-BP-02 SYN-BP-03 SYN-BP-04 SYN-BP-05 SYN-BP-06 SYN-BP-07 SYN-BP-08 SYN-BP-09 SYN-BP-10" }]
+                - role: assistant
+                  parts: [{ type: text, text: "SYN-BR-01 SYN-BR-02 SYN-BR-03 SYN-BR-04 SYN-BR-05 SYN-BR-06 SYN-BR-07 SYN-BR-08 SYN-BR-09 SYN-BR-10" }]
+            - $count: { of: { parts: { $contains: [{ text: "SYN-CP-01 SYN-CP-02 SYN-CP-03 SYN-CP-04 SYN-CP-05 SYN-CP-06 SYN-CP-07 SYN-CP-08 SYN-CP-09 SYN-CP-10 SYN-CP-11 SYN-CP-12 SYN-CP-13 SYN-CP-14 SYN-CP-15 SYN-CP-16 SYN-CP-17 SYN-CP-18 SYN-CP-19 SYN-CP-20 SYN-CP-21 SYN-CP-22 SYN-CP-23 SYN-CP-24 SYN-CP-25 SYN-CP-26 SYN-CP-27 SYN-CP-28 SYN-CP-29 SYN-CP-30 SYN-CP-31 SYN-CP-32 SYN-CP-33 SYN-CP-34 SYN-CP-35 SYN-CP-36 SYN-CP-37 SYN-CP-38 SYN-CP-39 SYN-CP-40 SYN-CP-41 SYN-CP-42 SYN-CP-43 SYN-CP-44 SYN-CP-45" }] } }, equals: 0 }
+            - $count: { of: { parts: { $contains: [{ text: "SYN-DP-01 SYN-DP-02 SYN-DP-03 SYN-DP-04 SYN-DP-05 SYN-DP-06 SYN-DP-07 SYN-DP-08 SYN-DP-09 SYN-DP-10 SYN-DP-11 SYN-DP-12 SYN-DP-13 SYN-DP-14 SYN-DP-15 SYN-DP-16 SYN-DP-17 SYN-DP-18 SYN-DP-19 SYN-DP-20" }] } }, equals: 0 }
+    scripted-a:
+      - {}
+      - {}
+      - messages:
+          - role: system
+            parts:
+              - { type: text, text: "Follow organisational policy.", provenance: system }
+              - { type: text, text: "You are a test assistant.", provenance: system }
+          - role: assistant
+            parts: [{ type: text, text: "SYN-SUMMARY-A-0001 SYN-SUMMARY-A-0002 SYN-SUMMARY-A-0003 SYN-SUMMARY-A-0004", provenance: model }]
+          - role: principal
+            parts: [{ type: text, text: "SYN-BP-01 SYN-BP-02 SYN-BP-03 SYN-BP-04 SYN-BP-05 SYN-BP-06 SYN-BP-07 SYN-BP-08 SYN-BP-09 SYN-BP-10", provenance: principal }]
+          - role: assistant
+            parts: [{ type: text, text: "SYN-BR-01 SYN-BR-02 SYN-BR-03 SYN-BR-04 SYN-BR-05 SYN-BR-06 SYN-BR-07 SYN-BR-08 SYN-BR-09 SYN-BR-10", provenance: model }]
+          - role: principal
+            parts: [{ type: text, text: "SYN-CP-01 SYN-CP-02 SYN-CP-03 SYN-CP-04 SYN-CP-05 SYN-CP-06 SYN-CP-07 SYN-CP-08 SYN-CP-09 SYN-CP-10 SYN-CP-11 SYN-CP-12 SYN-CP-13 SYN-CP-14 SYN-CP-15 SYN-CP-16 SYN-CP-17 SYN-CP-18 SYN-CP-19 SYN-CP-20 SYN-CP-21 SYN-CP-22 SYN-CP-23 SYN-CP-24 SYN-CP-25 SYN-CP-26 SYN-CP-27 SYN-CP-28 SYN-CP-29 SYN-CP-30 SYN-CP-31 SYN-CP-32 SYN-CP-33 SYN-CP-34 SYN-CP-35 SYN-CP-36 SYN-CP-37 SYN-CP-38 SYN-CP-39 SYN-CP-40 SYN-CP-41 SYN-CP-42 SYN-CP-43 SYN-CP-44 SYN-CP-45", provenance: principal }]
+      - messages:
+          - role: system
+            parts:
+              - { type: text, text: "Follow organisational policy.", provenance: system }
+              - { type: text, text: "You are a test assistant.", provenance: system }
+          - role: assistant
+            parts: [{ type: text, text: "SYN-SUMMARY-B-0001 SYN-SUMMARY-B-0002 SYN-SUMMARY-B-0003 SYN-SUMMARY-B-0004", provenance: model }]
+          - role: principal
+            parts: [{ type: text, text: "SYN-CP-01 SYN-CP-02 SYN-CP-03 SYN-CP-04 SYN-CP-05 SYN-CP-06 SYN-CP-07 SYN-CP-08 SYN-CP-09 SYN-CP-10 SYN-CP-11 SYN-CP-12 SYN-CP-13 SYN-CP-14 SYN-CP-15 SYN-CP-16 SYN-CP-17 SYN-CP-18 SYN-CP-19 SYN-CP-20 SYN-CP-21 SYN-CP-22 SYN-CP-23 SYN-CP-24 SYN-CP-25 SYN-CP-26 SYN-CP-27 SYN-CP-28 SYN-CP-29 SYN-CP-30 SYN-CP-31 SYN-CP-32 SYN-CP-33 SYN-CP-34 SYN-CP-35 SYN-CP-36 SYN-CP-37 SYN-CP-38 SYN-CP-39 SYN-CP-40 SYN-CP-41 SYN-CP-42 SYN-CP-43 SYN-CP-44 SYN-CP-45", provenance: principal }]
+          - role: assistant
+            parts: [{ type: text, text: "SYN-CR-01 SYN-CR-02 SYN-CR-03 SYN-CR-04 SYN-CR-05 SYN-CR-06 SYN-CR-07 SYN-CR-08 SYN-CR-09 SYN-CR-10", provenance: model }]
+          - role: principal
+            parts: [{ type: text, text: "SYN-DP-01 SYN-DP-02 SYN-DP-03 SYN-DP-04 SYN-DP-05 SYN-DP-06 SYN-DP-07 SYN-DP-08 SYN-DP-09 SYN-DP-10 SYN-DP-11 SYN-DP-12 SYN-DP-13 SYN-DP-14 SYN-DP-15 SYN-DP-16 SYN-DP-17 SYN-DP-18 SYN-DP-19 SYN-DP-20", provenance: principal }]
+    scripted-b: { count: 0 }

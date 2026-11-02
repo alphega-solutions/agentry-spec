@@ -12,7 +12,7 @@ description: >-
 
   A bundle that trusts the native lookup tool and the `upload` attachment
   source loads.
-requirements: [CFG-042]
+requirements: [CFG-042, CTX-021]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:

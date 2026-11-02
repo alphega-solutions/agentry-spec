@@ -1,0 +1,139 @@
+schemaVersion: "0.1.0"
+id: context.compact-drop-order
+title: Compaction drops earlier turns oldest first, then earlier steps of the current turn oldest first
+description: >-
+  Both scripted models declare contextLimit 120 and maxOutputTokens 20:
+  available space 100, compaction above 90 (default triggerPercent). The
+  profile truncates. System content is 8 tokens ("Follow organisational
+  policy." 3 + "You are a test assistant." 5).
+
+
+  Turns 1 and 2 each have a 10-word principal text and a 10-word response
+  (20 tokens per turn). Turn 3's principal text is 2 words. In turn 3,
+  step 1 answers with a 10-word text and a lookup call (10 + 10) whose
+  result is 10 tokens: 30. Step 2 answers with a 60-word text and a lookup
+  call, result 10: 80. Step 3 answers with text.
+
+  - Step 1 request: 8 + 40 + 2 = 50. Step 2 request: 50 + 30 = 80. Neither
+    exceeds 90.
+  - Step 3 request: 80 + 80 = 160 > 90. Step 2 is the current step and
+    cannot be dropped. Dropping in order: turn 1 → 140; turn 2 → 120,
+    still above the space of 100; step 1 of turn 3 → 90, which fits.
+    So one compaction covers both phases, and `units` is exactly
+    `[{turn: 1}, {turn: 2}, {turn: 3, step: 1}]` in that order (old turns
+    oldest first, then earlier steps of the current turn).
+  - The step-3 request holds exactly the turn-3 principal message, step 2's
+    assistant message and step 2's tool message.
+
+  A different drop order would list the units differently. The
+  compaction is recorded with the turn and step of the call it prepared
+  (turn 3, step 3). The step-3 request is asserted exactly, starting with
+  the one `system` message (one text part per instruction source).
+  Summaries as the first droppable units are shown in
+  context.summary-fold.
+requirements: [CTX-061]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+        context: { compaction: { mode: truncate } }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { contextLimit: 120, maxOutputTokens: 20 }
+      responses:
+        - parts: [{ type: text, text: "SYN-AR-01 SYN-AR-02 SYN-AR-03 SYN-AR-04 SYN-AR-05 SYN-AR-06 SYN-AR-07 SYN-AR-08 SYN-AR-09 SYN-AR-10" }]
+          usage: { inputTokens: 18, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "SYN-BR-01 SYN-BR-02 SYN-BR-03 SYN-BR-04 SYN-BR-05 SYN-BR-06 SYN-BR-07 SYN-BR-08 SYN-BR-09 SYN-BR-10" }]
+          usage: { inputTokens: 38, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts:
+            - { type: text, text: "SYN-CS-01 SYN-CS-02 SYN-CS-03 SYN-CS-04 SYN-CS-05 SYN-CS-06 SYN-CS-07 SYN-CS-08 SYN-CS-09 SYN-CS-10" }
+            - { type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }
+          usage: { inputTokens: 50, outputTokens: 20, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts:
+            - { type: text, text: "SYN-CT-01 SYN-CT-02 SYN-CT-03 SYN-CT-04 SYN-CT-05 SYN-CT-06 SYN-CT-07 SYN-CT-08 SYN-CT-09 SYN-CT-10 SYN-CT-11 SYN-CT-12 SYN-CT-13 SYN-CT-14 SYN-CT-15 SYN-CT-16 SYN-CT-17 SYN-CT-18 SYN-CT-19 SYN-CT-20 SYN-CT-21 SYN-CT-22 SYN-CT-23 SYN-CT-24 SYN-CT-25 SYN-CT-26 SYN-CT-27 SYN-CT-28 SYN-CT-29 SYN-CT-30 SYN-CT-31 SYN-CT-32 SYN-CT-33 SYN-CT-34 SYN-CT-35 SYN-CT-36 SYN-CT-37 SYN-CT-38 SYN-CT-39 SYN-CT-40 SYN-CT-41 SYN-CT-42 SYN-CT-43 SYN-CT-44 SYN-CT-45 SYN-CT-46 SYN-CT-47 SYN-CT-48 SYN-CT-49 SYN-CT-50 SYN-CT-51 SYN-CT-52 SYN-CT-53 SYN-CT-54 SYN-CT-55 SYN-CT-56 SYN-CT-57 SYN-CT-58 SYN-CT-59 SYN-CT-60" }
+            - { type: tool_call, callId: c2, tool: lookup, arguments: { key: k2 } }
+          usage: { inputTokens: 80, outputTokens: 70, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Done." }]
+          usage: { inputTokens: 90, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      capabilities: { contextLimit: 120, maxOutputTokens: 20 }
+      responses: []
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "SYN-LOOKUP-0001" } }
+        - ok: { output: { value: "SYN-LOOKUP-0002" } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYN-AP-01 SYN-AP-02 SYN-AP-03 SYN-AP-04 SYN-AP-05 SYN-AP-06 SYN-AP-07 SYN-AP-08 SYN-AP-09 SYN-AP-10" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "SYN-BP-01 SYN-BP-02 SYN-BP-03 SYN-BP-04 SYN-BP-05 SYN-BP-06 SYN-BP-07 SYN-BP-08 SYN-BP-09 SYN-BP-10" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "SYN-CP-01 SYN-CP-02" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, turn: 3, step: 2 }
+          - { type: tool.result, turn: 3, step: 2, payload: { callId: c2 } }
+          - { type: context.compacted, turn: 3, step: 3, payload: { mode: truncate, units: [{ turn: 1 }, { turn: 2 }, { turn: 3, step: 1 }] } }
+          - { type: model.request, turn: 3, step: 3 }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: context.compacted, payload: { units: [{ turn: 1 }] } }
+        - { type: context.compacted, payload: { units: [{ turn: 1 }, { turn: 2 }] } }
+  providerRequests:
+    scripted-a:
+      - {}
+      - {}
+      - {}
+      - messages:
+          $count: { of: { role: { $not: system } }, equals: 7 }
+      - messages:
+          - role: system
+            parts:
+              - { type: text, text: "Follow organisational policy.", provenance: system }
+              - { type: text, text: "You are a test assistant.", provenance: system }
+          - role: principal
+            parts: [{ type: text, text: "SYN-CP-01 SYN-CP-02", provenance: principal, labels: [] }]
+          - role: assistant
+            parts:
+              - { type: text, text: "SYN-CT-01 SYN-CT-02 SYN-CT-03 SYN-CT-04 SYN-CT-05 SYN-CT-06 SYN-CT-07 SYN-CT-08 SYN-CT-09 SYN-CT-10 SYN-CT-11 SYN-CT-12 SYN-CT-13 SYN-CT-14 SYN-CT-15 SYN-CT-16 SYN-CT-17 SYN-CT-18 SYN-CT-19 SYN-CT-20 SYN-CT-21 SYN-CT-22 SYN-CT-23 SYN-CT-24 SYN-CT-25 SYN-CT-26 SYN-CT-27 SYN-CT-28 SYN-CT-29 SYN-CT-30 SYN-CT-31 SYN-CT-32 SYN-CT-33 SYN-CT-34 SYN-CT-35 SYN-CT-36 SYN-CT-37 SYN-CT-38 SYN-CT-39 SYN-CT-40 SYN-CT-41 SYN-CT-42 SYN-CT-43 SYN-CT-44 SYN-CT-45 SYN-CT-46 SYN-CT-47 SYN-CT-48 SYN-CT-49 SYN-CT-50 SYN-CT-51 SYN-CT-52 SYN-CT-53 SYN-CT-54 SYN-CT-55 SYN-CT-56 SYN-CT-57 SYN-CT-58 SYN-CT-59 SYN-CT-60", provenance: model }
+              - { type: tool_call, callId: c2, tool: lookup, provenance: model }
+          - role: tool
+            parts: [{ type: tool_result, callId: c2, provenance: "tool:lookup" }]
+    scripted-b: { count: 0 }

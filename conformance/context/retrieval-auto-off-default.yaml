@@ -1,0 +1,127 @@
+schemaVersion: "0.1.0"
+id: context.retrieval-auto-off-default
+title: Automatic retrieval is off unless the `context` block enables it, even when a source is configured
+description: >-
+  The deployment declares vector store source `kb`, whose stub has an empty
+  behaviour list, so any query fails the test.
+
+  - $sDefault runs on default@1, which has no `context` block.
+  - $sSourced runs on sourced@1, which sets `retrieval.source: kb` and
+    `retrieval.limit: 3` but leaves `retrieval.auto` unset (default
+    `false`).
+
+  Neither session queries the vector store or emits `context.retrieved`,
+  and the principal message the model receives holds only the principal's
+  own part (CTX-030).
+requirements: [CTX-030]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+          vectorStore: { adapter: memory, region: test-region, sources: [kb] }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: HarnessProfile
+        id: sourced
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+        context: { retrieval: { source: kb, limit: 3 } }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1, sourced@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Answer one." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Answer two." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    vectorStores:
+      kb: []
+script:
+  - action: run
+    bind: $sDefault
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "What is the refund policy?" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sSourced
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    profile: sourced@1
+    input: [{ type: text, text: "What is the shipping policy?" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sDefault:
+      absentEvents:
+        - { type: context.retrieved }
+    $sSourced:
+      absentEvents:
+        - { type: context.retrieved }
+  providerRequests:
+    scripted-a:
+      - messages:
+          $all:
+            - $contains:
+                - role: principal
+                  parts: [{ type: text, text: "What is the refund policy?", provenance: principal, labels: [] }]
+            - $every: { parts: { $count: { of: { provenance: { $regex: "^retrieval:" } }, equals: 0 } } }
+      - messages:
+          $all:
+            - $contains:
+                - role: principal
+                  parts: [{ type: text, text: "What is the shipping policy?", provenance: principal, labels: [] }]
+            - $every: { parts: { $count: { of: { provenance: { $regex: "^retrieval:" } }, equals: 0 } } }
+  stubCalls:
+    vectorStore/kb: { count: 0 }

@@ -188,3 +188,7 @@ All rules here are new; this is a Tier 3 area.
 
 - PORT-030: the checkpoint holds **all** reasoning parts (CORE-140), not only those required for continuation.
 
+
+## Amendment 2026-11-01 — from Phase 4 (Area 7 fixtures)
+
+- PORT-080: `principal` is the principal's subject, tenant and roles, so a port can filter by role as well as by subject.
