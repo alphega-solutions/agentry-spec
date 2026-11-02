@@ -178,6 +178,9 @@ $defs:
       unrecordedUsage:
         description: Usage of model calls in this run that no other event records, such as a summarizer call during which the budget ran out (CTX-084 as amended).
         $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/usage"
+      unrecordedCost:
+        description: Cost of the calls counted in `unrecordedUsage`, when priced (PROV-074 as amended).
+        $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/cost"
     if: { properties: { reason: { const: failed } } }
     then: { required: [error] }
 
@@ -255,6 +258,7 @@ $defs:
       inputHash: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/sha256" }
       usage: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/usage" }
       cost: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/cost" }
+    dependentRequired: { cost: [usage] }
     allOf:
       - if: { properties: { result: { enum: [block, escalate] } } }
         then: { required: [reasonCode] }
@@ -330,7 +334,7 @@ $defs:
         description: Usage of a failed model call that reported it (PROV-006, PROV-070).
         $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/usage"
       cost: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/cost" }
-    dependentRequired: { model: [provider], provider: [model] }
+    dependentRequired: { model: [provider], provider: [model], usage: [provider], cost: [usage] }
 
   contextRetrieved:
     description: >-
@@ -397,4 +401,4 @@ $defs:
       - if: { properties: { mode: { const: summarize } } }
         then: { required: [summary, usage], not: { required: [fallback] } }
       - if: { properties: { mode: { const: truncate } } }
-        then: { not: { anyOf: [{ required: [summary] }] } }
+        then: { not: { anyOf: [{ required: [summary] }, { required: [cost] }] } }

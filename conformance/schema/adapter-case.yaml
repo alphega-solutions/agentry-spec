@@ -13,8 +13,10 @@ description: >-
   wrapping adapters run the same cases against the transcripts of the
   vendor endpoint they reach (PROV-009). The scripted adapter (EVAL-031)
   passes each case by construction: `condition` and `expect` are its
-  script. A reasoning part whose `provider` is `$self` was produced by
-  the adapter's own provider (each transcript set substitutes its ID).
+  script. In `request` and `expect`, the matcher `{"$selfProvider": true}`
+  stands for the provider ID the adapter is declared under: in a request's
+  reasoning part it marks reasoning the adapter's own provider produced; in
+  `expect` it matches exactly that ID.
 type: object
 additionalProperties: false
 required: [schemaVersion, id, title, requirements, condition, request, expect]
@@ -133,6 +135,10 @@ properties:
             type: array
             items: { type: string }
           outputSchemaSent: { const: true }
+          reasoningSent:
+            description: Indices of reasoning parts, produced by the adapter's own provider, that the wire request carries (PROV-005, CTX-060).
+            type: array
+            items: { type: integer, minimum: 0 }
     oneOf:
       - required: [parts]
         not: { required: [error] }

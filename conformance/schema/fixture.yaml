@@ -47,9 +47,10 @@ description: >-
   decimals with an absolute tolerance of 1e-9.
 
 
-  Scripted provider `capabilities` are merged over defaults in which every
-  boolean capability is true, `contextLimit` is 1,000,000 tokens and
-  `maxOutputTokens` is 4,096. Record shapes
+  Scripted provider `capabilities` are merged over the scripted adapter's
+  declaration in `conformance/adapters/manifests/scripted.yaml` (every
+  boolean capability true, `contextLimit` 1,000,000, `maxOutputTokens`
+  4,096), which also lists the generation parameters it accepts. Record shapes
   (stub calls, provider requests, port records) are defined under `expect`.
 type: object
 additionalProperties: false

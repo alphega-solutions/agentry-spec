@@ -584,7 +584,7 @@ def check_handlers(doc: dict) -> list[str]:
 
 
 MATCHERS = {"$any", "$absent", "$regex", "$len", "$contains", "$not", "$every",
-            "$gte", "$lte", "$all", "$count"}
+            "$gte", "$lte", "$all", "$count", "$selfProvider"}
 
 
 def _pattern_sites(doc: dict):
@@ -829,9 +829,12 @@ def main() -> int:
     ids: set[str] = set()
     for fx in fixture_files():
         doc = load_yaml(fx)
-        fid_str = str(doc.get("id", ""))
-        target = (CEL_ID if fid_str.startswith("cel.")
-                  else ADAPTER_ID if fid_str.startswith("adapter.") else FIXTURE_ID)
+        rel = fx.relative_to(ROOT / "conformance").parts
+        target = (CEL_ID if rel[0] == "cel"
+                  else ADAPTER_ID if rel[:2] == ("adapters", "cases") else FIXTURE_ID)
+        prefix = {CEL_ID: "cel.", ADAPTER_ID: "adapter."}.get(target)
+        if prefix and not str(doc.get("id", "")).startswith(prefix):
+            errors.append(f"{fx.relative_to(ROOT)}: id must start with {prefix!r}")
         for err in validator(target).iter_errors(doc):
             errors.append(f"{fx.relative_to(ROOT)}: {describe(err)}")
         fid = doc.get("id")
