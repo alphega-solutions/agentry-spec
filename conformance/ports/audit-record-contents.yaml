@@ -11,6 +11,9 @@ description: >-
   the reviewer's decision, the linking event IDs and the details
   (PORT-071), each with `schemaVersion` (PORT-007). The expiry rejection
   has no reviewer.
+
+  The raw stored records (test hook `records`) are the three audit
+  records, each with `schemaVersion` 0.1.0 (PORT-007).
 requirements: [PORT-071, PORT-007]
 port: auditLog
 steps:
@@ -137,3 +140,11 @@ steps:
           eventIds: ["01900000-0000-7000-8000-000000000213", "01900000-0000-7000-8000-000000000214"]
           details: { callId: "c1", tool: "update_record", arguments: { key: "k1", status: "closed" }, outcome: { ok: { output: { updated: true } } } }
           reviewer: { $absent: true }
+  - op: records
+    args: { tenant: t1 }
+    expect:
+      ok: true
+      result:
+        $all:
+          - { $len: 3 }
+          - $every: { schemaVersion: "0.1.0", tenant: t1 }

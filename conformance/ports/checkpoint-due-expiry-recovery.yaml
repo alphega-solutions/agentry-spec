@@ -7,8 +7,10 @@ description: >-
   - t1 A1 (…0080): active, lease expiring 10:05; renewed at 10:04 to
     10:09 by a versioned save (v2, PORT-031).
   - t1 A2 (…0081): active, lease expiring 12:00.
-  - t1 S1 (…0082): suspended, escalation `expiresAt` (its
+  - t1 S1 (…0082): suspended; checkpoint `expiresAt` (its escalation's
     `suspendedTtl` expiry) 2026-03-02T10:00Z; no lease.
+  - t1 I1 (…0084): idle; checkpoint `expiresAt` (last activity plus
+    `idleTtl`) 11:00; no lease.
   - t1 C1 (…0083): closed — never due.
   - t2 B1 (…0085): active, lease expiring 10:05.
 
@@ -21,13 +23,14 @@ description: >-
   - 10:05: t1 → none (A1's renewal moved its expiry; the query reads the
     current version); t2 → [B1].
   - 10:09: t1 → [A1].
-  - 12:00: t1 → [A1, A2].
-  - 2026-03-02T10:00Z: t1 → [A1, A2, S1]; t2 → [B1] only.
+  - 10:59: t1 → [A1] (I1's idle TTL has not yet elapsed).
+  - 11:00: t1 → [A1, I1] (idle TTL elapsed).
+  - 12:00: t1 → [A1, A2, I1].
+  - 2026-03-02T10:00Z: t1 → [A1, A2, I1, S1]; t2 → [B1] only.
 
-  Idle-TTL expiry is not exercised: the checkpoint record holds no
-  idle-expiry time, so a port cannot evaluate `idleTtl` from stored data
-  alone (reported as a format gap). Elapsed `suspendedTtl` is read from
-  the open escalation's `expiresAt`.
+  Elapsed idle and suspended TTLs are read from the checkpoint's
+  `expiresAt` (required while `idle` or `suspended`,
+  schemas/ports/v1/records.yaml); lapsed leases from `lease.expiresAt`.
 requirements: [PORT-032, PORT-033]
 port: checkpointStore
 clock: "2026-03-01T10:00:00Z"
@@ -54,7 +57,15 @@ steps:
       session: 01900000-0000-7000-8000-000000000082
       expectedVersion: 0
       lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }
-      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-000000000082, version: 1, lastSeq: 7, state: suspended, principalRef: { subject: user-3, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:9999999999999999999999999999999999999999999999999999999999999999", taint: { tainted: false, provenances: [] }, budget: { tokens: 50000 }, counters: { sessionSize: 512 }, escalation: { id: 01900000-0000-7000-8000-000000000086, sessionId: 01900000-0000-7000-8000-000000000082, runId: 01900000-0000-7000-8000-000000000087, turn: 1, step: 1, tenant: t1, snapshotHash: "sha256:9999999999999999999999999999999999999999999999999999999999999999", sources: [approval], reasonCodes: [agentry.approval.always], pendingActions: [{ id: pa-1, kind: tool_call, source: approval, reasonCode: agentry.approval.always, callId: call_1, tool: update_record, arguments: { key: k1, value: v1 }, labels: [], allowedDecisions: [approve, reject, edit], reviewerRequirements: { requiredApprovals: 1, selfApprovalAllowed: false, rules: [] } }], createdAt: "2026-02-27T10:00:00Z", expiresAt: "2026-03-02T10:00:00Z", decisions: [] } }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-000000000082, version: 1, lastSeq: 7, state: suspended, expiresAt: "2026-03-02T10:00:00Z", principalRef: { subject: user-3, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:9999999999999999999999999999999999999999999999999999999999999999", taint: { tainted: false, provenances: [] }, budget: { tokens: 50000 }, counters: { sessionSize: 512 }, escalation: { id: 01900000-0000-7000-8000-000000000086, sessionId: 01900000-0000-7000-8000-000000000082, runId: 01900000-0000-7000-8000-000000000087, turn: 1, step: 1, tenant: t1, snapshotHash: "sha256:9999999999999999999999999999999999999999999999999999999999999999", sources: [approval], reasonCodes: [agentry.approval.always], pendingActions: [{ id: pa-1, kind: tool_call, source: approval, reasonCode: agentry.approval.always, callId: call_1, tool: update_record, arguments: { key: k1, value: v1 }, labels: [], allowedDecisions: [approve, reject, edit], reviewerRequirements: { requiredApprovals: 1, selfApprovalAllowed: false, rules: [] } }], createdAt: "2026-02-27T10:00:00Z", expiresAt: "2026-03-02T10:00:00Z", decisions: [] } }
+    expect: { ok: true }
+  - op: save
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000084
+      expectedVersion: 0
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-000000000084, version: 1, lastSeq: 6, state: idle, principalRef: { subject: user-5, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:9999999999999999999999999999999999999999999999999999999999999999", taint: { tainted: false, provenances: [] }, budget: { tokens: 50000 }, counters: { sessionSize: 512 }, expiresAt: "2026-03-01T11:00:00Z" }
     expect: { ok: true }
   - op: save
     args:
@@ -96,22 +107,34 @@ steps:
   - op: due
     args: { tenant: t1, now: $now }
     expect: { result: [01900000-0000-7000-8000-000000000080] }
-  - clock: { advance: PT1H51M }
+  - clock: { advance: PT50M }
+  - op: due
+    args: { tenant: t1, now: $now }
+    expect: { result: [01900000-0000-7000-8000-000000000080] }
+  - clock: { advance: PT1M }
   - op: due
     args: { tenant: t1, now: $now }
     expect:
       result:
         $all:
           - { $len: 2 }
-          - { $contains: [01900000-0000-7000-8000-000000000080, 01900000-0000-7000-8000-000000000081] }
-  - clock: { advance: PT22H }
+          - { $contains: [01900000-0000-7000-8000-000000000080, 01900000-0000-7000-8000-000000000084] }
+  - clock: { advance: PT1H }
   - op: due
     args: { tenant: t1, now: $now }
     expect:
       result:
         $all:
           - { $len: 3 }
-          - { $contains: [01900000-0000-7000-8000-000000000080, 01900000-0000-7000-8000-000000000081, 01900000-0000-7000-8000-000000000082] }
+          - { $contains: [01900000-0000-7000-8000-000000000080, 01900000-0000-7000-8000-000000000081, 01900000-0000-7000-8000-000000000084] }
+  - clock: { advance: PT22H }
+  - op: due
+    args: { tenant: t1, now: $now }
+    expect:
+      result:
+        $all:
+          - { $len: 4 }
+          - { $contains: [01900000-0000-7000-8000-000000000080, 01900000-0000-7000-8000-000000000081, 01900000-0000-7000-8000-000000000084, 01900000-0000-7000-8000-000000000082] }
   - op: due
     args: { tenant: t2, now: $now }
     expect: { result: [01900000-0000-7000-8000-000000000085] }

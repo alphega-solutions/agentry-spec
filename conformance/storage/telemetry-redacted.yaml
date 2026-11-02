@@ -10,7 +10,8 @@ description: >-
   a reasoning part (SYN-REASONING-TEL-0101) and a tool call; the default
   profile does not include reasoning in traces (CORE-143).
 
-  No exported span contains the pii value, either resolved secret value,
+  Spans were exported (at least one, so the check is not vacuous), and no
+  exported span contains the pii value, either resolved secret value,
   or the reasoning text (PORT-101: spans get the redaction of events
   streamed to hosts, no secrets, no reasoning unless the profile includes
   it). The pii value is still sent to the model in the step-2 request
@@ -115,6 +116,7 @@ expect:
     scripted-b: { count: 0 }
   stubCalls:
     lookup: { count: 1 }
+  telemetrySpanCount: { $gte: 1 }
   noTelemetryContent:
     - "SYN-PII-TEL-0101"
     - "SYN-SECRET-PROVIDER-0101-DO-NOT-EXPORT"

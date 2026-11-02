@@ -7,7 +7,8 @@ description: >-
   binds the optional telemetry exporter in `other-region` and is rejected
   with `configuration` (PORT-005: telemetry destinations declare their
   region and are checked like storage). The control binds it in
-  `test-region-2`, loads, and a session runs. Requires the optional
+  `test-region-2`, loads, and a session runs, whose spans reach the
+  exporter (at least one span captured). Requires the optional
   `telemetry` feature (PORT-100).
 requirements: [PORT-005]
 contract: ">=0.1.0 <1.0.0"
@@ -68,3 +69,4 @@ expect:
           - { type: run.ended, payload: { reason: responded } }
   providerRequests:
     scripted-a: { count: 1 }
+  telemetrySpanCount: { $gte: 1 }

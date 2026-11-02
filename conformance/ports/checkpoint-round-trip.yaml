@@ -16,11 +16,16 @@ description: >-
     adapter `extensions`.
 
   Every value written is expected back unchanged, including
-  `schemaVersion` (PORT-007) and the order of arrays. Then S1 is saved
-  again as v2 after the escalation was resolved: no `escalation`, no
-  `heldResults`, state `active`, with a lease. Loading it shows those
+  `schemaVersion` (PORT-007) and the order of arrays. S1, suspended,
+  carries `expiresAt` (its escalation's expiry); S2, active, carries its
+  lease and no `expiresAt` (records.yaml). Then S1 is saved again as v2
+  after the escalation was resolved: no `escalation`, no `heldResults`,
+  no `expiresAt`, state `active`, with a lease. Loading it shows those
   fields absent — `save` replaces the stored record rather than merging
   into it — and S2 is unaffected.
+
+  The raw stored records (test hook `records`) are the two checkpoints,
+  each with `schemaVersion` 0.1.0 (PORT-007).
 requirements: [PORT-030, PORT-007]
 port: checkpointStore
 clock: "2026-03-01T09:00:00Z"
@@ -88,6 +93,7 @@ steps:
         heldResults:
           - { type: tool_result, provenance: "tool:lookup", labels: [pii], callId: call_0, tool: lookup, result: { ok: { output: { name: "Ada Example", city: "Springfield" } } } }
           - { type: tool_result, provenance: "tool:lookup", labels: [], callId: call_3, tool: lookup, result: { error: { code: crm.lookup.not_found, category: not_found, retryable: false, source: tool, message: "No such record." } } }
+        expiresAt: "2026-03-04T08:55:00Z"
         parentSessionId: 01900000-0000-7000-8000-000000000062
     expect: { ok: true }
   - op: save
@@ -180,6 +186,7 @@ steps:
           - { type: tool_result, provenance: "tool:lookup", labels: [pii], callId: call_0, tool: lookup, result: { ok: { output: { name: "Ada Example", city: "Springfield" } } } }
           - { type: tool_result, provenance: "tool:lookup", labels: [], callId: call_3, tool: lookup, result: { error: { code: crm.lookup.not_found, category: not_found, retryable: false, source: tool, message: "No such record." } } }
         lease: { $absent: true }
+        expiresAt: "2026-03-04T08:55:00Z"
         parentSessionId: 01900000-0000-7000-8000-000000000062
         childSessionIds: { $absent: true }
   - op: load
@@ -206,6 +213,7 @@ steps:
         escalation: { $absent: true }
         heldResults: { $absent: true }
         lease: { holder: worker-a, token: 7, expiresAt: "2026-03-01T09:05:00Z" }
+        expiresAt: { $absent: true }
         parentSessionId: { $absent: true }
         childSessionIds: [01900000-0000-7000-8000-000000000066, 01900000-0000-7000-8000-000000000067]
         extensions: { com.example.adapter: { shard: 3, note: "opaque to other implementations" } }
@@ -246,9 +254,18 @@ steps:
         counters: { sessionSize: 19110 }
         escalation: { $absent: true }
         heldResults: { $absent: true }
+        expiresAt: { $absent: true }
         lease: { holder: worker-a, token: 5, expiresAt: "2026-03-01T09:05:00Z" }
         parentSessionId: 01900000-0000-7000-8000-000000000062
   - op: load
     args: { tenant: t1, session: 01900000-0000-7000-8000-000000000061 }
     expect:
       result: { version: 1, lastSeq: 5, childSessionIds: [01900000-0000-7000-8000-000000000066, 01900000-0000-7000-8000-000000000067] }
+  - op: records
+    args: { tenant: t1 }
+    expect:
+      ok: true
+      result:
+        $all:
+          - { $len: 2 }
+          - $every: { schemaVersion: "0.1.0", tenant: t1 }

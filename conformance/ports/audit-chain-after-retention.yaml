@@ -3,8 +3,10 @@ id: port.audit.chain-after-retention
 title: Retention deletion keeps the hash of the last deleted record, so the remaining chain verifies
 description: >-
   For tamper-evident adapters only. t1 appends four chained records
-  (01:00 to 04:00). `deleteBefore` 02:30 deletes the first two; the
-  remaining records are unchanged, the first of them still links to the
+  (01:00 to 04:00), in timestamp order. `deleteBefore` 02:30 deletes the
+  longest append-order prefix of records before the bound (format; PORT-073
+  as amended: a tamper-evident log is deleted only as a prefix), here the
+  first two; the remaining records are unchanged, the first of them still links to the
   deleted second record's hash, and `verify` reports the log valid. A
   fifth record links to the fourth. `deleteBefore` 06:00 then deletes
   every record; the log is empty and still valid, and the next appended

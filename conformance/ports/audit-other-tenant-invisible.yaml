@@ -1,12 +1,20 @@
 schemaVersion: "0.1.0"
 id: port.audit.other-tenant-invisible
-title: Another tenant's audit records are invisible to every query and untouched by its retention deletion
+title: Another tenant's audit records behave as missing for get, are invisible to every query, and are untouched by its retention deletion
 description: >-
-  t1 appends a record for session A. Queries by t2 (all, by t1's session
-  ID, by its time range, by its type) return no records, exactly as for
-  a tenant with an empty log (PORT-002; a query has no not_found, it
-  returns nothing). `deleteBefore` run for t2 with a bound after the
-  record (result not asserted) does not delete it: t1 still reads it.
+  t1 appends a record for session A. A `get` in t1 of an ID never
+  appended (…013f) gives `not_found`, binding $missingCode.
+
+  - t2's `get` of t1's record ID fails exactly as the control (same
+    category and code; PORT-002, CORE-193).
+  - Queries by t2 (all, by t1's session ID, by its time range, by its
+    type) return no records, exactly as for a tenant with an empty log (a
+    query has no not_found; it returns nothing).
+  - `deleteBefore` has no per-record target, so the deletion control is
+    a tenant whose log was never written (t3): its result binds
+    $emptyDelete. t2's `deleteBefore` with a bound after t1's record
+    returns exactly the same result, so it reveals nothing, and deletes
+    nothing of t1's: t1 still reads its record.
 requirements: [PORT-002]
 port: auditLog
 steps:
@@ -28,6 +36,12 @@ steps:
       ok: true
       result:
         id: "01900000-0000-7000-8000-000000000131"
+  - op: get
+    args: { tenant: t1, id: "01900000-0000-7000-8000-00000000013f" }
+    expect: { ok: false, error: { category: not_found, code: $missingCode } }
+  - op: get
+    args: { tenant: t2, id: "01900000-0000-7000-8000-000000000131" }
+    expect: { ok: false, error: { category: not_found, code: $missingCode } }
   - op: query
     args: { tenant: t2 }
     expect: { ok: true, result: { $len: 0 } }
@@ -41,7 +55,15 @@ steps:
     args: { tenant: t2, type: tool_call }
     expect: { ok: true, result: { $len: 0 } }
   - op: deleteBefore
+    args: { tenant: t3, before: "2026-01-02T00:00:00Z" }
+    bind: { "": $emptyDelete }
+    expect: { ok: true }
+  - op: deleteBefore
     args: { tenant: t2, before: "2026-01-02T00:00:00Z" }
+    expect: { ok: true, result: $emptyDelete }
   - op: query
     args: { tenant: "t1" }
     expect: { ok: true, result: [{ id: "01900000-0000-7000-8000-000000000131" }] }
+  - op: get
+    args: { tenant: t1, id: "01900000-0000-7000-8000-000000000131" }
+    expect: { ok: true, result: { id: "01900000-0000-7000-8000-000000000131", tenant: t1 } }

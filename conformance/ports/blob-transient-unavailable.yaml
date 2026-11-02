@@ -1,0 +1,39 @@
+schemaVersion: "0.1.0"
+id: port.blob.transient-unavailable
+title: A transient blob store failure is reported as unavailable and retryable, and the retry succeeds
+description: >-
+  The test hook `failNext` makes the next `put` fail transiently. That put
+  fails with `unavailable`, `retryable: true`, source `port` (PORT-004,
+  Area 1 error model) and returns no reference; the stored records (test
+  hook `records`) are still none. Retrying the same put succeeds and
+  returns a reference, and exactly one blob record is stored. Then
+  `failNext` on `get`: the get fails the same way, not with `fatal` or
+  `not_found`, and its retry returns the bytes.
+requirements: [PORT-004]
+port: blobStore
+steps:
+  - op: failNext
+    args: { op: put }
+    expect: { ok: true }
+  - op: put
+    args: { tenant: t1, data: "SYN-BLOB-RETRY-0007", mediaType: text/plain, labels: [] }
+    expect: { ok: false, error: { category: unavailable, retryable: true, source: port } }
+  - op: records
+    args: { tenant: t1 }
+    expect: { ok: true, result: { $len: 0 } }
+  - op: put
+    args: { tenant: t1, data: "SYN-BLOB-RETRY-0007", mediaType: text/plain, labels: [] }
+    bind: { ref: $r }
+    expect: { ok: true }
+  - op: records
+    args: { tenant: t1 }
+    expect: { ok: true, result: { $len: 1 } }
+  - op: failNext
+    args: { op: get }
+    expect: { ok: true }
+  - op: get
+    args: { tenant: t1, ref: $r }
+    expect: { ok: false, error: { category: unavailable, retryable: true, source: port } }
+  - op: get
+    args: { tenant: t1, ref: $r }
+    expect: { ok: true, result: { data: "SYN-BLOB-RETRY-0007" } }

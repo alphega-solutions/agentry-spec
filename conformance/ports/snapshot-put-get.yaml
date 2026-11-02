@@ -8,6 +8,9 @@ description: >-
   does not recompute it. Each `get` returns the record exactly as stored,
   including its `schemaVersion` (PORT-007), and the two keys do not
   interfere: `get` of one hash never returns the other snapshot.
+
+  The raw stored records (test hook `records`) are the two snapshots,
+  each with `schemaVersion` 0.1.0 (PORT-007).
 requirements: [PORT-050, PORT-007]
 port: snapshotStore
 steps:
@@ -125,3 +128,11 @@ steps:
             - { kind: Persona, id: assistant, version: 1, instructions: "You are a test assistant." }
           Deployment: { $absent: true }
           Tool: { $absent: true }
+  - op: records
+    args: { tenant: t1 }
+    expect:
+      ok: true
+      result:
+        $all:
+          - { $len: 2 }
+          - $every: { schemaVersion: "0.1.0", tenant: t1 }

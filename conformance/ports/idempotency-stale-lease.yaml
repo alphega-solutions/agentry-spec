@@ -21,7 +21,11 @@ description: >-
     succeeds.
   - Control: session S2 (…00d1) accepts token 1, since fencing is per
     session.
-requirements: [PORT-040, PORT-041, PORT-004]
+
+  The raw stored records (test hook `records`) are exactly the two
+  started records, each with `schemaVersion` 0.1.0 (PORT-007); the
+  rejected starts stored nothing.
+requirements: [PORT-040, PORT-041, PORT-004, PORT-007]
 port: idempotencyStore
 clock: "2026-03-01T10:00:00Z"
 steps:
@@ -87,3 +91,11 @@ steps:
       record: { schemaVersion: "0.1.0", tenant: t1, key: 01900000-0000-7000-8000-0000000000d1/call_1, sessionId: 01900000-0000-7000-8000-0000000000d1, callId: call_1, tool: update_record, state: started, createdAt: "2026-03-01T10:00:00Z" }
       lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }
     expect: { result: { key: 01900000-0000-7000-8000-0000000000d1/call_1, sessionId: 01900000-0000-7000-8000-0000000000d1, state: started } }
+  - op: records
+    args: { tenant: t1 }
+    expect:
+      ok: true
+      result:
+        $all:
+          - { $len: 2 }
+          - $every: { schemaVersion: "0.1.0", tenant: t1 }

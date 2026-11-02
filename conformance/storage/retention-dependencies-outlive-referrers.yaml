@@ -26,7 +26,19 @@ description: >-
 
   $early closed four days ago: its events are deleted, and with no
   retained referrer left, so are its audit record, blob $bEarly and
-  snapshot $h1.
+  snapshot $h1. These later deletions depend on the earlier ones within
+  the same `retention` step: retention processing repeats until nothing
+  more is due, so deletions cascade (fixture format, `retentionStep`;
+  Area 10 amendment 2026-11-02 "Readings settled with the Area 10
+  fixtures" and "Further readings settled in review", PORT-112: the
+  references that keep a blob or snapshot are retained events, audit
+  records, checkpoints, idempotency records and open sessions).
+
+  The session state is not asserted: once $late's checkpoint is deleted,
+  `sessions.$late.state` has no stored record to read. Retained
+  checkpoints or idempotency records as referrers are not exercised here
+  (neither session's checkpoint or idempotency record references a blob
+  or snapshot that outlives its events).
 
   Reading: PORT-112 is a rule retention processing follows, so a
   deployment whose dependency periods are shorter than the events
@@ -141,7 +153,6 @@ expect:
       - { context: { sessionId: $late, idempotencyKey: $kLate } }
   sessions:
     $late:
-      state: closed
       events:
         mode: subsequence
         items:

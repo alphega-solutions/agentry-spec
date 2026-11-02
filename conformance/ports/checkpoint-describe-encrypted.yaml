@@ -1,18 +1,22 @@
 schemaVersion: "0.1.0"
 id: port.checkpoint.describe-encrypted
-title: The checkpointStore adapter reports encryption at rest configured
+title: The checkpointStore adapter reports its encryption-at-rest setting through describe
 description: >-
-  `describe` reports `encryptedAtRest: true` (Area 10 amendment
-  2026-11-02). Every checkpointStore adapter must encrypt stored data at rest, with
-  platform or customer-managed keys as the deployment configures
-  (PORT-006); this includes the in-memory adapters of the conformance
-  suite (EVAL-033), which must report it too. `keyRef`, present only for
-  customer-managed keys, is not asserted. The case checks the adapter's
-  report, not the encryption itself, which no data-only case can observe.
-requirements: [PORT-006]
+  `describe` reports `encryptedAtRest`, true or false (Area 10 amendment
+  2026-11-02); the format has no boolean-type matcher, so its presence is
+  checked. This is a reporting check only: whether data is in fact
+  encrypted at rest (PORT-006) is attested by the deployment and listed
+  under `verifiedElsewhere` in `conformance/coverage.yaml`, since no
+  data-only case can observe it ("Further readings settled in review").
+  In-memory adapters report `false` and are exempt, so the value is not
+  asserted; `keyRef`, present only for customer-managed keys, is not
+  asserted either. The case is part of the shared adapter test kit
+  (PORT-009).
+requirements: [PORT-009]
 port: checkpointStore
 steps:
   - op: describe
     args: {}
     expect:
-      result: { encryptedAtRest: true }
+      ok: true
+      result: { encryptedAtRest: { $any: true } }

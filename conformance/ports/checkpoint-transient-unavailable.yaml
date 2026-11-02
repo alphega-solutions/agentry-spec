@@ -1,0 +1,51 @@
+schemaVersion: "0.1.0"
+id: port.checkpoint.transient-unavailable
+title: A transient checkpoint store failure is reported as unavailable and retryable, saves nothing, and the retry succeeds
+description: >-
+  The test hook `failNext` makes the next `save` fail transiently. That
+  save fails with `unavailable`, `retryable: true`, source `port`
+  (PORT-004, Area 1 error model), and saves nothing: a load of the
+  session fails `not_found` exactly as for a session never saved
+  ($missingCode, bound by a load of …064f). Retrying the same save, with
+  the same `expectedVersion` 0 and lease, succeeds (a failed save did
+  not consume the version), and the checkpoint loads as v1. Then
+  `failNext` on `load`: the load fails the same way and its retry
+  returns v1.
+requirements: [PORT-004]
+port: checkpointStore
+clock: "2026-03-01T09:00:00Z"
+steps:
+  - op: load
+    args: { tenant: t1, session: 01900000-0000-7000-8000-00000000064f }
+    expect: { ok: false, error: { category: not_found, code: $missingCode } }
+  - op: failNext
+    args: { op: save }
+    expect: { ok: true }
+  - op: save
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000640
+      expectedVersion: 0
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T09:05:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-000000000640, version: 1, lastSeq: 2, state: active, principalRef: { subject: user-1, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:6666666666666666666666666666666666666666666666666666666666666666", taint: { tainted: false, provenances: [] }, budget: { tokens: 100000 }, counters: { sessionSize: 120 }, lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T09:05:00Z" } }
+    expect: { ok: false, error: { category: unavailable, retryable: true, source: port } }
+  - op: load
+    args: { tenant: t1, session: 01900000-0000-7000-8000-000000000640 }
+    expect: { ok: false, error: { category: not_found, code: $missingCode } }
+  - op: save
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000640
+      expectedVersion: 0
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T09:05:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-000000000640, version: 1, lastSeq: 2, state: active, principalRef: { subject: user-1, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:6666666666666666666666666666666666666666666666666666666666666666", taint: { tainted: false, provenances: [] }, budget: { tokens: 100000 }, counters: { sessionSize: 120 }, lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T09:05:00Z" } }
+    expect: { ok: true }
+  - op: failNext
+    args: { op: load }
+    expect: { ok: true }
+  - op: load
+    args: { tenant: t1, session: 01900000-0000-7000-8000-000000000640 }
+    expect: { ok: false, error: { category: unavailable, retryable: true, source: port } }
+  - op: load
+    args: { tenant: t1, session: 01900000-0000-7000-8000-000000000640 }
+    expect: { ok: true, result: { sessionId: 01900000-0000-7000-8000-000000000640, version: 1, lastSeq: 2 } }

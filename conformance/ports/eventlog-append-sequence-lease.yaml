@@ -22,7 +22,11 @@ description: >-
     after token 2 was accepted for S.
 
   Rejected appends are atomic: no event of a rejected batch is stored.
-requirements: [PORT-020, PORT-021, PORT-004]
+
+  Every stored record, read raw with the test hook `records`, carries
+  `schemaVersion` 0.1.0 (PORT-007): the six accepted events, none of the
+  rejected ones.
+requirements: [PORT-020, PORT-021, PORT-004, PORT-007]
 port: eventLog
 clock: "2026-03-01T09:00:00Z"
 steps:
@@ -126,3 +130,11 @@ steps:
     expect:
       result:
         - { eventId: 01900000-0000-7000-8000-000000000018, seq: 1, sessionId: 01900000-0000-7000-8000-000000000011 }
+  - op: records
+    args: { tenant: t1 }
+    expect:
+      ok: true
+      result:
+        $all:
+          - { $len: 6 }
+          - $every: { schemaVersion: "0.1.0", tenantId: t1 }

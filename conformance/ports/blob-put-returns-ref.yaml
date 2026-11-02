@@ -8,6 +8,9 @@ description: >-
   given (PORT-060, CORE-113); the two IDs differ. `get` by each reference
   returns the same bytes in the form they were given. The stored blob
   records validate and carry `schemaVersion` (storedRecords, PORT-007).
+
+  The raw stored records (test hook `records`) are two blob records, each
+  with `schemaVersion` 0.1.0 (PORT-007).
 requirements: [PORT-060, PORT-007]
 port: blobStore
 storedRecords: true
@@ -40,3 +43,11 @@ steps:
   - op: get
     args: { tenant: t1, ref: $bin }
     expect: { ok: true, result: { data: { base64: "AAECf4D+/1NZTg==" } } }
+  - op: records
+    args: { tenant: t1 }
+    expect:
+      ok: true
+      result:
+        $all:
+          - { $len: 2 }
+          - $every: { schemaVersion: "0.1.0", tenant: t1 }

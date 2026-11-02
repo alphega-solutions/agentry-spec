@@ -13,7 +13,8 @@ description: >-
     step 1.
   - P1D later retention deletes the closed session's checkpoint; its
     events are kept (their period has not passed).
-  - Replaying resume() with D again now fails with `not_found` and
+  - Replaying resume() with D again now fails with `not_found`
+    (`agentry.session.not_found`, Area 10 amendment 2026-11-02) and
     persists nothing (PORT-115: the replay guarantee holds only while the
     checkpoint is retained). The approved call is not dispatched again.
   - The decision is still in the audit log, with its reviewer.
@@ -118,7 +119,7 @@ script:
     reviewer: r1
     decisions:
       - { decisionId: "01900000-0000-7000-8000-000000000115", pendingActionId: $act, type: approve }
-    expect: { ok: false, error: { category: not_found }, newEvents: 0 }
+    expect: { ok: false, error: { category: not_found, code: agentry.session.not_found }, newEvents: 0 }
 expect:
   sessions:
     $s:

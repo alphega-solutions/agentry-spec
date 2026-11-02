@@ -2,10 +2,13 @@ schemaVersion: "0.1.0"
 id: port.snapshot.other-tenant-not-found
 title: Another tenant's snapshot behaves exactly as a missing one
 description: >-
-  t1 stores a snapshot. For t2, `get` of that hash fails with `not_found`,
-  exactly as `get` of a hash no tenant stored (the control just before
-  it). A `delete` of it by t2 (its result is not asserted) has no effect:
-  t1 still gets its snapshot. Applies to the snapshot store like every
+  t1 stores a snapshot. Controls by t2 on a hash no tenant stored bind
+  the codes a missing record gives: `get` → `not_found` ($missingCode)
+  and `delete` → `not_found` ($missingDeleteCode). For t2, `get` of t1's
+  hash fails exactly as the control `get`, and t2's `delete` of it fails
+  exactly as the control `delete` (same category and code), so neither
+  reveals that the snapshot exists, and the delete has no effect: t1
+  still gets its snapshot. Applies to the snapshot store like every
   other storing port (PORT-002).
 requirements: [PORT-002]
 port: snapshotStore
@@ -34,12 +37,16 @@ steps:
     expect: { ok: true }
   - op: get
     args: { tenant: t2, hash: "sha256:0000000000000000000000000000000000000000000000000000000000000001" }
-    expect: { ok: false, error: { category: not_found } }
+    expect: { ok: false, error: { category: not_found, code: $missingCode } }
+  - op: delete
+    args: { tenant: t2, hash: "sha256:0000000000000000000000000000000000000000000000000000000000000001" }
+    expect: { ok: false, error: { category: not_found, code: $missingDeleteCode } }
   - op: get
     args: { tenant: t2, hash: "sha256:81d672be2910c8230dafacee35a705837c8fe843c68f04832bedc7598e8860ab" }
-    expect: { ok: false, error: { category: not_found } }
+    expect: { ok: false, error: { category: not_found, code: $missingCode } }
   - op: delete
     args: { tenant: t2, hash: "sha256:81d672be2910c8230dafacee35a705837c8fe843c68f04832bedc7598e8860ab" }
+    expect: { ok: false, error: { category: not_found, code: $missingDeleteCode } }
   - op: get
     args: { tenant: t1, hash: "sha256:81d672be2910c8230dafacee35a705837c8fe843c68f04832bedc7598e8860ab" }
     expect: { ok: true, result: { tenant: t1, hash: "sha256:81d672be2910c8230dafacee35a705837c8fe843c68f04832bedc7598e8860ab" } }
