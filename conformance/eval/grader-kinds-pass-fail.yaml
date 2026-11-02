@@ -1,0 +1,295 @@
+schemaVersion: "0.1.0"
+id: eval.grader-kinds-pass-fail
+title: Every grader kind passes and fails on the same session, records its evidence, and a judge's usage stays out of the cell's tokens
+description: >-
+  One case, one cell (scripted-a/model-a, default@1), one repeat.
+  Deployment: the baseline copy with `environment: eval`, two judge
+  providers and a price table (USD per million tokens: model-a input and
+  cached input 10000, output and reasoning 20000). The persona declares an
+  output schema `{status}` and the tool `read_note`.
+
+
+  The session: step 1 lookup (k1) and step 2 read_note (k1), both
+  answered from the case's stubs; lookup's untrusted result taints the
+  session, so step 3's update_record call gets a `policy.decision`
+  (taint, escalate, c3) and a `taint` escalation, which the case's
+  scripted decision rejects; nothing is dispatched for it. Step 4 returns
+  the structured output `{status: declined}`. Each model call reports 100
+  input and 25 output tokens: 500 tokens, cost 400 × 0.01 + 100 × 0.02 =
+  6 USD.
+
+
+  The case's 20 graders, in order, each passing or failing on its own
+  (EVAL-050 as amended 2026-11-02):
+
+  0 schema `schema` satisfied — pass; 1 schema requiring a missing field —
+  fail; 2 `equals {status: declined}` — pass; 3 `equals {status:
+  updated}` — fail; 4 trajectory called [lookup, read_note] ordered,
+  notCalled [update_record] — pass; 5 called [update_record] (asked for
+  but never dispatched) — fail; 6 notCalled [read_note] — fail; 7 called
+  [read_note, lookup] ordered — fail (both called, wrong order); 8 the
+  same unordered — pass (control for 7); 9 policy expected (taint,
+  escalate, c3), forbidden (any block) — pass; 10 expected (taint, block)
+  — fail; 11 forbidden (taint, escalate) — fail; 12 escalation, escalates,
+  source taint — pass; 13 escalates false — fail; 14 escalates, source
+  approval — fail; 15 budget maxTokens 600, maxCost 10 — pass; 16
+  maxTokens 400 — fail; 17 maxCost 5 — fail; 18 judge on judge-1,
+  scripted score 0.8, threshold 0.7 — pass with score 0.8; 19 judge on
+  judge-2, score 0.4, threshold 0.7 — fail with score 0.4.
+
+
+  The case fails (pass rate 0). The trajectory grader's evidence is the
+  IDs of the two `tool.call` events, in log order (EVAL-052; the order is
+  this fixture's reading). Each judge's usage is on its grader result;
+  the cell's tokens (500) and cost (6 USD) exclude judge calls (EVAL-051
+  as amended; reading: judge cost is excluded from the cell's cost as its
+  usage is from its tokens). Each judge model is asked once, with no
+  tools. Reading: a judge's answer is a `structured` part `{score}`,
+  since the format does not say how a scripted judge returns its score.
+  Scripted provider responses: scripted-a 4, scripted-judge 1,
+  scripted-judge2 1. Stubs: lookup 1, read_note 1 (in the case);
+  update_record none.
+requirements: [EVAL-050, EVAL-052]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: eval
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          - { id: scripted-judge, adapter: scripted, endpoint: "memory://scripted-judge", region: test-region, retainsData: false }
+          - { id: scripted-judge2, adapter: scripted, endpoint: "memory://scripted-judge2", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+        priceTable:
+          currency: USD
+          models:
+            - { provider: scripted-a, name: model-a, input: 10000, cachedInput: 10000, output: 20000, reasoning: 20000 }
+      - kind: Tool
+        id: read_note
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Read a note about a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        binding: { kind: native, handler: test.read_note }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, read_note@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        outputSchema:
+          type: object
+          additionalProperties: false
+          required: [status]
+          properties:
+            status: { type: string }
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: eval-1
+      principals:
+        - { id: ep1, subject: eval-user-1, assurance: multi_factor }
+        - { id: er1, subject: eval-reviewer-1, assurance: multi_factor }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 100, outputTokens: 25, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: read_note, arguments: { key: k1 } }]
+          usage: { inputTokens: 100, outputTokens: 25, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c3, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 100, outputTokens: 25, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: structured, value: { status: declined } }]
+          usage: { inputTokens: 100, outputTokens: 25, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-judge:
+      responses:
+        - parts: [{ type: structured, value: { score: 0.8 } }]
+          usage: { inputTokens: 50, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-judge2:
+      responses:
+        - parts: [{ type: structured, value: { score: 0.4 } }]
+          usage: { inputTokens: 40, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record: []
+script:
+  - action: evalRun
+    run:
+      schemaVersion: "0.1.0"
+      id: eval-graders
+      tenant: eval-1
+      deployment: test@1
+      cases: [c-graders]
+      matrix:
+        cells:
+          - { model: { provider: scripted-a, name: model-a }, profile: default@1 }
+      repeats: 1
+    cases:
+      - schemaVersion: "0.1.0"
+        id: c-graders
+        persona: assistant@1
+        principal: { subject: eval-user-1 }
+        inputs:
+          - [{ type: text, text: "Check k1, read its note, then set it to v1" }]
+        stubs:
+          tools:
+            lookup:
+              - ok: { output: { value: "SYN-VALUE-0001" } }
+            read_note:
+              - ok: { output: { note: "SYN-NOTE-0001" } }
+        decisions:
+          - { match: { source: taint }, type: reject, reviewer: eval-reviewer-1 }
+        graders:
+          # 0
+          - kind: schema
+            schema: { type: object, required: [status], properties: { status: { const: declined } } }
+          # 1
+          - kind: schema
+            schema: { type: object, required: [status, ticket] }
+          # 2
+          - { kind: schema, equals: { status: declined } }
+          # 3
+          - { kind: schema, equals: { status: updated } }
+          # 4
+          - { kind: trajectory, called: [lookup, read_note], notCalled: [update_record], ordered: true }
+          # 5
+          - { kind: trajectory, called: [update_record] }
+          # 6
+          - { kind: trajectory, notCalled: [read_note] }
+          # 7
+          - { kind: trajectory, called: [read_note, lookup], ordered: true }
+          # 8
+          - { kind: trajectory, called: [read_note, lookup] }
+          # 9
+          - kind: policy
+            expected: [{ type: policy.decision, payload: { kind: taint, outcome: escalate, callId: c3 } }]
+            forbidden: [{ type: policy.decision, payload: { outcome: block } }]
+          # 10
+          - kind: policy
+            expected: [{ type: policy.decision, payload: { kind: taint, outcome: block } }]
+          # 11
+          - kind: policy
+            forbidden: [{ type: policy.decision, payload: { kind: taint, outcome: escalate } }]
+          # 12
+          - { kind: escalation, escalates: true, source: taint }
+          # 13
+          - { kind: escalation, escalates: false }
+          # 14
+          - { kind: escalation, escalates: true, source: approval }
+          # 15
+          - { kind: budget, maxTokens: 600, maxCost: 10 }
+          # 16
+          - { kind: budget, maxTokens: 400 }
+          # 17
+          - { kind: budget, maxCost: 5 }
+          # 18
+          - kind: judge
+            model: { provider: scripted-judge, name: judge-1 }
+            rubric: "Score 1 if the response declines the update, else 0."
+            threshold: 0.7
+          # 19
+          - kind: judge
+            model: { provider: scripted-judge2, name: judge-2 }
+            rubric: "Score 1 if the response declines the update, else 0."
+            threshold: 0.7
+    expect:
+      ok: true
+      report:
+        runId: eval-graders
+        cells:
+          - model: { provider: scripted-a, name: model-a }
+            profile: default@1
+            passRate: 0
+            tokens: 500
+            cost: { amount: 6, currency: USD }
+            results:
+              - caseId: c-graders
+                repeat: 1
+                passed: false
+                sessionId: $s
+                graders:
+                  - { kind: schema, passed: true }
+                  - { kind: schema, passed: false }
+                  - { kind: schema, passed: true }
+                  - { kind: schema, passed: false }
+                  - { kind: trajectory, passed: true, evidence: [$evLookup, $evNote] }
+                  - { kind: trajectory, passed: false }
+                  - { kind: trajectory, passed: false }
+                  - { kind: trajectory, passed: false }
+                  - { kind: trajectory, passed: true }
+                  - { kind: policy, passed: true }
+                  - { kind: policy, passed: false }
+                  - { kind: policy, passed: false }
+                  - { kind: escalation, passed: true }
+                  - { kind: escalation, passed: false }
+                  - { kind: escalation, passed: false }
+                  - { kind: budget, passed: true }
+                  - { kind: budget, passed: false }
+                  - { kind: budget, passed: false }
+                  - kind: judge
+                    passed: true
+                    score: 0.8
+                    usage: { inputTokens: 50, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+                  - kind: judge
+                    passed: false
+                    score: 0.4
+                    usage: { inputTokens: 40, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, eventId: $evLookup, payload: { callId: c1, tool: lookup } }
+          - { type: tool.call, eventId: $evNote, payload: { callId: c2, tool: read_note } }
+          - { type: policy.decision, payload: { kind: taint, outcome: escalate, callId: c3 } }
+          - { type: escalation.raised, payload: { escalation: { sources: [taint] } } }
+          - { type: model.response, payload: { message: { parts: [{ type: structured, value: { status: declined } }] } } }
+      absentEvents:
+        - { type: tool.call, payload: { tool: update_record } }
+  ports:
+    eventLog:
+      eval-1:
+        $s: { $count: { of: { type: tool.call }, equals: 2 } }
+  stubCalls:
+    lookup: { count: 1 }
+    read_note: { count: 1 }
+    update_record: { count: 0 }
+  providerRequests:
+    scripted-a: { count: 4 }
+    scripted-b: { count: 0 }
+    scripted-judge:
+      - { provider: scripted-judge, model: judge-1, tools: [] }
+    scripted-judge2:
+      - { provider: scripted-judge2, model: judge-2, tools: [] }

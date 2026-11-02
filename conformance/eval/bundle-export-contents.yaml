@@ -1,0 +1,213 @@
+schemaVersion: "0.1.0"
+id: eval.bundle-export-contents
+title: An exported trace bundle holds the session's events in sequence, its referenced blobs with their bytes, its snapshot record, its audit records and a bundle per child
+description: >-
+  The session (assistant@1 with lookup, update_record and the agent tool
+  ask_helper → helper@1) receives a text and an uploaded file attachment
+  (blob-file-1, seeded in the blob store). Run 1: the model calls
+  ask_helper (c1); a child session answers; the model then calls
+  update_record (c2) — the attachment tainted the session (untrusted
+  `attachment:upload`), so the taint rule escalates and the run ends
+  `escalated`. reviewer-1 approves; in the resume run update_record is
+  dispatched ({updated: true}, audited as a mutating call) and the model
+  responds with a text and a `file` part referencing blob-file-1.
+
+
+  `exportBundle` (EVAL-025 as amended 2026-11-02) returns a bundle that
+  must validate against `schemas/eval/v1/bundle.yaml`, for tenant t1 and
+  this session, holding:
+
+  - `events`: exactly the session's event log, in sequence — the bundle's
+    events are bound whole and must equal, element by element, the event
+    log the port holds for the session;
+  - `blobs`: every referenced blob with its bytes, among them blob-file-1
+    with its exact reference and its 44 bytes as base64 (referenced by the
+    principal's message on `turn.started` and by the final `model.response`);
+  - `snapshot`: the snapshot record whose `hash` is the session's snapshot
+    hash (bound from the bundle and matched against every event and the
+    session's `session.created`), with the artifacts grouped by kind
+    (CFG-050), among them both personas and the agent tool;
+  - `auditRecords`: the session's audit records, all for t1, this session
+    and its snapshot hash, among them the `escalation` record linked to
+    the session's `escalation.raised`, reviewer-1's `decision`, and the
+    `tool_call` record of the mutating call with its arguments and outcome;
+  - `children`: exactly one child bundle, for the child session the
+    `tool.call` named, whose events equal the child's event log and whose
+    snapshot has the same hash (ORCH-003).
+requirements: [EVAL-025]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-04-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Persona
+        id: helper
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You look up records for other assistants."
+        tools: [lookup@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: ask_helper
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the helper persona to look up a record.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: read
+        binding: { kind: agent, persona: helper@1 }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, ask_helper@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        # 1. parent, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_helper, arguments: { task: "Summarise the note" } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 2. child, step 1
+        - parts: [{ type: text, text: "The note is a synthetic report." }]
+          usage: { inputTokens: 15, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 3. parent, step 2: escalates on the taint rule
+        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 4. parent, step 3, in the resume run
+        - parts:
+            - { type: text, text: "Done; the note is attached." }
+            - type: file
+              mediaType: text/plain
+              name: note.txt
+              blob: { id: blob-file-1, hash: "sha256:488b66a845535f2173fe026ad21ad4238ca6b733b00a24ba332adab6729a0a80", mediaType: text/plain, size: 44 }
+          usage: { inputTokens: 50, outputTokens: 8, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup: []
+      update_record:
+        - ok: { output: { updated: true } }
+  ports:
+    blobStore:
+      t1:
+        - id: blob-file-1
+          hash: "sha256:488b66a845535f2173fe026ad21ad4238ca6b733b00a24ba332adab6729a0a80"
+          mediaType: text/plain
+          size: 44
+          data: "U1lOVEhFVElDLUZJTEUtMDAwMTogcXVhcnRlcmx5IHdpZGdldCByZXBvcnQ="
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input:
+      - { type: text, text: "Summarise the attached note, then set k1 to v1" }
+      - type: file
+        mediaType: text/plain
+        name: note.txt
+        source: upload
+        blob: { id: blob-file-1, hash: "sha256:488b66a845535f2173fe026ad21ad4238ca6b733b00a24ba332adab6729a0a80", mediaType: text/plain, size: 44 }
+    capture:
+      - event: { type: tool.call, payload: { callId: c1, tool: ask_helper } }
+        bind: { payload.childSessionId: $child }
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000002501", pendingActionId: $act, type: approve }
+    expect: { ok: true, endReason: responded }
+  - action: exportBundle
+    session: $s
+    tenant: t1
+    expect:
+      ok: true
+      bundle:
+        schemaVersion: "0.1.0"
+        tenant: t1
+        sessionId: $s
+        exportedAt: { $any: true }
+        contract: { $regex: "^0\\.[0-9]+\\.[0-9]+" }
+        events: { $all: [$evs, { $every: { sessionId: $s, tenantId: t1, snapshotHash: $snap } }] }
+        blobs:
+          $contains:
+            - ref: { id: blob-file-1, hash: "sha256:488b66a845535f2173fe026ad21ad4238ca6b733b00a24ba332adab6729a0a80", mediaType: text/plain, size: 44 }
+              base64: "U1lOVEhFVElDLUZJTEUtMDAwMTogcXVhcnRlcmx5IHdpZGdldCByZXBvcnQ="
+        snapshot:
+          schemaVersion: "0.1.0"
+          tenant: t1
+          hash: $snap
+          artifacts:
+            Persona:
+              $contains:
+                - { kind: Persona, id: assistant, version: 1, tools: [lookup@1, update_record@1, ask_helper@1] }
+                - { kind: Persona, id: helper, version: 1 }
+            Tool:
+              $contains:
+                - { kind: Tool, id: ask_helper, version: 1, binding: { kind: agent, persona: helper@1 } }
+                - { kind: Tool, id: update_record, version: 1, effect: mutating }
+        auditRecords:
+          $all:
+            - $every: { tenant: t1, sessionId: $s, snapshotHash: $snap }
+            - $contains:
+                - { type: escalation, eventIds: { $contains: [$evRaised] } }
+                - { type: decision, reviewer: { subject: reviewer-1, tenant: t1 } }
+                - type: tool_call
+                  details: { callId: c2, tool: update_record, arguments: { key: k1, value: v1 }, outcome: { ok: { output: { updated: true } } } }
+        children:
+          - sessionId: $child
+            tenant: t1
+            events: { $all: [$childEvs, { $every: { sessionId: $child } }] }
+            snapshot: { hash: $snap }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, seq: 1, snapshotHash: $snap }
+          - type: turn.started
+            payload: { message: { role: principal, parts: { $contains: [{ type: file, blob: { id: blob-file-1 }, provenance: "attachment:upload" }] } } }
+          - { type: tool.call, payload: { callId: c1, tool: ask_helper, childSessionId: $child } }
+          - { type: escalation.raised, eventId: $evRaised }
+          - { type: tool.call, payload: { callId: c2, tool: update_record } }
+          - type: model.response
+            payload: { message: { parts: { $contains: [{ type: file, blob: { id: blob-file-1 } }] } } }
+          - { type: run.ended, payload: { reason: responded } }
+    $child:
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, seq: 1, snapshotHash: $snap, payload: { persona: helper@1, parent: { sessionId: $s, callId: c1 } } }
+  ports:
+    eventLog:
+      t1:
+        $s: $evs
+        $child: $childEvs
+  stubCalls:
+    update_record: { count: 1 }
+    lookup: { count: 0 }
+  providerRequests:
+    scripted-a: { count: 4 }

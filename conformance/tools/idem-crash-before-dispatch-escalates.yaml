@@ -18,7 +18,7 @@ description: >-
   reviewer then confirms the call as succeeded; the stated outcome is
   delivered to the model and recorded, the turn continues to `responded`,
   and the stub is never called.
-requirements: [TOOL-060, TOOL-062, HITL-091]
+requirements: [TOOL-060, TOOL-062, HITL-091, EVAL-035, EVAL-030]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:

@@ -15,7 +15,7 @@ description: >-
   (`params`, PROV-022). $sPlain (control): persona assistant has no output
   schema and no runtime scope, so its request lists both tools and no
   `outputSchema`.
-requirements: [PROV-002]
+requirements: [PROV-002, EVAL-031]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:

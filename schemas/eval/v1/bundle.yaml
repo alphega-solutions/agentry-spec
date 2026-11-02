@@ -1,0 +1,51 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://alphega.io/agentry/schemas/eval/bundle/v1.json
+title: Trace bundle
+description: >-
+  A portable record of one session for one tenant (EVAL-025): its events in
+  sequence, the blobs they reference (bytes included), its configuration
+  snapshot, its audit records, and — for a delegation chain — a bundle per
+  child session. Any implementation can replay it (EVAL-026, §6.3). Content is
+  stored unredacted, as the ports hold it (PORT-008); a bundle is subject to
+  the sensitivity policies of the content it carries.
+type: object
+additionalProperties: false
+required: [schemaVersion, tenant, sessionId, exportedAt, contract, events, blobs, snapshot, auditRecords]
+properties:
+  schemaVersion: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/contractVersion" }
+  tenant: { type: string, minLength: 1 }
+  sessionId: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+  exportedAt: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/timestamp" }
+  contract:
+    description: The contract version of the exporting implementation.
+    $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/contractVersion"
+  description:
+    description: Informative — what the bundle records (golden bundles explain themselves here).
+    type: string
+  exporter:
+    description: Informative — the exporting implementation and its version.
+    type: string
+  events:
+    description: Every persisted event of the session, in `seq` order, gap-free from 1 (CORE-160).
+    type: array
+    minItems: 1
+    items: { $ref: "https://alphega.io/agentry/schemas/core/event/v1.json" }
+  blobs:
+    description: Every blob the events reference (including `contentRef`), with its bytes.
+    type: array
+    items:
+      type: object
+      additionalProperties: false
+      required: [ref, labels, base64]
+      properties:
+        ref: { $ref: "https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/blobRef" }
+        labels: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/labels" }
+        base64: { type: string, contentEncoding: base64 }
+  snapshot: { $ref: "https://alphega.io/agentry/schemas/ports/records/v1.json#/$defs/snapshotRecord" }
+  auditRecords:
+    type: array
+    items: { $ref: "https://alphega.io/agentry/schemas/ports/records/v1.json#/$defs/auditRecord" }
+  children:
+    description: "Bundles of the session's child sessions (ORCH-080); each names its own `sessionId`."
+    type: array
+    items: { $ref: "#" }

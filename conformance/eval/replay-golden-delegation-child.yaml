@@ -1,0 +1,121 @@
+schemaVersion: "0.1.0"
+id: eval.replay-golden-delegation-child
+title: Replaying a delegation golden bundle answers the agent-bound call with the recorded child result, with no child session and no model call
+description: >-
+  `golden/delegation-child.yaml` records a parent session in which the
+  model calls the agent tool ask_helper (c1, {task: Look up record k1}); a
+  child session (helper@1, its own bundle under `children`) answered
+  "Record k1 holds SYN-VALUE-0004." and was closed; the parent's
+  `tool.result` is `ok` with output {text: "Record k1 holds
+  SYN-VALUE-0004."} and the parent responds "The helper says record k1
+  holds SYN-VALUE-0004."
+
+
+  Replayed with `snapshot: recorded` (EVAL-062): the agent-bound call is
+  answered with the recorded child result — the parent's `tool.result` for
+  c1 has exactly the recorded output — and the outcomes are reproduced
+  (EVAL-026): the recorded final text and one run ending `responded`, with
+  no divergence. The child is not run again: the replayed parent's
+  `tool.call` for c1 names no child session, so no child model call is
+  made; lookup (the child's only tool) is never dispatched; and no
+  provider receives a request (both scripts are empty). The fixture's configuration adds helper@1 and ask_helper@1
+  (as in the recorded snapshot) so that the configuration in force has them.
+
+
+  Reading: answering a call from the recording is not a dispatch to the
+  binding (EVAL-062), so an agent-bound call creates no child session on
+  replay and its `tool.call` carries no `childSessionId`.
+requirements: [EVAL-026, EVAL-062]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-04-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Persona
+        id: helper
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You look up records for other assistants."
+        tools: [lookup@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: ask_helper
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the helper persona to look up a record.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: read
+        idempotent: true
+        binding: { kind: agent, persona: helper@1 }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, ask_helper@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a: { responses: [] }
+    scripted-b: { responses: [] }
+  stubs:
+    tools:
+      lookup: []
+      update_record: []
+script:
+  - action: replay
+    bind: $rp
+    tenant: t1
+    bundle: golden/delegation-child.yaml
+    snapshot: recorded
+    hookMode: reEvaluate
+    expect: { ok: true, divergences: [] }
+expect:
+  sessions:
+    $rp:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: session.created
+            sessionId: { $all: [$rp, { $not: 019cb813-5280-7001-8000-004400000001 }] }
+            snapshotHash: "sha256:a7faa5cfd75dde10c0945620c11dbd21f11b77182befaeedb2cbf41ad5dd36b2"
+            payload: { persona: assistant@1, parent: { $absent: true } }
+          - { type: run.started, runId: $r1 }
+          - { type: tool.call, runId: $r1, payload: { callId: c1, tool: ask_helper, arguments: { task: Look up record k1 }, childSessionId: { $absent: true } } }
+          - type: tool.result
+            runId: $r1
+            payload: { callId: c1, tool: ask_helper, result: { ok: { output: { text: "Record k1 holds SYN-VALUE-0004." } } } }
+          - type: model.response
+            runId: $r1
+            step: 2
+            payload: { message: { parts: [{ type: text, text: "The helper says record k1 holds SYN-VALUE-0004." }] } }
+          - { type: run.ended, runId: $r1, payload: { reason: responded } }
+      absentEvents:
+        - { type: error }
+  ports:
+    eventLog:
+      t1:
+        $rp:
+          $count: { of: { type: run.ended }, equals: 1 }
+  stubCalls:
+    lookup: { count: 0 }
+    update_record: { count: 0 }
+  providerRequests:
+    scripted-a: { count: 0 }
+    scripted-b: { count: 0 }

@@ -17,7 +17,7 @@ description: >-
   run. A reviewer confirms the call as succeeded. The stated outcome is recorded in the
   idempotency store under the call's key, delivered to the model as the
   call's result, and the call is still never dispatched again (TOOL-061).
-requirements: [TOOL-060, TOOL-061, TOOL-062, HITL-091]
+requirements: [TOOL-060, TOOL-061, TOOL-062, HITL-091, EVAL-035]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:

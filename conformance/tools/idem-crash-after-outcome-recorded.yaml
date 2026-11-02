@@ -20,7 +20,7 @@ description: >-
   `run.started`, delivers the result to the model and continues to
   `responded`, with no escalation even though the tool is not idempotent.
   The triggering run() then runs its own run (turn 3) and responds.
-requirements: [TOOL-061, TOOL-030, TOOL-073, HITL-091]
+requirements: [TOOL-061, TOOL-030, TOOL-073, HITL-091, EVAL-035]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:

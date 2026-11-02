@@ -9,6 +9,7 @@ enforced:
   - ORCH
   - PROV
   - PORT
+  - EVAL
 
 # Normative requirements no fixture can verify, each with how it is verified
 # instead. Coverage counts them as covered and prints the reason.
@@ -17,3 +18,19 @@ verifiedElsewhere:
   PORT-006: "Attestation: the adapter reports its encryption setting (describe) and the deployment attests it; storage encryption is not observable by fixtures (Area 10 amendment 2026-11-02)."
   PORT-009: "Suite-level: every adapter runs the port cases in conformance/ports/ for its port (PORT-130)."
   PORT-121: "Release-level: applies when a new major contract version ships its checkpoint migration; 0.x has no earlier major version."
+  EVAL-001: "Spec CI: tools/validate.py validates every fixture against conformance/schema/fixture.yaml."
+  EVAL-002: "Spec CI: tools/validate.py rejects placeholders used before binding; exercised by tools/selftest.py."
+  EVAL-003: "Spec repository review: fixtures use synthetic data only (ADR-0011)."
+  EVAL-010: "Spec CI: tools/coverage.py enforces coverage; tools/selftest.py shows it fails when a requirement loses its last fixture."
+  EVAL-020: "Runner-level: each implementation ships a conformance runner; its output is checked against schemas/eval/v1/conformance-report.yaml."
+  EVAL-021: "Runner-level: JSON per schemas/eval/v1/conformance-report.yaml and JUnit XML, one test case per fixture."
+  EVAL-023: "Claim-level: a conformance claim is the runner's report; conforms is true only with no failures and only justified skips."
+  EVAL-024: "Runner-level, with a spec CI check: the suite runs with networking disabled; tools/validate.py rejects any fixture URL outside the reserved test domains (RFC 2606, RFC 6761)."
+  EVAL-042: "Authoring obligation, enforced by review: eval cases use synthetic or converted data only (EVAL-003, EVAL-070–072)."
+  EVAL-033: "Suite-level: each in-memory port adapter runs the port cases in conformance/ports/ for its port (PORT-130, PORT-009)."
+
+# Normative requirements whose verification is scheduled for a later phase.
+# Coverage reports them as open but does not fail; each must be resolved
+# before the first release.
+pending:
+  EVAL-036: "Phase 5: recorded wire-level vendor transcripts for the native Claude and OpenAI adapters are published with the suite; until then the adapter cases run against scripted transport."

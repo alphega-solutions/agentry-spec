@@ -15,7 +15,10 @@ description: >-
   the first two are appended to the principal message as text parts with
   provenance `retrieval:kb`, in the port's order, and the third is never
   used. `context.retrieved` records the rewritten query and the limit,
-  before the turn's first model call. The turn has two steps (a lookup,
+  before the turn's first model call. The `hook.decision` precedes
+  `turn.started`, which carries the rewritten message without retrieved
+  parts, and `context.retrieved` follows it (CTX-001, Area 11 amendment
+  2026-11-02). The turn has two steps (a lookup,
   then an answer); the retrieved parts stay in the principal message in
   step 2 and the port is not queried again.
 
@@ -144,8 +147,15 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: turn.started, turn: 1 }
           - { type: hook.decision, payload: { hook: rewrite-input@1, point: sessionStart, result: rewrite } }
+          - type: turn.started
+            turn: 1
+            payload:
+              message:
+                role: principal
+                parts:
+                  - { type: text, text: "SYN-REWRITTEN-0031 refund policy", provenance: principal }
+                  - { type: text, text: "for annual plans", provenance: principal }
           - type: context.retrieved
             provenances: ["retrieval:kb"]
             payload:
@@ -155,7 +165,9 @@ expect:
               results: { $len: 2 }
           - { type: model.request, turn: 1, step: 1 }
           - { type: model.request, turn: 1, step: 2 }
-          - { type: turn.started, turn: 2 }
+          - type: turn.started
+            turn: 2
+            payload: { message: { role: principal, parts: [{ type: text, text: "What about monthly plans?" }] } }
           - type: context.retrieved
             payload:
               source: kb

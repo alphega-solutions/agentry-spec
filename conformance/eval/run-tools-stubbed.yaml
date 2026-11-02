@@ -1,0 +1,202 @@
+schemaVersion: "0.1.0"
+id: eval.run-tools-stubbed
+title: In an eval run an egress tool is answered from the case's stubs, and a call with no stub behaviour fails the case without reaching any endpoint
+description: >-
+  Deployment `test@1` is the baseline copy with `environment: eval` and an
+  HTTP endpoint `rates` (operation `quote`). `web_lookup` is a native
+  `read` tool with `egress: true`; `rate_quote` is bound to `rates/quote`.
+  One cell (scripted-a/model-a, default@1), one repeat, cases run in
+  declared order.
+
+
+  - c-egress: the model calls web_lookup. The case's stub answers it
+    (output `SYN-WEB-ANSWER-0001`, which differs from the default native
+    stub's `{}`), so the call is recorded once by the stub, with the
+    model's arguments, and the case passes (EVAL-041: every tool,
+    whatever its `egress`, is stubbed).
+
+  - c-unstubbed: the model calls rate_quote, for which the case has no
+    stub behaviour. The call receives a tool result error (`unavailable`,
+    `agentry.eval.unstubbed_call`) and never reaches the endpoint: the
+    fixture's own `rates/quote` stub has an empty behaviour list (any call
+    to it fails the test) and records no call. The case fails with
+    result `code: agentry.eval.unstubbed_call` although its only grader
+    still runs and passes on the final text (EVAL-041, EVAL-050 as
+    amended 2026-11-02).
+
+
+  The unstubbed call is delivered as a tool result error and the run
+  continues (EVAL-044 reading), so the model answers once more. Scripted
+  provider responses: scripted-a 4 (2 per case). Stubs: web_lookup 1 (in
+  the case); rates/quote none.
+requirements: [EVAL-041, EVAL-050]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: eval
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        httpEndpoints:
+          - id: rates
+            endpoint: "memory://rates"
+            region: test-region
+            operations:
+              quote: { method: GET, path: "/quotes/{key}" }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: Tool
+        id: web_lookup
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Look something up on an external service.
+        input:
+          type: object
+          additionalProperties: false
+          required: [query]
+          properties: { query: { type: string } }
+        effect: read
+        egress: true
+        binding: { kind: native, handler: test.web_lookup }
+      - kind: Tool
+        id: rate_quote
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Get a rate quote.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        credentialMode: service
+        binding: { kind: http, endpoint: rates, operation: quote }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, web_lookup@1, rate_quote@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: eval-1
+      principals:
+        - { id: ep1, subject: eval-user-1, assurance: multi_factor }
+  providers:
+    scripted-a:
+      responses:
+        # c-egress
+        - parts: [{ type: tool_call, callId: c1, tool: web_lookup, arguments: { query: "SYN-QUERY-0001" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "SYN-WEB-DONE" }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # c-unstubbed
+        - parts: [{ type: tool_call, callId: c1, tool: rate_quote, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "SYN-RATE-DONE" }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    httpEndpoints:
+      rates:
+        quote: []
+script:
+  - action: evalRun
+    run:
+      schemaVersion: "0.1.0"
+      id: eval-stubbed
+      tenant: eval-1
+      deployment: test@1
+      cases: [c-egress, c-unstubbed]
+      matrix:
+        cells:
+          - { model: { provider: scripted-a, name: model-a }, profile: default@1 }
+      repeats: 1
+    cases:
+      - schemaVersion: "0.1.0"
+        id: c-egress
+        persona: assistant@1
+        principal: { subject: eval-user-1 }
+        inputs:
+          - [{ type: text, text: "Look up SYN-QUERY-0001" }]
+        stubs:
+          tools:
+            web_lookup:
+              - ok: { output: { answer: "SYN-WEB-ANSWER-0001" } }
+        graders:
+          - { kind: trajectory, called: [web_lookup] }
+      - schemaVersion: "0.1.0"
+        id: c-unstubbed
+        persona: assistant@1
+        principal: { subject: eval-user-1 }
+        inputs:
+          - [{ type: text, text: "Quote a rate for k1" }]
+        graders:
+          - { kind: schema, equals: "SYN-RATE-DONE" }
+    expect:
+      ok: true
+      report:
+        runId: eval-stubbed
+        cells:
+          - passRate: 0.5
+            results:
+              - { caseId: c-egress, repeat: 1, passed: true, sessionId: $sE, code: { $absent: true } }
+              - caseId: c-unstubbed
+                repeat: 1
+                passed: false
+                code: agentry.eval.unstubbed_call
+                sessionId: $sU
+                graders:
+                  - { kind: schema, passed: true }
+expect:
+  sessions:
+    $sE:
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: web_lookup, arguments: { query: "SYN-QUERY-0001" } } }
+          - { type: tool.result, payload: { callId: c1, tool: web_lookup, result: { ok: { output: { answer: "SYN-WEB-ANSWER-0001" } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+    $sU:
+      events:
+        mode: subsequence
+        items:
+          - type: tool.result
+            payload:
+              callId: c1
+              tool: rate_quote
+              result: { error: { category: unavailable, code: agentry.eval.unstubbed_call } }
+          - { type: model.response, step: 2 }
+          - { type: run.ended, payload: { reason: responded } }
+  stubCalls:
+    web_lookup:
+      - { arguments: { query: "SYN-QUERY-0001" }, completed: true }
+    rates/quote: { count: 0 }
+  providerRequests:
+    scripted-a: { count: 4 }
+    scripted-b: { count: 0 }

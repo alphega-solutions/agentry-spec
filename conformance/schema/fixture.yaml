@@ -519,8 +519,18 @@ $defs:
           view of the session's open escalation for the step's `reviewer`,
           called as `tenant`; `listPendingEscalations` (HITL-100) returns the
           open escalations of `tenant`. Neither changes state or emits
-          events.
-        enum: [run, resume, decide, close, cancel, getReviewerView, listPendingEscalations]
+          events. Area 11 tooling actions:
+          `exportBundle` (`session`, `tenant`) returns the session's trace
+          bundle (EVAL-025, `schemas/eval/v1/bundle.yaml`) to
+          `expect.bundle`; `replay` (`bundle` — a file path or a placeholder
+          bound by `bindResult` — `snapshot`, `hookMode`, `tenant`) replays it
+          as a new session (`bind`), whose events are matched like any
+          session's, with divergences in `expect.divergences` (EVAL-060–063);
+          `convert` (`session`, `tenant`, `as`) returns a draft eval case or
+          fixture to `expect.draft`, or is refused (EVAL-070–072); `evalRun`
+          (`run`, `cases`, inline) runs an eval and returns its report to
+          `expect.report` (EVAL-040–052, EVAL-080–082).
+        enum: [run, resume, decide, close, cancel, getReviewerView, listPendingEscalations, exportBundle, replay, convert, evalRun]
       bind:
         description: Placeholder bound to the session the action creates or targets.
         $ref: "#/$defs/placeholder"
@@ -540,6 +550,21 @@ $defs:
         description: "Run-request values (CFG-101), using harness profile field paths, e.g. {budget: {tokens: 500}}."
         type: object
       reviewer: { type: string, description: Principal ID of the reviewer for decide/resume. }
+      bundle:
+        description: For `replay`, a bundle file path relative to `conformance/` (e.g. `golden/x.yaml`), or a placeholder bound by an earlier `bindResult`.
+        type: string
+      snapshot:
+        description: "For `replay`: `recorded` (the bundle's snapshot) or `candidate` (the fixture's current configuration) (EVAL-060)."
+        enum: [recorded, candidate]
+      hookMode: { enum: [reEvaluate, replayDecisions] }
+      as: { enum: [case, fixture], description: For `convert`. }
+      run: { $ref: "https://alphega.io/agentry/schemas/eval/run/v1.json" }
+      cases:
+        type: array
+        items: { $ref: "https://alphega.io/agentry/schemas/eval/case/v1.json" }
+      bindResult:
+        description: Placeholder bound to the operation's whole result (e.g. an exported bundle), for use in later steps.
+        $ref: "#/$defs/placeholder"
       decisions:
         description: Decisions submitted with `decide` or `resume` (HITL-040), on the session's open escalation.
         type: array
@@ -809,6 +834,18 @@ $defs:
         description: Number of events persisted as a result of this step (0 = none).
         type: integer
         minimum: 0
+      bundle:
+        description: For `exportBundle`, a pattern over the returned bundle, which must also validate against `schemas/eval/v1/bundle.yaml`.
+        type: object
+      divergences:
+        description: For `replay`, the divergences reported, matched like an array expectation (EVAL-062, EVAL-063).
+        type: array
+      draft:
+        description: "For `convert`, a pattern over the returned draft, which must carry `review: required` (EVAL-072)."
+        type: object
+      report:
+        description: For `evalRun`, a pattern over the returned report, which must also validate against `schemas/eval/v1/report.yaml`.
+        type: object
       view:
         description: >-
           For `getReviewerView`: a pattern matched against the returned
@@ -821,6 +858,18 @@ $defs:
           returned array of escalation records.
 
   eventPattern:
+    description: >-
+      Event expectations for one session (EVAL-004); each item is a partial
+      match on an event's fields. `sequence`: the session's persisted
+      events, in log order, match the items one-to-one (same number, same
+      order). `unordered`: the same one-to-one match in any order (e.g.
+      parallel tool calls in one step). `subsequence`: the items match
+      distinct events in log order, with other events allowed in between.
+      `contains`: the items match distinct events in any order, with other
+      events allowed. In `sequence` and `unordered` mode, `checkpoint.saved`
+      events, whose number is implementation-defined, are left out before
+      matching unless an item has `type: checkpoint.saved`. Absence is
+      asserted with `absentEvents`.
     type: object
     additionalProperties: false
     required: [mode, items]

@@ -1,0 +1,150 @@
+schemaVersion: "0.1.0"
+id: eval.replay-candidate-snapshot
+title: A replay runs against the snapshot it declares — the recorded one or the current configuration — and the replayed session's snapshot hash shows which
+description: >-
+  The bundle is `golden/single-lookup.yaml` (one lookup call, then "Record
+  k1 holds SYN-VALUE-0001.", `responded`). The fixture's configuration is
+  the baseline; `load: {}` binds its snapshot hash as $base.
+
+
+  - $rRec: `snapshot: recorded`. The session's `session.created` carries
+    the bundle's own snapshot hash, and the recorded outcome is reproduced.
+  - $rBase: `snapshot: candidate` with the unchanged configuration: the
+    session carries $base, and the outcome is reproduced.
+  - A load then adds the native beforeResponse hook final-check@1 (results
+    [block]) to assistant@1's required hooks: a new snapshot, $cand,
+    different from $base and from the bundle's.
+  - $rCand: `snapshot: candidate` again. The session carries $cand, so the
+    replay declares (and uses) the candidate configuration (EVAL-060):
+    final-check is invoked once, for this session only, blocks the recorded
+    final response, and the run ends `blocked` — unlike the recording.
+    Under `reEvaluate` a hook's new decision is not a divergence (EVAL-063
+    reports hook divergences only when replaying decisions), and the tool
+    call still matches the recording, so no divergence is reported.
+
+
+  final-check is not in the recorded snapshot, so $rRec never invokes it.
+  No provider is called and lookup is never dispatched in any replay.
+  $base equals the bundle's snapshot hash: a snapshot holds effective
+  values, with defaults filled only within objects present (CFG-050,
+  EVAL-025 as amended 2026-11-02), and the bundle's snapshot is exactly
+  the baseline's effective snapshot (sha256 of the RFC 8785 JSON of its
+  artifacts).
+requirements: [EVAL-060]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-04-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a: { responses: [] }
+    scripted-b: { responses: [] }
+  stubs:
+    tools:
+      lookup: []
+      update_record: []
+    nativeHooks:
+      final-check:
+        - result: block
+          reasonCode: test.final_check.blocked
+script:
+  - load: {}
+    bind: $base
+    expect: { ok: true }
+  - action: replay
+    bind: $rRec
+    tenant: t1
+    bundle: golden/single-lookup.yaml
+    snapshot: recorded
+    hookMode: reEvaluate
+    expect: { ok: true, divergences: [] }
+  - action: replay
+    bind: $rBase
+    tenant: t1
+    bundle: golden/single-lookup.yaml
+    snapshot: candidate
+    hookMode: reEvaluate
+    expect: { ok: true, divergences: [] }
+  - load:
+      artifacts:
+        - kind: Hook
+          id: final-check
+          version: 1
+          schemaVersion: "0.1.0"
+          points: [beforeResponse]
+          results: [block]
+          timeoutMs: 1000
+          source: { kind: native, handler: test.hook.final-check }
+        - kind: Persona
+          id: assistant
+          version: 1
+          schemaVersion: "0.1.0"
+          displayName: Test assistant
+          instructions: "You are a test assistant."
+          tools: [lookup@1, update_record@1]
+          fallbackMessage: "This request was blocked."
+          defaultProfile: default@1
+          allowedProfiles: [default@1, streamed@1]
+          requiredHooks: [final-check@1]
+          model:
+            provider: scripted-a
+            name: model-a
+            fallbacks:
+              - { provider: scripted-b, name: model-b }
+    bind: $cand
+    expect: { ok: true }
+  - action: replay
+    bind: $rCand
+    tenant: t1
+    bundle: golden/single-lookup.yaml
+    snapshot: candidate
+    hookMode: reEvaluate
+    expect: { ok: true, divergences: [] }
+expect:
+  sessions:
+    $rRec:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, snapshotHash: "sha256:917994aa752361a52830e78416b0550055054dca7ee4aecfbae787862d1eeb19" }
+          - { type: tool.result, payload: { callId: c1, result: { ok: { output: { key: k1, value: SYN-VALUE-0001 } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: hook.decision }
+    $rBase:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, snapshotHash: { $all: [$base, "sha256:917994aa752361a52830e78416b0550055054dca7ee4aecfbae787862d1eeb19"] } }
+          - { type: tool.result, payload: { callId: c1, result: { ok: { output: { key: k1, value: SYN-VALUE-0001 } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: hook.decision }
+    $rCand:
+      events:
+        mode: subsequence
+        items:
+          - type: session.created
+            snapshotHash:
+              $all:
+                - $cand
+                - { $not: $base }
+                - { $not: "sha256:917994aa752361a52830e78416b0550055054dca7ee4aecfbae787862d1eeb19" }
+          - { type: tool.result, payload: { callId: c1, result: { ok: { output: { key: k1, value: SYN-VALUE-0001 } } } } }
+          - { type: hook.decision, snapshotHash: $cand, payload: { hook: final-check@1, point: beforeResponse, result: block } }
+          - { type: run.ended, payload: { reason: blocked } }
+      absentEvents:
+        - { type: run.ended, payload: { reason: responded } }
+  stubCalls:
+    final-check: [{ arguments: { sessionId: $rCand, point: beforeResponse } }]
+    lookup: { count: 0 }
+    update_record: { count: 0 }
+  providerRequests:
+    scripted-a: { count: 0 }
+    scripted-b: { count: 0 }

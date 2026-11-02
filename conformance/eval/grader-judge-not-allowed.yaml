@@ -1,0 +1,240 @@
+schemaVersion: "0.1.0"
+id: eval.grader-judge-not-allowed
+title: A judge whose provider is not allowed for the content it reads fails without receiving anything; its usage is recorded on its grader result, not in the cell's tokens
+description: >-
+  Policy bundle org@1 as in the baseline, except that `phi` is allowed on
+  scripted-a and scripted-judge (not scripted-b); `pii` on scripted-a and
+  scripted-b. Deployment: the baseline copy with `environment: eval` plus
+  scripted-judge. One cell (scripted-a/model-a, profile `intake@1`, the
+  default profile with `defaultAttachmentLabels: [phi]`), one repeat,
+  cases in declared order.
+
+
+  - c-phi: the input is a text part and a synthetic file attachment
+    (`source: upload`) whose case blob is labelled `phi`, as the profile's
+    default attachment label also makes it; the model request carries it
+    labelled `phi`. Grader 0 is a judge on scripted-b/model-b: no model
+    allowed for every label on the content it would read (the case's
+    inputs and the final response), so it fails
+    (`agentry.eval.judge_not_allowed`) with no score and no usage, and
+    scripted-b receives no request for it. Grader 1, a judge on
+    scripted-judge/judge-1 (allowed for phi), is asked once, with no
+    tools, scores 0.9 and passes; its usage (20 + 5) is on its grader
+    result.
+
+  - c-plain (control): text only, no labels; its judge on
+    scripted-b/model-b is allowed and asked once (score 0.6, passes).
+
+
+  The cell's tokens are the two sessions' model calls only: (30 + 3) +
+  (10 + 2) = 45, excluding the judges' 25 + 13 (EVAL-051 as amended
+  2026-11-02). The case c-phi fails because grader 0 fails; pass rate
+  0.5.
+
+
+  The failed grader's result carries `code: agentry.eval.judge_not_allowed`
+  (report `results[].graders[].code`); scripted-b's only request is
+  c-plain's judge call. Reading: a judge's answer is a `structured` part
+  `{score}`.
+  Scripted provider responses: scripted-a 2, scripted-b 1 (c-plain's
+  judge), scripted-judge 1. Stubs: none.
+requirements: [EVAL-051]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a, scripted-judge]
+            redaction: [{ mode: mask }]
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: eval
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          - { id: scripted-judge, adapter: scripted, endpoint: "memory://scripted-judge", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: HarnessProfile
+        id: intake
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: [phi]
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1, intake@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: eval-1
+      principals:
+        - { id: ep1, subject: eval-user-1, assurance: multi_factor }
+  providers:
+    scripted-a:
+      responses:
+        # c-phi session
+        - parts: [{ type: text, text: "SYN-INTAKE-DONE" }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        # c-plain session
+        - parts: [{ type: text, text: "SYN-PLAIN-DONE" }]
+          usage: { inputTokens: 10, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      responses:
+        # c-plain judge (grader 0)
+        - parts: [{ type: structured, value: { score: 0.6 } }]
+          usage: { inputTokens: 10, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-judge:
+      responses:
+        # c-phi judge (grader 1)
+        - parts: [{ type: structured, value: { score: 0.9 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: evalRun
+    run:
+      schemaVersion: "0.1.0"
+      id: eval-judge-routing
+      tenant: eval-1
+      deployment: test@1
+      cases: [c-phi, c-plain]
+      matrix:
+        cells:
+          - { model: { provider: scripted-a, name: model-a }, profile: intake@1 }
+      repeats: 1
+    cases:
+      - schemaVersion: "0.1.0"
+        id: c-phi
+        persona: assistant@1
+        principal: { subject: eval-user-1 }
+        inputs:
+          - - { type: text, text: "Summarize the attached intake note" }
+            - type: file
+              mediaType: text/plain
+              source: upload
+              blob: { id: blob-note-1, hash: "sha256:5449806774800cdcf358c0bf5a617945a3ad65149b8d33a25d16e427307fe2a1", mediaType: text/plain, size: 39 }
+        blobs:
+          - id: blob-note-1
+            mediaType: text/plain
+            labels: [phi]
+            base64: "U1lOLVBISS1OT1RFLTAwMDEgc3ludGhldGljIGludGFrZSBub3Rl"
+        graders:
+          - kind: judge
+            model: { provider: scripted-b, name: model-b }
+            rubric: "Score 1 if the summary is faithful, else 0."
+            threshold: 0.5
+          - kind: judge
+            model: { provider: scripted-judge, name: judge-1 }
+            rubric: "Score 1 if the summary is faithful, else 0."
+            threshold: 0.5
+      - schemaVersion: "0.1.0"
+        id: c-plain
+        persona: assistant@1
+        principal: { subject: eval-user-1 }
+        inputs:
+          - [{ type: text, text: "Say done" }]
+        graders:
+          - kind: judge
+            model: { provider: scripted-b, name: model-b }
+            rubric: "Score 1 if the response says done, else 0."
+            threshold: 0.5
+    expect:
+      ok: true
+      report:
+        runId: eval-judge-routing
+        cells:
+          - model: { provider: scripted-a, name: model-a }
+            profile: intake@1
+            passRate: 0.5
+            tokens: 45
+            results:
+              - caseId: c-phi
+                repeat: 1
+                passed: false
+                sessionId: $sPhi
+                graders:
+                  - { kind: judge, passed: false, code: agentry.eval.judge_not_allowed, score: { $absent: true }, usage: { $absent: true } }
+                  - kind: judge
+                    passed: true
+                    score: 0.9
+                    usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+              - caseId: c-plain
+                repeat: 1
+                passed: true
+                sessionId: $sPlain
+                graders:
+                  - kind: judge
+                    passed: true
+                    score: 0.6
+                    usage: { inputTokens: 10, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+expect:
+  sessions:
+    $sPhi:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.response, payload: { provider: scripted-a, model: model-a } }
+          - { type: run.ended, payload: { reason: responded } }
+    $sPlain:
+      events:
+        mode: subsequence
+        items:
+          - { type: run.ended, payload: { reason: responded } }
+  providerRequests:
+    scripted-a:
+      - model: model-a
+        messages:
+          $contains:
+            - role: principal
+              parts:
+                - { type: text, text: "Summarize the attached intake note", labels: [] }
+                - { type: file, blob: { id: blob-note-1 }, provenance: "attachment:upload", labels: [phi] }
+      - model: model-a
+    scripted-b:
+      - model: model-b
+        tools: []
+        messages: { $count: { of: { parts: { $contains: [{ type: file }] } }, equals: 0 } }
+    scripted-judge:
+      - { model: judge-1, tools: [] }

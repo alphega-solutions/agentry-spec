@@ -1,0 +1,194 @@
+schemaVersion: "0.1.0"
+id: eval.doubles-stubs-record-calls
+title: MCP server, HTTP endpoint and remote hook stubs answer from their scripts and record every call they receive
+description: >-
+  The model calls `get_note` (bound to tool `get_note` on MCP server stub
+  `notes-mcp`), then `get_record` (bound to operation `getRecord` on HTTP
+  endpoint stub `records-api`), then responds. A remote hook `watcher` at
+  beforeToolCall, answered by a remote hook stub, sees both calls.
+
+
+  Each stub answers with its scripted behaviour, and the scripted outputs
+  are the tool results the session records. Each stub records every call,
+  in order: the MCP and HTTP stubs record the tool's arguments, the tool
+  context (session, run, idempotency key) and `cancelled: false`,
+  `completed: true`; the remote hook stub records two `HookRequest`s, one
+  per call, naming the hook, point, session, run, tool and call
+  arguments. Each behaviour list holds exactly the calls made, so any
+  extra call would fail the test. Scripted responses: three, from
+  scripted-a.
+
+
+  MCP schema drift scripted through `changes` is exercised by
+  `tool.mcp-schema-drift-at-runtime` (also tagged EVAL-032).
+requirements: [EVAL-030, EVAL-032]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 32
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        mcpServers:
+          - { id: notes-mcp, endpoint: "memory://notes-mcp", identity: notes-mcp.test, region: test-region }
+        httpEndpoints:
+          - id: records-api
+            endpoint: "memory://records-api"
+            region: test-region
+            operations:
+              getRecord: { method: GET, path: "/records/{key}" }
+        remoteHooks:
+          - { id: watcher, endpoint: "memory://hook-watcher", region: test-region }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: Hook
+        id: watcher
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [annotate]
+        timeoutMs: 1000
+        source: { kind: remote, endpoint: watcher }
+      - kind: Tool
+        id: get_note
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Get a note from the notes server.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        binding: { kind: mcp, server: notes-mcp, tool: get_note }
+      - kind: Tool
+        id: get_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Get a record from the records API.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        binding: { kind: http, endpoint: records-api, operation: getRecord }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [get_note@1, get_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [watcher@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: get_note, arguments: { key: n1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: get_record, arguments: { key: r1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Both answered." }]
+          usage: { inputTokens: 40, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b: { responses: [] }
+  stubs:
+    mcpServers:
+      notes-mcp:
+        tools:
+          get_note:
+            inputSchema:
+              type: object
+              required: [key]
+              properties: { key: { type: string } }
+            behaviours:
+              - ok: { output: { note: "SYN-MCP-NOTE-0032" } }
+    httpEndpoints:
+      records-api:
+        getRecord:
+          - ok: { output: { record: "SYN-HTTP-RECORD-0032" } }
+    remoteHooks:
+      watcher:
+        - { result: continue }
+        - { result: continue }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Get note n1 and record r1" }]
+    capture:
+      - event: { type: run.started }
+        bind: { runId: $r }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: get_note, arguments: { key: n1 } } }
+          - { type: tool.result, payload: { callId: c1, result: { ok: { output: { note: "SYN-MCP-NOTE-0032" } } } } }
+          - { type: tool.call, payload: { callId: c2, tool: get_record, arguments: { key: r1 } } }
+          - { type: tool.result, payload: { callId: c2, result: { ok: { output: { record: "SYN-HTTP-RECORD-0032" } } } } }
+          - { type: run.ended, runId: $r, payload: { reason: responded } }
+  stubCalls:
+    notes-mcp/get_note:
+      - arguments: { key: n1 }
+        context: { sessionId: $s, runId: $r, idempotencyKey: { $regex: "^.+$" } }
+        cancelled: false
+        completed: true
+    records-api/getRecord:
+      - arguments: { key: r1 }
+        context: { sessionId: $s, runId: $r, idempotencyKey: { $regex: "^.+$" } }
+        cancelled: false
+        completed: true
+    watcher:
+      - arguments:
+          hook: watcher@1
+          point: beforeToolCall
+          tenant: t1
+          sessionId: $s
+          runId: $r
+          tool: { id: get_note }
+          call: { arguments: { key: n1 } }
+      - arguments:
+          hook: watcher@1
+          point: beforeToolCall
+          tenant: t1
+          sessionId: $s
+          runId: $r
+          tool: { id: get_record }
+          call: { arguments: { key: r1 } }
+  providerRequests:
+    scripted-a: { count: 3 }
+    scripted-b: { count: 0 }

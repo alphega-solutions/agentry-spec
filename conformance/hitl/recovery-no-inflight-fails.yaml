@@ -16,7 +16,7 @@ description: >-
   `failed` (CORE-020). The triggering run() then proceeds on a closed
   session and fails with `conflict` (CORE-022). The provider's second
   scripted response is never consumed; a third would fail the test.
-requirements: [HITL-090, HITL-091, HITL-092]
+requirements: [HITL-090, HITL-091, HITL-092, EVAL-035]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:

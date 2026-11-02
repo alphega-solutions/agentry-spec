@@ -12,7 +12,7 @@ description: >-
   the model as the call's result (TOOL-053 as amended 2026-11-01, CORE-191
   `unavailable` for tool errors), so the model receives it in the next
   request and the run continues to `responded`, leaving the session idle.
-requirements: [TOOL-092]
+requirements: [TOOL-092, EVAL-032, EVAL-030]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:

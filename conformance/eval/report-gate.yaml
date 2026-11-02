@@ -1,0 +1,230 @@
+schemaVersion: "0.1.0"
+id: eval.report-gate
+title: The CI gate fails when a critical case fails in any cell or a cell's pass rate is below its threshold
+description: >-
+  Deployment: the baseline copy with `environment: eval`. Every case is
+  one model call graded by `equals` on its final text; `crit` is tagged
+  `critical`. Each run has one repeat and `gate.minPassRate: 0.5`
+  (EVAL-081 as amended 2026-11-02).
+
+
+  - eval-gate-control (control): one cell (model-a); crit and n1 pass →
+    pass rate 1; the gate passes with no failures.
+
+  - eval-gate-critical: two cells (model-a, model-b). Cell 0: both pass.
+    Cell 1: crit fails, n1 passes → pass rate 0.5, which is not below
+    0.5. The gate fails for exactly one reason: the critical case failed
+    in cell 1 (`critical_case_failed`, caseId crit, cell 1).
+
+  - eval-gate-rate: one cell (model-a); crit passes, n1 and n2 fail →
+    pass rate 1/3 < 0.5. The gate fails for exactly one reason:
+    `pass_rate_below_threshold` in cell 0, naming no case.
+
+
+  Readings: "below" is strictly less than (0.5 at threshold 0.5 does not
+  fail); scripted responses are consumed cell by cell, then case, in
+  declared order. Scripted provider responses: scripted-a 7 (2 + 2 + 3),
+  scripted-b 2. Stubs: none.
+requirements: [EVAL-081]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: eval
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+  tenants:
+    - id: eval-1
+      principals:
+        - { id: ep1, subject: eval-user-1, assurance: multi_factor }
+  providers:
+    scripted-a:
+      responses:
+        # eval-gate-control: crit, n1
+        - parts: [{ type: text, text: "SYN-CRIT-OK" }]
+          usage: { inputTokens: 10, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "SYN-N1-OK" }]
+          usage: { inputTokens: 10, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # eval-gate-critical, cell 0: crit, n1
+        - parts: [{ type: text, text: "SYN-CRIT-OK" }]
+          usage: { inputTokens: 10, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "SYN-N1-OK" }]
+          usage: { inputTokens: 10, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # eval-gate-rate: crit, n1 (wrong), n2 (wrong)
+        - parts: [{ type: text, text: "SYN-CRIT-OK" }]
+          usage: { inputTokens: 10, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "SYN-WRONG" }]
+          usage: { inputTokens: 10, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "SYN-WRONG" }]
+          usage: { inputTokens: 10, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      responses:
+        # eval-gate-critical, cell 1: crit (wrong), n1
+        - parts: [{ type: text, text: "SYN-WRONG" }]
+          usage: { inputTokens: 10, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "SYN-N1-OK" }]
+          usage: { inputTokens: 10, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: evalRun
+    run:
+      schemaVersion: "0.1.0"
+      id: eval-gate-control
+      tenant: eval-1
+      deployment: test@1
+      cases: [crit, n1]
+      matrix:
+        cells:
+          - { model: { provider: scripted-a, name: model-a }, profile: default@1 }
+      repeats: 1
+      gate: { minPassRate: 0.5 }
+    cases:
+      - schemaVersion: "0.1.0"
+        id: crit
+        persona: assistant@1
+        principal: { subject: eval-user-1 }
+        inputs:
+          - [{ type: text, text: "Answer crit" }]
+        tags: [critical]
+        graders:
+          - { kind: schema, equals: "SYN-CRIT-OK" }
+      - schemaVersion: "0.1.0"
+        id: n1
+        persona: assistant@1
+        principal: { subject: eval-user-1 }
+        inputs:
+          - [{ type: text, text: "Answer n1" }]
+        graders:
+          - { kind: schema, equals: "SYN-N1-OK" }
+    expect:
+      ok: true
+      report:
+        runId: eval-gate-control
+        cells:
+          - passRate: 1
+            results:
+              - { caseId: crit, passed: true }
+              - { caseId: n1, passed: true }
+        gate: { passed: true, failures: [] }
+  - action: evalRun
+    run:
+      schemaVersion: "0.1.0"
+      id: eval-gate-critical
+      tenant: eval-1
+      deployment: test@1
+      cases: [crit, n1]
+      matrix:
+        cells:
+          - { model: { provider: scripted-a, name: model-a }, profile: default@1 }
+          - { model: { provider: scripted-b, name: model-b }, profile: default@1 }
+      repeats: 1
+      gate: { minPassRate: 0.5 }
+    cases:
+      - schemaVersion: "0.1.0"
+        id: crit
+        persona: assistant@1
+        principal: { subject: eval-user-1 }
+        inputs:
+          - [{ type: text, text: "Answer crit" }]
+        tags: [critical]
+        graders:
+          - { kind: schema, equals: "SYN-CRIT-OK" }
+      - schemaVersion: "0.1.0"
+        id: n1
+        persona: assistant@1
+        principal: { subject: eval-user-1 }
+        inputs:
+          - [{ type: text, text: "Answer n1" }]
+        graders:
+          - { kind: schema, equals: "SYN-N1-OK" }
+    expect:
+      ok: true
+      report:
+        runId: eval-gate-critical
+        cells:
+          - passRate: 1
+            results:
+              - { caseId: crit, passed: true }
+              - { caseId: n1, passed: true }
+          - passRate: 0.5
+            results:
+              - { caseId: crit, passed: false }
+              - { caseId: n1, passed: true }
+        gate:
+          passed: false
+          failures:
+            - { reason: critical_case_failed, caseId: crit, cell: 1 }
+  - action: evalRun
+    run:
+      schemaVersion: "0.1.0"
+      id: eval-gate-rate
+      tenant: eval-1
+      deployment: test@1
+      cases: [crit, n1, n2]
+      matrix:
+        cells:
+          - { model: { provider: scripted-a, name: model-a }, profile: default@1 }
+      repeats: 1
+      gate: { minPassRate: 0.5 }
+    cases:
+      - schemaVersion: "0.1.0"
+        id: crit
+        persona: assistant@1
+        principal: { subject: eval-user-1 }
+        inputs:
+          - [{ type: text, text: "Answer crit" }]
+        tags: [critical]
+        graders:
+          - { kind: schema, equals: "SYN-CRIT-OK" }
+      - schemaVersion: "0.1.0"
+        id: n1
+        persona: assistant@1
+        principal: { subject: eval-user-1 }
+        inputs:
+          - [{ type: text, text: "Answer n1" }]
+        graders:
+          - { kind: schema, equals: "SYN-N1-OK" }
+      - schemaVersion: "0.1.0"
+        id: n2
+        persona: assistant@1
+        principal: { subject: eval-user-1 }
+        inputs:
+          - [{ type: text, text: "Answer n2" }]
+        graders:
+          - { kind: schema, equals: "SYN-N2-OK" }
+    expect:
+      ok: true
+      report:
+        runId: eval-gate-rate
+        cells:
+          - results:
+              - { caseId: crit, passed: true }
+              - { caseId: n1, passed: false }
+              - { caseId: n2, passed: false }
+        gate:
+          passed: false
+          failures:
+            - { reason: pass_rate_below_threshold, cell: 0, caseId: { $absent: true } }
+expect:
+  providerRequests:
+    scripted-a: { count: 7 }
+    scripted-b: { count: 2 }

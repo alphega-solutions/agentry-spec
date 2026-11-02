@@ -16,7 +16,7 @@ description: >-
   scripted-a holds exactly two responses (the failure and turn 2's answer)
   and scripted-b exactly two (turn 1's two steps), so a call to the
   primary at turn 1 step 2, or to the fallback in turn 2, fails the test.
-requirements: [PROV-063, PROV-090]
+requirements: [PROV-063, PROV-090, EVAL-031]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:

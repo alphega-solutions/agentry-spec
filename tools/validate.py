@@ -48,13 +48,15 @@ def check_placeholders(doc: dict) -> list[str]:
             return
         used = set()
         for key, val in step.items():
-            if key in ("bind", "capture", "expect"):
+            if key in ("bind", "bindResult", "capture", "expect"):
                 continue
             used |= _placeholders(val)
         for ph in sorted(used - bound):
             problems.append(f"script[{idx}] uses {ph} before it is bound")
         if isinstance(step.get("bind"), str):
             bound.add(step["bind"])
+        if isinstance(step.get("bindResult"), str):
+            bound.add(step["bindResult"])
         for cap in step.get("capture", []) or []:
             bound.update(cap.get("bind", {}).values())
 
@@ -706,6 +708,8 @@ def check_placeholder_keys(doc: dict) -> list[str]:
                 step_binds(sub)
         if isinstance(step.get("bind"), str):
             bound.add(step["bind"])
+        if isinstance(step.get("bindResult"), str):
+            bound.add(step["bindResult"])
         for cap in step.get("capture") or []:
             bound.update((cap.get("bind") or {}).values())
 
@@ -806,6 +810,33 @@ def check_stub_call_keys(doc: dict) -> list[str]:
                        f"remote hook ID, native hook ID, or vectorStore/<source>)" for k in calls if k not in valid]
 
 
+_URL = re.compile(r"\b(?:https?|wss?|grpcs?|tcp)://([^/\s\"'?#:]+)", re.I)  # network schemes only; memory:// and secret:// are in-process
+_TEST_HOST = re.compile(r"(^|\.)(example|test|invalid|localhost)$|(^|\.)example\.(com|net|org)$", re.I)
+
+
+def check_offline(doc) -> list[str]:
+    """EVAL-024: every URL in a fixture names a reserved test domain (RFC 2606,
+    RFC 6761), so no fixture can depend on a real endpoint. Never echoes the URL."""
+    found = False
+
+    def walk(v):
+        nonlocal found
+        if isinstance(v, dict):
+            for x in v.values():
+                walk(x)
+        elif isinstance(v, list):
+            for x in v:
+                walk(x)
+        elif isinstance(v, str):
+            for host in _URL.findall(v):
+                if host.lower() in ("alphega.io", "json-schema.org") and "schema" in v:
+                    continue  # schema identifiers, never fetched
+                if not _TEST_HOST.search(host):
+                    found = True
+    walk(doc)
+    return ["a URL names a host outside the reserved test domains (EVAL-024)"] if found else []
+
+
 def check_crashes(doc: dict) -> list[str]:
     """A crash step arms a crash for a later action step on its session, and the
     crashed action is followed by a `restart` step before the next action step."""
@@ -893,6 +924,7 @@ def main() -> int:
         for rid in doc.get("requirements", []):
             if rid not in reqs:
                 errors.append(f"{fx.relative_to(ROOT)}: unknown requirement {rid}")
+        errors += [f"{fx.relative_to(ROOT)}: {e}" for e in check_offline(doc)]
         if target == PORT_CASE_ID:
             errors += [f"{fx.relative_to(ROOT)}: {e}" for e in check_port_case(doc)]
         if target == FIXTURE_ID:
@@ -908,6 +940,11 @@ def main() -> int:
     for mf in sorted((ROOT / "conformance" / "adapters" / "manifests").glob("*.yaml")):
         for err in validator("https://alphega.io/agentry/schemas/conformance/adapter-manifest/v1.json").iter_errors(load_yaml(mf)):
             errors.append(f"{mf.relative_to(ROOT)}: {describe(err)}")
+
+    # 3c. Golden trace bundles validate against the bundle schema (EVAL-025, EVAL-026).
+    for gb in sorted((ROOT / "conformance" / "golden").glob("*.yaml")):
+        for err in validator("https://alphega.io/agentry/schemas/eval/bundle/v1.json").iter_errors(load_yaml(gb)):
+            errors.append(f"{gb.relative_to(ROOT)}: {describe(err)}")
 
     # 4. Shared configuration artifacts validate against their kind's schema.
     errors += check_shared_config(schemas, reg)

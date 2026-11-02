@@ -1,0 +1,146 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://alphega.io/agentry/schemas/eval/case/v1.json
+title: Eval case
+description: >-
+  One eval case (EVAL-043). Stubs, retrieval results and attachments use the
+  conformance fixture formats (`conformance/schema/fixture.yaml`), so every
+  tool and remote dependency is stubbed (EVAL-041). A case built from a trace
+  bundle or a conversion names it in `replay` instead of stubs (EVAL-060).
+type: object
+additionalProperties: false
+required: [schemaVersion, id, graders]
+if: { not: { required: [replay] } }
+then: { required: [persona, inputs] }
+properties:
+  schemaVersion: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/contractVersion" }
+  id: { type: string, pattern: "^[a-z0-9]+([._-][a-z0-9]+)*$" }
+  title: { type: string }
+  persona: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/artifactRef" }
+  principal:
+    description: The synthetic principal the case runs as, in the eval tenant (EVAL-040).
+    type: object
+    additionalProperties: false
+    required: [subject]
+    properties:
+      subject: { type: string, minLength: 1 }
+      roles: { type: array, items: { type: string } }
+      attributes: { type: object }
+      assurance: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/assuranceLevel" }
+  inputs:
+    description: Principal inputs, one per turn; each a list of parts (attachments by blob reference to `blobs`).
+    type: array
+    minItems: 1
+    items:
+      type: array
+      minItems: 1
+      items: { type: object, required: [type] }
+  blobs:
+    description: Attachment bytes referenced by inputs.
+    type: array
+    items:
+      type: object
+      additionalProperties: false
+      required: [id, mediaType, base64]
+      properties:
+        id: { type: string, minLength: 1 }
+        mediaType: { type: string }
+        labels: { type: array, items: { type: string } }
+        base64: { type: string, contentEncoding: base64 }
+  stubs:
+    description: Stub behaviours, as `setup.stubs` of a conformance fixture (tools, MCP servers, HTTP endpoints, remote and native hooks, vector stores).
+    $ref: "https://alphega.io/agentry/schemas/conformance/fixture/v1.json#/$defs/setup/properties/stubs"
+  decisions:
+    description: >-
+      Scripted reviewer decisions for any escalation (EVAL-043): the first
+      rule matching a pending action decides it.
+    type: array
+    items:
+      type: object
+      additionalProperties: false
+      required: [type, reviewer]
+      properties:
+        match:
+          type: object
+          additionalProperties: false
+          properties:
+            source: { $ref: "https://alphega.io/agentry/schemas/core/hitl/v1.json#/$defs/source" }
+            tool: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/toolId" }
+            kind: { enum: [tool_call, content, recovery] }
+        type: { $ref: "https://alphega.io/agentry/schemas/core/hitl/v1.json#/$defs/decisionType" }
+        replacement: {}
+        outcome: { enum: [succeeded, failed] }
+        output: {}
+        reviewer:
+          description: Subject of a synthetic human reviewer in the eval tenant.
+          type: string
+          minLength: 1
+  replay:
+    description: A trace bundle to replay instead of running live (EVAL-060–063).
+    type: object
+    additionalProperties: false
+    required: [bundle]
+    properties:
+      bundle: { type: string, description: "Path of the bundle file, relative to `conformance/` (e.g. `golden/x.yaml`) in the conformance suite, or to the eval suite's root." }
+  tags:
+    type: array
+    items: { type: string, pattern: "^[a-z0-9][a-z0-9_-]*$" }
+  graders:
+    type: array
+    minItems: 1
+    items: { $ref: "#/$defs/grader" }
+$defs:
+  grader:
+    description: One grader (EVAL-050).
+    type: object
+    required: [kind]
+    properties:
+      kind: { enum: [schema, trajectory, policy, escalation, budget, judge] }
+    allOf:
+      - if: { properties: { kind: { const: schema } } }
+        then:
+          additionalProperties: false
+          properties:
+            kind: true
+            schema: { type: object, description: JSON Schema the final structured output must satisfy. }
+            equals: { description: Value the final output (structured value, or text) must equal after canonicalization (EVAL-000). }
+          oneOf: [{ required: [schema] }, { required: [equals] }]
+      - if: { properties: { kind: { const: trajectory } } }
+        then:
+          additionalProperties: false
+          properties:
+            kind: true
+            called: { type: array, items: { type: string } }
+            notCalled: { type: array, items: { type: string } }
+            ordered: { type: boolean, default: false, description: "`called` must occur in this order (other calls may interleave)." }
+      - if: { properties: { kind: { const: policy } } }
+        then:
+          additionalProperties: false
+          properties:
+            kind: true
+            expected: { type: array, items: { type: object }, description: Partial patterns over hook.decision / policy.decision events that must occur. }
+            forbidden: { type: array, items: { type: object }, description: Patterns that must not occur. }
+      - if: { properties: { kind: { const: escalation } } }
+        then:
+          additionalProperties: false
+          required: [escalates]
+          properties:
+            kind: true
+            escalates: { type: boolean }
+            source: { $ref: "https://alphega.io/agentry/schemas/core/hitl/v1.json#/$defs/source" }
+      - if: { properties: { kind: { const: budget } } }
+        then:
+          additionalProperties: false
+          properties:
+            kind: true
+            maxTokens: { type: integer, minimum: 0 }
+            maxCost: { type: number, minimum: 0 }
+            maxLatencyMs: { type: integer, minimum: 0, description: Live runs only; ignored in replay (EVAL-050). }
+      - if: { properties: { kind: { const: judge } } }
+        then:
+          additionalProperties: false
+          required: [model, rubric, threshold]
+          properties:
+            kind: true
+            model: { $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/modelSelection" }
+            rubric: { type: string, minLength: 1 }
+            threshold: { type: number, minimum: 0, maximum: 1, description: Minimum score (0–1) to pass. }

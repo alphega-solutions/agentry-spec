@@ -1,0 +1,180 @@
+schemaVersion: "0.1.0"
+id: eval.convert-refused-unredacted-content
+title: "`convert` runs the deployment's labelling hooks first and is refused, returning no draft, when a labelled part would remain unredacted"
+description: >-
+  The policy bundle maps label `test.example:confidential` to a sensitivity policy with
+  no redaction rule, so content labelled `test.example:confidential` is stored and
+  exported unredacted. lookup's result is `SYN-CONFIDENTIAL-0072`.
+
+
+  1. Session $plain is recorded with no labelling hook: lookup's result is
+     unlabelled. Converting it as a case succeeds (control): `{review:
+     required, kind: case}`.
+
+  2. Configuration is reloaded: the policy bundle now requires a labelling
+     rule hook (`confidential-tagger`, afterToolCall) that annotates
+     lookup's result `test.example:confidential`.
+
+  3. Converting $plain again is refused (`policy`,
+     `agentry.eval.unredacted_content`) and returns no draft: conversion
+     first runs the deployment's redaction and labelling hooks over all
+     content (EVAL-071), which labels the recorded result `test.example:confidential`,
+     and nothing redacts it.
+
+  4. Session $labelled is recorded under the new configuration: the hook
+     labels its result `test.example:confidential` live (a `hook.decision` with
+     `labelsAdded: ["test.example:confidential"]`), and the inline view keeps the value,
+     since the policy has no redaction. Converting it is refused both as a
+     fixture and as a case, with no draft.
+
+
+  Reading: "the deployment's redaction and labelling hooks" are those of
+  the deployment's configuration in force when `convert` is called, not
+  only those pinned in the session's snapshot; step 3 depends on this.
+  Conversion makes no model or tool call: scripted-a answers exactly the
+  four calls of the two sessions, and lookup's stub is called twice.
+requirements: [EVAL-070, EVAL-071, EVAL-072]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 72
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+          test.example:confidential:
+            allowedProviders: [scripted-a, scripted-b]
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # $plain
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Found it." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $labelled
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Found it." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b: { responses: [] }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { code: "SYN-CONFIDENTIAL-0072" } }
+        - ok: { output: { code: "SYN-CONFIDENTIAL-0072" } }
+  limits:
+    inlinePayloadBytes: 65536
+script:
+  - action: run
+    bind: $plain
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1" }]
+    expect: { ok: true, endReason: responded }
+  - action: convert
+    session: $plain
+    tenant: t1
+    as: case
+    expect:
+      ok: true
+      draft: { review: required, kind: case }
+  - load:
+      artifacts:
+        - kind: Hook
+          id: confidential-tagger
+          version: 1
+          schemaVersion: "0.1.0"
+          points: [afterToolCall]
+          results: [annotate]
+          timeoutMs: 1000
+          source: { kind: rule, when: "tool.id == 'lookup'", then: { result: annotate, labels: ["test.example:confidential"] } }
+        - kind: PolicyBundle
+          id: org
+          version: 1
+          schemaVersion: "0.1.0"
+          policyInstructions: "Follow organisational policy."
+          defaultFallbackMessage: "I can't help with that request."
+          requiredHooks: [confidential-tagger@1]
+          sensitivityPolicies:
+            pii:
+              allowedProviders: [scripted-a, scripted-b]
+              redaction: [{ mode: mask }]
+            phi:
+              allowedProviders: [scripted-a]
+              redaction: [{ mode: mask }]
+            test.example:confidential:
+              allowedProviders: [scripted-a, scripted-b]
+    expect: { ok: true }
+  - action: convert
+    session: $plain
+    tenant: t1
+    as: case
+    expect:
+      ok: false
+      error: { category: policy, code: agentry.eval.unredacted_content }
+      draft: { $absent: true }
+  - action: run
+    bind: $labelled
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1" }]
+    expect: { ok: true, endReason: responded }
+  - action: convert
+    session: $labelled
+    tenant: t1
+    as: fixture
+    expect:
+      ok: false
+      error: { category: policy, code: agentry.eval.unredacted_content }
+      draft: { $absent: true }
+  - action: convert
+    session: $labelled
+    tenant: t1
+    as: case
+    expect:
+      ok: false
+      error: { category: policy, code: agentry.eval.unredacted_content }
+      draft: { $absent: true }
+expect:
+  sessions:
+    $plain:
+      state: idle
+      events:
+        mode: contains
+        items:
+          - { type: tool.result, labels: { $count: { of: "test.example:confidential", equals: 0 } }, payload: { callId: c1, result: { ok: { output: { code: "SYN-CONFIDENTIAL-0072" } } } } }
+      absentEvents:
+        - { type: hook.decision }
+    $labelled:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: confidential-tagger@1, point: afterToolCall, result: annotate, labelsAdded: ["test.example:confidential"] } }
+          - type: tool.result
+            labels: { $contains: ["test.example:confidential"] }
+            payload: { callId: c1, result: { ok: { output: { code: "SYN-CONFIDENTIAL-0072" } } } }
+  stubCalls:
+    lookup: { count: 2 }
+  providerRequests:
+    scripted-a: { count: 4 }
+    scripted-b: { count: 0 }

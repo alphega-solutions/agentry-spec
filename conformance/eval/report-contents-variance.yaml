@@ -1,0 +1,242 @@
+schemaVersion: "0.1.0"
+id: eval.report-contents-variance
+title: The report gives per cell the pass rate, results, token and cost totals, variance across repeats and divergences, and the difference from a declared baseline
+description: >-
+  Deployment: the baseline copy with `environment: eval` and a price table
+  (USD per million tokens: model-a input 10000, output 20000; model-b
+  input 5000, output 10000; cached input and reasoning as their
+  uncached/output prices). Two cells (scripted-a/model-a and
+  scripted-b/model-b, default@1). Two cases, each one model call graded
+  by `equals` on the final text: c-a expects `SYN-ANSWER-A`, c-b
+  `SYN-ANSWER-B`. A passing answer reports 100 + 10 tokens, a wrong one
+  (`SYN-WRONG`) 200 + 20. Cost per call: model-a 1.2 (pass) or 2.4
+  (wrong); model-b 0.6.
+
+
+  Run 1, `eval-base`, one repeat, no baseline (control: no `baseline` in
+  its report): cell 0 c-a pass, c-b wrong → pass rate 0.5, variance 0,
+  330 tokens, 3.6 USD; cell 1 both pass → 1, 0, 220 tokens, 1.2 USD.
+
+
+  Run 2, `eval-candidate`, two repeats, `baseline: eval-base`: cell 0
+  (repeat 1: c-a pass, c-b pass; repeat 2: c-a wrong, c-b pass) → pass
+  rate 3/4 = 0.75; variance = mean over cases of the variance of each
+  case's 0/1 results across repeats = mean(0.25, 0) = 0.125; 110 + 110 +
+  220 + 110 = 550 tokens; 1.2 + 1.2 + 2.4 + 1.2 = 6 USD. Cell 1 all pass
+  → 1, variance 0, 440 tokens, 2.4 USD. Baseline difference per cell:
+  0.75 − 0.5 = 0.25 and 1 − 1 = 0 (EVAL-080, EVAL-081 amendment
+  2026-11-02). Live runs replay nothing, so each cell's divergences are
+  empty; no gate is configured and no case is critical, so the gate
+  passes with no failures.
+
+
+  Readings: variance is the population variance (p(1 − p) for 0/1
+  results), the amendment's "variance of their 0/1 pass results"; a
+  report of an earlier run in the same fixture is the baseline its run ID
+  names; scripted responses are consumed cell by cell, then repeat, then
+  case, in declared order; results are listed in that order. A cell's
+  tokens are `inputTokens + outputTokens` over its sessions (PROV-071).
+  Scripted provider responses: scripted-a 6 (run 1: 2, run 2: 4),
+  scripted-b 6. Stubs: none.
+
+
+  Report divergences (EVAL-062, EVAL-063) are non-empty only for
+  replayed cases; this fixture asserts the empty divergences of a live
+  run, and `eval/run-replay-divergences.yaml` the non-empty ones.
+requirements: [EVAL-080]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: eval
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+        priceTable:
+          currency: USD
+          models:
+            - { provider: scripted-a, name: model-a, input: 10000, cachedInput: 10000, output: 20000, reasoning: 20000 }
+            - { provider: scripted-b, name: model-b, input: 5000, cachedInput: 5000, output: 10000, reasoning: 10000 }
+  tenants:
+    - id: eval-1
+      principals:
+        - { id: ep1, subject: eval-user-1, assurance: multi_factor }
+  providers:
+    scripted-a:
+      responses:
+        # run 1, cell 0: c-a pass, c-b wrong
+        - parts: [{ type: text, text: "SYN-ANSWER-A" }]
+          usage: { inputTokens: 100, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "SYN-WRONG" }]
+          usage: { inputTokens: 200, outputTokens: 20, cachedInputTokens: 0, reasoningTokens: 0 }
+        # run 2, cell 0, repeat 1: c-a pass, c-b pass
+        - parts: [{ type: text, text: "SYN-ANSWER-A" }]
+          usage: { inputTokens: 100, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "SYN-ANSWER-B" }]
+          usage: { inputTokens: 100, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        # run 2, cell 0, repeat 2: c-a wrong, c-b pass
+        - parts: [{ type: text, text: "SYN-WRONG" }]
+          usage: { inputTokens: 200, outputTokens: 20, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "SYN-ANSWER-B" }]
+          usage: { inputTokens: 100, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      responses:
+        # run 1, cell 1
+        - parts: [{ type: text, text: "SYN-ANSWER-A" }]
+          usage: { inputTokens: 100, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "SYN-ANSWER-B" }]
+          usage: { inputTokens: 100, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        # run 2, cell 1, repeats 1 and 2
+        - parts: [{ type: text, text: "SYN-ANSWER-A" }]
+          usage: { inputTokens: 100, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "SYN-ANSWER-B" }]
+          usage: { inputTokens: 100, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "SYN-ANSWER-A" }]
+          usage: { inputTokens: 100, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "SYN-ANSWER-B" }]
+          usage: { inputTokens: 100, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  # 0: baseline run
+  - action: evalRun
+    run:
+      schemaVersion: "0.1.0"
+      id: eval-base
+      tenant: eval-1
+      deployment: test@1
+      cases: [c-a, c-b]
+      matrix:
+        cells:
+          - { model: { provider: scripted-a, name: model-a }, profile: default@1 }
+          - { model: { provider: scripted-b, name: model-b }, profile: default@1 }
+      repeats: 1
+    cases:
+      - schemaVersion: "0.1.0"
+        id: c-a
+        persona: assistant@1
+        principal: { subject: eval-user-1 }
+        inputs:
+          - [{ type: text, text: "Answer A" }]
+        graders:
+          - { kind: schema, equals: "SYN-ANSWER-A" }
+      - schemaVersion: "0.1.0"
+        id: c-b
+        persona: assistant@1
+        principal: { subject: eval-user-1 }
+        inputs:
+          - [{ type: text, text: "Answer B" }]
+        graders:
+          - { kind: schema, equals: "SYN-ANSWER-B" }
+    expect:
+      ok: true
+      report:
+        runId: eval-base
+        snapshot: { $regex: "^sha256:[0-9a-f]{64}$" }
+        baseline: { $absent: true }
+        cells:
+          - model: { provider: scripted-a, name: model-a }
+            profile: default@1
+            passRate: 0.5
+            variance: 0
+            tokens: 330
+            cost: { amount: 3.6, currency: USD }
+            divergences: []
+            results:
+              - { caseId: c-a, repeat: 1, passed: true, graders: [{ kind: schema, passed: true }] }
+              - { caseId: c-b, repeat: 1, passed: false, graders: [{ kind: schema, passed: false }] }
+          - model: { provider: scripted-b, name: model-b }
+            profile: default@1
+            passRate: 1
+            variance: 0
+            tokens: 220
+            cost: { amount: 1.2, currency: USD }
+            divergences: []
+            results:
+              - { caseId: c-a, repeat: 1, passed: true }
+              - { caseId: c-b, repeat: 1, passed: true }
+        gate: { passed: true, failures: [] }
+  # 1: candidate run against the baseline
+  - action: evalRun
+    run:
+      schemaVersion: "0.1.0"
+      id: eval-candidate
+      tenant: eval-1
+      deployment: test@1
+      cases: [c-a, c-b]
+      matrix:
+        cells:
+          - { model: { provider: scripted-a, name: model-a }, profile: default@1 }
+          - { model: { provider: scripted-b, name: model-b }, profile: default@1 }
+      repeats: 2
+      baseline: eval-base
+    cases:
+      - schemaVersion: "0.1.0"
+        id: c-a
+        persona: assistant@1
+        principal: { subject: eval-user-1 }
+        inputs:
+          - [{ type: text, text: "Answer A" }]
+        graders:
+          - { kind: schema, equals: "SYN-ANSWER-A" }
+      - schemaVersion: "0.1.0"
+        id: c-b
+        persona: assistant@1
+        principal: { subject: eval-user-1 }
+        inputs:
+          - [{ type: text, text: "Answer B" }]
+        graders:
+          - { kind: schema, equals: "SYN-ANSWER-B" }
+    expect:
+      ok: true
+      report:
+        runId: eval-candidate
+        snapshot: { $regex: "^sha256:[0-9a-f]{64}$" }
+        cells:
+          - model: { provider: scripted-a, name: model-a }
+            profile: default@1
+            passRate: 0.75
+            variance: 0.125
+            tokens: 550
+            cost: { amount: 6, currency: USD }
+            divergences: []
+            results:
+              - { caseId: c-a, repeat: 1, passed: true, graders: [{ kind: schema, passed: true }] }
+              - { caseId: c-b, repeat: 1, passed: true, graders: [{ kind: schema, passed: true }] }
+              - { caseId: c-a, repeat: 2, passed: false, graders: [{ kind: schema, passed: false }] }
+              - { caseId: c-b, repeat: 2, passed: true, graders: [{ kind: schema, passed: true }] }
+          - model: { provider: scripted-b, name: model-b }
+            profile: default@1
+            passRate: 1
+            variance: 0
+            tokens: 440
+            cost: { amount: 2.4, currency: USD }
+            divergences: []
+            results:
+              - { caseId: c-a, repeat: 1, passed: true }
+              - { caseId: c-b, repeat: 1, passed: true }
+              - { caseId: c-a, repeat: 2, passed: true }
+              - { caseId: c-b, repeat: 2, passed: true }
+        baseline: { runId: eval-base, passRateDelta: [0.25, 0] }
+        gate: { passed: true, failures: [] }
+expect:
+  providerRequests:
+    scripted-a: { count: 6 }
+    scripted-b: { count: 6 }

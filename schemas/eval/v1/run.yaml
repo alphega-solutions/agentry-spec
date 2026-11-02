@@ -1,0 +1,55 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://alphega.io/agentry/schemas/eval/run/v1.json
+title: Eval run
+description: >-
+  An eval run (EVAL-044): which cases, in which dedicated tenant and
+  deployment (EVAL-040), across which models and profiles, how many times,
+  against which snapshot for replayed cases (EVAL-060), with which hook mode
+  (EVAL-063), compared with which baseline, and gated how (EVAL-081).
+type: object
+additionalProperties: false
+required: [schemaVersion, id, tenant, deployment, cases, matrix, repeats]
+properties:
+  schemaVersion: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/contractVersion" }
+  id: { type: string, minLength: 1 }
+  tenant: { type: string, minLength: 1, description: The dedicated eval tenant (EVAL-040). }
+  deployment:
+    description: The eval deployment; its `environment` must be `eval` (EVAL-040 as amended).
+    $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/artifactRef"
+  cases:
+    type: array
+    minItems: 1
+    items: { type: string, description: Eval case IDs. }
+  matrix:
+    type: object
+    additionalProperties: false
+    required: [cells]
+    properties:
+      cells:
+        description: Each cell is a model and a harness profile to run every case under.
+        type: array
+        minItems: 1
+        items:
+          type: object
+          additionalProperties: false
+          required: [model, profile]
+          properties:
+            model: { $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/modelSelection" }
+            profile: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/artifactRef" }
+  repeats: { type: integer, minimum: 1 }
+  replay:
+    type: object
+    additionalProperties: false
+    properties:
+      snapshot:
+        description: "`recorded` replays against each bundle's own snapshot; `candidate` against the run's current configuration; a hash against that stored snapshot."
+        oneOf:
+          - enum: [recorded, candidate]
+          - $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/sha256"
+      hookMode: { enum: [reEvaluate, replayDecisions], default: reEvaluate }
+  baseline: { type: string, description: Run ID of the report to compare with (EVAL-080). }
+  gate:
+    type: object
+    additionalProperties: false
+    properties:
+      minPassRate: { type: number, minimum: 0, maximum: 1, description: Minimum pass rate in every cell. }
