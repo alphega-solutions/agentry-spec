@@ -11,7 +11,7 @@ description: >-
     accepted.
   - `ask_relay` declared without egress → rejected, because egress is
     reachable transitively; `egress: true` → accepted.
-requirements: [CFG-042]
+requirements: [CFG-042, ORCH-020]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:

@@ -1,0 +1,150 @@
+schemaVersion: "0.1.0"
+id: orchestration.limit-depth-effective-min
+title: A child's effective `maxDepth` is the smaller of its own profile's value and its parent's effective value
+description: >-
+  `echo@1` (profile default@1, no `delegation`, so 2) allows only
+  `ask_echo` (→ echo). `relay@1` (profile `shallow@1`, `delegation.maxDepth:
+  1`) allows only `ask_echo`. The assistant allows both agent tools.
+
+  - $x — parent's effective value is the smaller: the session-creating
+    run request tightens `delegation.maxDepth` to 1 (CFG-101 as amended
+    2026-11-01). The root calls ask_echo: depth 1 ≤ 1, the child is
+    created. The child's own profile allows 2, but its effective
+    maxDepth is min(2, 1) = 1, so its ask_echo call (depth 2) is stopped
+    with `agentry.delegation.depth`.
+  - $y — child's own value is the smaller: the root's effective value is
+    the default 2. The root calls ask_relay: the relay child is created at
+    depth 1. Its effective maxDepth is min(1, 2) = 1, so its ask_echo
+    call (depth 2) is stopped, although the root's limit alone would allow
+    it (`orchestration.limit-depth-cycle-audited` shows depth 2 created
+    under the default).
+
+  Scripted responses (scripted-a, in call order): 1 $x root step 1; 2 $x
+  child step 1 (stopped); 3 $x child step 2; 4 $x root step 2; 5 $y root
+  step 1; 6 $y relay step 1 (stopped); 7 $y relay step 2; 8 $y root step 2.
+requirements: [ORCH-030]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - { kind: HarnessProfile, id: shallow, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, budget: { tokens: 100000 }, timeouts: { run: PT5M, tool: PT30S }, delegation: { maxDepth: 1 } }
+      - { kind: Tool, id: ask_echo, version: 1, schemaVersion: "0.1.0", description: Ask the echo persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: read, binding: { kind: agent, persona: echo@1 } }
+      - { kind: Tool, id: ask_relay, version: 1, schemaVersion: "0.1.0", description: Ask the relay persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: read, binding: { kind: agent, persona: relay@1 } }
+      - { kind: Persona, id: echo, version: 1, schemaVersion: "0.1.0", instructions: "You pass the task on.", tools: [ask_echo@1], defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a } }
+      - { kind: Persona, id: relay, version: 1, schemaVersion: "0.1.0", instructions: "You relay the task to echo.", tools: [ask_echo@1], defaultProfile: shallow@1, allowedProfiles: [shallow@1], model: { provider: scripted-a, name: model-a } }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, ask_echo@1, ask_relay@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # 1: $x root, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_echo, arguments: { task: "x level 1" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 2: $x child (depth 1), step 1 — would create depth 2
+        - parts: [{ type: tool_call, callId: e1, tool: ask_echo, arguments: { task: "x level 2" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 3: $x child, step 2
+        - parts: [{ type: text, text: "x stopped at 1." }]
+          usage: { inputTokens: 30, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 4: $x root, step 2
+        - parts: [{ type: text, text: "x done." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 5: $y root, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_relay, arguments: { task: "y level 1" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 6: $y relay child (depth 1), step 1 — would create depth 2
+        - parts: [{ type: tool_call, callId: r1, tool: ask_echo, arguments: { task: "y level 2" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 7: $y relay child, step 2
+        - parts: [{ type: text, text: "y stopped at 1." }]
+          usage: { inputTokens: 30, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 8: $y root, step 2
+        - parts: [{ type: text, text: "y done." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $x
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    overrides: { delegation: { maxDepth: 1 } }
+    input: [{ type: text, text: "Pass x down" }]
+    capture:
+      - event: { type: tool.call, payload: { callId: c1, tool: ask_echo } }
+        bind: { payload.childSessionId: $xChild }
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $y
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Pass y down" }]
+    capture:
+      - event: { type: tool.call, payload: { callId: c1, tool: ask_relay } }
+        bind: { payload.childSessionId: $yChild }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $x:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, payload: { overrides: { delegation: { maxDepth: 1 } } } }
+          - { type: tool.call, payload: { callId: c1, tool: ask_echo, childSessionId: $xChild } }
+          - { type: tool.result, payload: { callId: c1, result: { ok: { output: { text: "x stopped at 1." } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: policy.decision, payload: { kind: depth } }
+    $xChild:
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, payload: { persona: echo@1, profile: default@1, parent: { sessionId: $x, depth: 1 } } }
+          - { type: policy.decision, payload: { kind: depth, outcome: block, callId: e1, tool: ask_echo } }
+          - { type: tool.result, payload: { callId: e1, result: { error: { category: policy, code: agentry.delegation.depth } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call }
+    $y:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: ask_relay, childSessionId: $yChild } }
+          - { type: tool.result, payload: { callId: c1, result: { ok: { output: { text: "y stopped at 1." } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: policy.decision, payload: { kind: depth } }
+    $yChild:
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, payload: { persona: relay@1, profile: shallow@1, parent: { sessionId: $y, depth: 1 } } }
+          - { type: policy.decision, payload: { kind: depth, outcome: block, callId: r1, tool: ask_echo } }
+          - { type: tool.result, payload: { callId: r1, result: { error: { category: policy, code: agentry.delegation.depth } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call }
+  providerRequests:
+    scripted-a: { count: 8 }

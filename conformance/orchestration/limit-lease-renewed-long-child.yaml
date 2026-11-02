@@ -1,0 +1,151 @@
+schemaVersion: "0.1.0"
+id: orchestration.limit-lease-renewed-long-child
+title: The parent's run lease keeps being renewed while a child runs longer than the lease
+description: >-
+  The runner's run lease is PT1M (`limits.leaseTtl`). In turn 2 the parent
+  calls ask_helper; the helper child calls lookup twice, each answering
+  after 90 s on the virtual clock (lookup's `timeoutMs` is raised to 120 s
+  and ask_helper's to 600 s so no timeout applies). The child therefore
+  runs for 180 s, three lease periods.
+
+  At +90s, once the child's second lookup `tool.call` is persisted, a
+  second run() arrives on the parent. Had the parent's lease not been
+  renewed since the run started at +0s, it would have lapsed at +60s and
+  the run would be orphaned, so this run() would first perform recovery
+  (HITL-092). Because the lease is renewed while the child runs
+  (ORCH-045), the parent run is still current: the run() is refused with
+  `conflict` (CORE-051) and persists nothing. The parent run then
+  completes normally: no recovery, no second `run.started` for turn 2,
+  each lookup dispatched exactly once, and the turn responds at +180s.
+
+  Not asserted: the parent checkpoint's lease expiry while the child runs.
+  The fixture format cannot read a port mid-action without a crash, and
+  no crash point falls inside a running child.
+
+  Scripted responses (scripted-a, in call order): 1 parent turn 1; 2
+  parent turn 2 step 1; 3 child step 1; 4 child step 2; 5 child step 3; 6
+  parent turn 2 step 2. The refused run() consumes none.
+requirements: [ORCH-045]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: lookup
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Look up a record by key.
+        input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }
+        effect: read
+        timeoutMs: 120000
+        binding: { kind: native, handler: test.lookup }
+      - { kind: Persona, id: helper, version: 1, schemaVersion: "0.1.0", instructions: "You look things up.", tools: [lookup@1], defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a } }
+      - { kind: Tool, id: ask_helper, version: 1, schemaVersion: "0.1.0", description: Ask the helper persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: read, timeoutMs: 600000, binding: { kind: agent, persona: helper@1 } }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, ask_helper@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # 1: parent, turn 1
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 2: parent, turn 2 step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_helper, arguments: { task: "Find a and b" } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 3: child, step 1
+        - parts: [{ type: tool_call, callId: h1, tool: lookup, arguments: { key: a } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 4: child, step 2
+        - parts: [{ type: tool_call, callId: h2, tool: lookup, arguments: { key: b } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 5: child, step 3
+        - parts: [{ type: text, text: "a holds A and b holds B." }]
+          usage: { inputTokens: 40, outputTokens: 7, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 6: parent, turn 2 step 2
+        - parts: [{ type: text, text: "The helper found A and B." }]
+          usage: { inputTokens: 40, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - { ok: { output: { value: "A" } }, delayMs: 90000 }
+        - { ok: { output: { value: "B" } }, delayMs: 90000 }
+      update_record: []
+  limits:
+    leaseTtl: PT1M
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - concurrently:
+      - action: run
+        session: $s
+        principal: p1
+        input: [{ type: text, text: "Have the helper find a and b" }]
+        capture:
+          - event: { type: tool.call, payload: { callId: c1, tool: ask_helper } }
+            bind: { payload.childSessionId: $child }
+        expect: { ok: true, endReason: responded }
+      - action: run
+        session: $s
+        principal: p1
+        input: [{ type: text, text: "SYNTHETIC-INTRUDER-0045" }]
+        startAfter: { type: tool.call, payload: { callId: h2, tool: lookup } }
+        expect: { ok: false, error: { category: conflict }, newEvents: 0 }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: run.started, runId: $r2, payload: { kind: run } }
+          - { type: tool.call, runId: $r2, payload: { callId: c1, tool: ask_helper, childSessionId: $child } }
+          - { type: tool.result, runId: $r2, timestamp: { $regex: "^2026-01-01T00:03:00" }, payload: { callId: c1, result: { ok: { output: { text: "a holds A and b holds B." } } } } }
+          - { type: run.ended, runId: $r2, payload: { reason: responded } }
+      absentEvents:
+        - { type: escalation.raised }
+        - { type: turn.started, turn: 3 }
+    $child:
+      state: closed
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, timestamp: { $regex: "^2026-01-01T00:00:00" }, payload: { callId: h1 } }
+          - { type: tool.call, timestamp: { $regex: "^2026-01-01T00:01:30" }, payload: { callId: h2 } }
+          - { type: run.ended, timestamp: { $regex: "^2026-01-01T00:03:00" }, payload: { reason: responded } }
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $count: { of: { type: run.started }, equals: 2 }
+  stubCalls:
+    lookup:
+      - { arguments: { key: a }, context: { sessionId: $child }, completed: true }
+      - { arguments: { key: b }, context: { sessionId: $child }, completed: true }
+  providerRequests:
+    scripted-a: { count: 6 }
+  noPersistedContent: ["SYNTHETIC-INTRUDER-0045"]

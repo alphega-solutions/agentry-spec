@@ -1,0 +1,111 @@
+schemaVersion: "0.1.0"
+id: orchestration.limit-deadline-child-capped
+title: A child's wall-clock limit is capped by the parent call's remaining deadline
+description: >-
+  ask_helper declares `timeoutMs: 10000`; the helper child's own profile
+  (default@1) has `timeouts.run: PT5M` and `timeouts.tool: PT30S`. The
+  child calls lookup, whose stub hangs.
+
+  The child's limit is min(PT5M, the 10 s remaining on the parent call)
+  = 10 s (ORCH-043). At +10s the child's run ends `timeout`, the hanging
+  lookup receives the cancellation signal, and the child's outcome
+  reaches the parent as ask_helper's result: `unavailable`
+  `agentry.delegation.limit`, `retryable: false` (ORCH-050). The parent
+  model receives it and the parent run responds (ORCH-051). Uncapped, the
+  child would instead have waited for lookup's own 30 s timeout.
+
+  Reading: at +10s both the child's capped limit and the parent call's own
+  deadline elapse. The child's limit is what ORCH-043 sets for the
+  delegated work, so the result is the delegation outcome
+  (`agentry.delegation.limit`), not the parent's own tool timeout
+  (`agentry.tool.timeout`).
+
+  Scripted responses (scripted-a, in call order): 1 parent step 1; 2 child
+  step 1 (lookup hangs); 3 parent step 2.
+requirements: [ORCH-043]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - { kind: Persona, id: helper, version: 1, schemaVersion: "0.1.0", instructions: "You look things up.", tools: [lookup@1], defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a } }
+      - { kind: Tool, id: ask_helper, version: 1, schemaVersion: "0.1.0", description: Ask the helper persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: read, timeoutMs: 10000, binding: { kind: agent, persona: helper@1 } }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, ask_helper@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # 1: parent, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_helper, arguments: { task: "Find a" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 2: child, step 1 (lookup hangs)
+        - parts: [{ type: tool_call, callId: h1, tool: lookup, arguments: { key: a } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 3: parent, step 2
+        - parts: [{ type: text, text: "The helper ran out of time." }]
+          usage: { inputTokens: 30, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - hang: true
+      update_record: []
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Have the helper find a" }]
+    capture:
+      - event: { type: tool.call, payload: { callId: c1, tool: ask_helper } }
+        bind: { payload.childSessionId: $child }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: ask_helper, childSessionId: $child } }
+          - type: tool.result
+            timestamp: { $regex: "^2026-01-01T00:00:10" }
+            payload:
+              callId: c1
+              tool: ask_helper
+              result: { error: { category: unavailable, code: agentry.delegation.limit, retryable: false } }
+          - { type: model.request, step: 2 }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.result, payload: { result: { error: { code: agentry.tool.timeout } } } }
+    $child:
+      state: closed
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: h1, tool: lookup } }
+          - { type: run.ended, timestamp: { $regex: "^2026-01-01T00:00:10" }, payload: { reason: timeout } }
+  stubCalls:
+    lookup:
+      - { arguments: { key: a }, context: { sessionId: $child }, cancelled: true, completed: false }
+  providerRequests:
+    scripted-a: { count: 3 }

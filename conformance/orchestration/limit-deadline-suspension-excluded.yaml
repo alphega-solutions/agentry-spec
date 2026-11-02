@@ -1,0 +1,132 @@
+schemaVersion: "0.1.0"
+id: orchestration.limit-deadline-suspension-excluded
+title: Time a delegation chain spends suspended does not count toward the parent call's deadline or the child's capped limit
+description: >-
+  ask_writer (mutating) declares `timeoutMs: 10000`, so the writer child's
+  wall-clock limit is 10 s (ORCH-043). The child calls lookup (6 s on the
+  virtual clock), which taints it, then update_record, which the taint
+  rule escalates at +6s. The child suspends, the parent mirrors the
+  escalation (ORCH-060), and the root run ends `escalated`.
+
+  The clock advances one hour — far beyond the 10 s deadline, within
+  `suspendedTtl` (PT72H). r1 approves the mirrored action on the root.
+  The child resumes and update_record runs for 3 s, so ask_writer's
+  result is recorded at +1h 3s: 9 s of active time in all, under the 10 s
+  limit, but 3,603 s of wall-clock time since the call. Because suspended time is excluded
+  (ORCH-044), the child completes and ask_writer's result is `ok` with the
+  child's text; there is no `agentry.delegation.limit` or
+  `agentry.tool.timeout` result anywhere, and the parent run responds.
+
+  Scripted responses (scripted-a, in call order): 1 parent step 1; 2 child
+  step 1 (lookup); 3 child step 2 (update_record → escalates); after
+  resume, 4 child step 3; 5 parent step 2.
+requirements: [ORCH-044]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - { kind: Persona, id: writer, version: 1, schemaVersion: "0.1.0", instructions: "You update records.", tools: [lookup@1, update_record@1], defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a } }
+      - { kind: Tool, id: ask_writer, version: 1, schemaVersion: "0.1.0", description: Ask the writer persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: mutating, timeoutMs: 10000, binding: { kind: agent, persona: writer@1 } }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, ask_writer@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        # 1: parent, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_writer, arguments: { task: "Set a to b" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 2: child, step 1 (lookup, 6 s)
+        - parts: [{ type: tool_call, callId: h1, tool: lookup, arguments: { key: a } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 3: child, step 2 (tainted → escalates)
+        - parts: [{ type: tool_call, callId: h2, tool: update_record, arguments: { key: a, value: b } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 4: child, step 3 (after resume)
+        - parts: [{ type: text, text: "Set a to b." }]
+          usage: { inputTokens: 40, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 5: parent, step 2
+        - parts: [{ type: text, text: "The writer set a to b." }]
+          usage: { inputTokens: 40, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - { ok: { output: { value: "A" } }, delayMs: 6000 }
+      update_record:
+        - { ok: { output: { updated: true } }, delayMs: 3000 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Have the writer set a to b" }]
+    capture:
+      - event: { type: tool.call, payload: { callId: c1, tool: ask_writer } }
+        bind: { payload.childSessionId: $child }
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  - clock: { advance: PT1H }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000803", pendingActionId: $act, type: approve }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            runId: $r1
+            timestamp: { $regex: "^2026-01-01T00:00:06" }
+            payload: { escalation: { pendingActions: [{ id: $act, source: taint, delegated: true, chain: [$child] }] } }
+          - { type: run.ended, runId: $r1, payload: { reason: escalated } }
+          - { type: escalation.resolved, runId: $r2 }
+          - type: tool.result
+            runId: $r2
+            timestamp: { $regex: "^2026-01-01T01:00:03" }
+            payload: { callId: c1, tool: ask_writer, result: { ok: { output: { text: "Set a to b." } } } }
+          - { type: run.ended, runId: $r2, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.result, payload: { result: { error: { $any: true } } } }
+    $child:
+      state: closed
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, timestamp: { $regex: "^2026-01-01T01:00:00" }, payload: { callId: h2, tool: update_record } }
+          - { type: tool.result, timestamp: { $regex: "^2026-01-01T01:00:03" }, payload: { callId: h2, result: { ok: { output: { updated: true } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: run.ended, payload: { reason: timeout } }
+  stubCalls:
+    lookup: [{ arguments: { key: a }, context: { sessionId: $child }, completed: true }]
+    update_record: [{ arguments: { key: a, value: b }, context: { sessionId: $child }, completed: true }]
+  providerRequests:
+    scripted-a: { count: 5 }
