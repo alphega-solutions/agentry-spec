@@ -1,10 +1,10 @@
 schemaVersion: "0.1.0"
 id: hitl.raise-hook-points
-title: A hook escalation at beforeToolCall is a `tool_call` action allowing approve, reject and edit; at a content point it is a `content` action, allowing edit only at beforeResponse
+title: A hook escalation at beforeToolCall is a `tool_call` action allowing approve, reject and edit; at any other point it is a `content` action, allowing edit only at beforeResponse
 description: >-
-  Three native hooks are required, each able to escalate: `tool-gate`
-  (beforeToolCall), `model-gate` (beforeModelCall) and `resp-gate`
-  (beforeResponse). Native hook behaviours are consumed in invocation
+  Four native hooks are required, each able to escalate: `tool-gate`
+  (beforeToolCall), `model-gate` (beforeModelCall), `after-gate`
+  (afterToolCall) and `resp-gate` (beforeResponse). Native hook behaviours are consumed in invocation
   order across sessions.
 
   - $sTool: model-gate continues, the model requests update_record (first
@@ -19,6 +19,10 @@ description: >-
   - $sResp: model-gate continues, the model answers, resp-gate escalates
     with `test.gate.response` → one `content` action at `beforeResponse`,
     allowing exactly approve, reject and edit.
+  - $sAfter: model-gate and tool-gate continue, lookup is dispatched,
+    after-gate escalates its result with `test.gate.result` → one
+    `content` action at `afterToolCall` (not a `tool_call` action: only
+    beforeToolCall raises those), allowing exactly approve and reject.
 
   The allowed sets are then exercised with decide(), which records
   without resuming (HITL-040): a `confirm` on the tool_call action and an
@@ -55,6 +59,14 @@ setup:
         timeoutMs: 1000
         source: { kind: native, handler: test.hook.model-gate }
       - kind: Hook
+        id: after-gate
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [afterToolCall]
+        results: [escalate]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.after-gate }
+      - kind: Hook
         id: resp-gate
         version: 1
         schemaVersion: "0.1.0"
@@ -72,7 +84,7 @@ setup:
         fallbackMessage: "This request was blocked."
         defaultProfile: default@1
         allowedProfiles: [default@1]
-        requiredHooks: [tool-gate@1, model-gate@1, resp-gate@1]
+        requiredHooks: [tool-gate@1, model-gate@1, after-gate@1, resp-gate@1]
         model:
           provider: scripted-a
           name: model-a
@@ -92,16 +104,25 @@ setup:
         # $sResp
         - parts: [{ type: text, text: "Draft reply SYN-0001." }]
           usage: { inputTokens: 20, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sAfter
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k4 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
   stubs:
     tools:
       update_record: []
+      lookup:
+        - ok: { output: { value: "SYN-RESULT-0001" } }
     nativeHooks:
       model-gate:
         - { result: continue }
         - { result: escalate, reasonCode: test.gate.model }
         - { result: continue }
+        - { result: continue }
       tool-gate:
         - { result: escalate, reasonCode: test.gate.tool }
+        - { result: continue }
+      after-gate:
+        - { result: escalate, reasonCode: test.gate.result }
       resp-gate:
         - { result: escalate, reasonCode: test.gate.response }
 script:
@@ -134,6 +155,13 @@ script:
     capture:
       - event: { type: escalation.raised }
         bind: { payload.escalation.pendingActions.0.id: $actResp }
+    expect: { ok: true, endReason: escalated }
+  - action: run
+    bind: $sAfter
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k4" }]
     expect: { ok: true, endReason: escalated }
   - action: decide
     session: $sTool
@@ -239,13 +267,39 @@ expect:
                     allowedDecisions: { $all: [{ $len: 3 }, { $contains: [approve, reject, edit] }] }
                     reviewerRequirements: { requiredApprovals: 1, selfApprovalAllowed: false, rules: [] }
           - { type: run.ended, payload: { reason: escalated } }
+    $sAfter:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: lookup } }
+          - { type: hook.decision, payload: { hook: after-gate@1, point: afterToolCall, result: escalate, reasonCode: test.gate.result } }
+          - type: escalation.raised
+            payload:
+              escalation:
+                sources: [hook]
+                reasonCodes: [test.gate.result]
+                pendingActions:
+                  - kind: content
+                    source: hook
+                    hook: after-gate@1
+                    reasonCode: test.gate.result
+                    point: afterToolCall
+                    contentRef: { $any: true }
+                    callId: { $absent: true }
+                    allowedDecisions: { $all: [{ $len: 2 }, { $contains: [approve, reject] }] }
+          - { type: run.ended, payload: { reason: escalated } }
+      absentEvents:
+        - { type: model.request, step: 2 }
   stubCalls:
-    model-gate: { count: 3 }
-    tool-gate: { count: 1 }
+    model-gate: { count: 4 }
+    tool-gate: { count: 2 }
+    after-gate: { count: 1 }
     resp-gate: { count: 1 }
     update_record: { count: 0 }
+    lookup: [{ arguments: { key: k4 } }]
   providerRequests:
-    scripted-a: { count: 2 }
+    scripted-a: { count: 3 }
   ports:
     auditLog:
       t1:
