@@ -9,7 +9,10 @@ description: >-
   applied (no rewrite or annotate decision), an `error` event with source
   hook is emitted, and the failure is treated as block: no model call, run
   `blocked`, fallback delivered. $sControl: a declared-compatible
-  `continue` reaches the model.
+  `continue` reaches the model. Each failure's `error` event has code
+  agentry.hook.invalid_result, category fatal, retryable false, source
+  hook, and its block emits hook.decision {result: block, reasonCode:
+  agentry.hook.invalid_result} (HOOK-051 as amended 2026-11-01).
 requirements: [HOOK-020, HOOK-050, HOOK-051]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -109,7 +112,7 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: error, payload: { error: { source: hook } } }
+          - { type: error, payload: { error: { code: agentry.hook.invalid_result, category: fatal, retryable: false, source: hook } } }
           - { type: run.ended, payload: { reason: blocked } }
       absentEvents:
         - { type: model.request }
@@ -118,7 +121,7 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: error, payload: { error: { source: hook } } }
+          - { type: error, payload: { error: { code: agentry.hook.invalid_result, category: fatal, retryable: false, source: hook } } }
           - { type: run.ended, payload: { reason: blocked } }
       absentEvents:
         - { type: model.request }
@@ -131,6 +134,19 @@ expect:
           - { type: run.ended, payload: { reason: responded } }
       absentEvents:
         - { type: error }
+  ports:
+    eventLog:
+      t1:
+        $sRewrite:
+          $all:
+            - $count: { of: { type: hook.decision }, equals: 1 }
+            - $count: { of: { type: hook.decision, payload: { hook: gate@1, point: beforeModelCall, result: block, reasonCode: agentry.hook.invalid_result } }, equals: 1 }
+        $sAnnotate:
+          $all:
+            - $count: { of: { type: hook.decision }, equals: 1 }
+            - $count: { of: { type: hook.decision, payload: { hook: gate@1, point: beforeModelCall, result: block, reasonCode: agentry.hook.invalid_result } }, equals: 1 }
+        $sControl:
+          $count: { of: { type: hook.decision }, equals: 0 }
   stubCalls:
     gate: { count: 3 }
   providerRequests:

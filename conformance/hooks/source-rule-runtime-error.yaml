@@ -13,6 +13,13 @@ description: >-
   - $sPresent (control): the model calls `update_record` with
     `value: v1`; the key exists, the expression is false → `continue`: no
     error, no hook.decision, the call is dispatched.
+  The failure's `error` event has code agentry.hook.rule_error, category
+  fatal, retryable false, source hook; the block emits hook.decision
+  {result: block, reasonCode: agentry.hook.rule_error} (never the rule's
+  own reason code), and the model receives the generic hook error
+  {code: agentry.hook.blocked, category: policy, retryable: false, source:
+  hook, message: "Blocked by policy."} with no details (HOOK-051, HOOK-023
+  as amended 2026-11-01).
 requirements: [HOOK-113, HOOK-050, HOOK-051]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -86,7 +93,7 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: error, payload: { error: { source: hook } } }
+          - { type: error, payload: { error: { code: agentry.hook.rule_error, category: fatal, retryable: false, source: hook } } }
           - { type: tool.result, payload: { callId: c1, result: { error: { category: policy } } } }
           - { type: model.request, step: 2 }
           - { type: run.ended, payload: { reason: responded } }
@@ -102,6 +109,13 @@ expect:
       absentEvents:
         - { type: error }
         - { type: hook.decision }
+  ports:
+    eventLog:
+      t1:
+        $sMissing:
+          $all:
+            - $count: { of: { type: hook.decision }, equals: 1 }
+            - $count: { of: { type: hook.decision, payload: { hook: value-guard@1, point: beforeToolCall, result: block, reasonCode: agentry.hook.rule_error } }, equals: 1 }
   stubCalls:
     lookup: { count: 0 }
     update_record: [{ arguments: { key: k1, value: v1 } }]
@@ -113,6 +127,15 @@ expect:
             - role: tool
               parts:
                 $contains:
-                  - { type: tool_result, callId: c1, result: { error: { category: policy } } }
+                  - type: tool_result
+                    callId: c1
+                    result:
+                      error:
+                        code: agentry.hook.blocked
+                        category: policy
+                        retryable: false
+                        source: hook
+                        message: "Blocked by policy."
+                        details: { $absent: true }
       - {}
       - {}

@@ -11,7 +11,11 @@ description: >-
   - $sTele: tele-default, purpose telemetry with no failureMode → failOpen
     → continue. (A telemetry hook can declare only continue and annotate,
     HOOK-002, so HOOK-053 would also make it continue.)
-  Every failure emits an `error` event with source hook (HOOK-051).
+  Every failure emits an `error` event with source hook, retryable false,
+  code agentry.hook.failed and category unavailable (HOOK-051 as amended
+  2026-11-01); the endpoint's own code test.hook.down is never passed
+  through. The block in $sGuard also emits hook.decision {result: block,
+  reasonCode: agentry.hook.failed}; the continues emit no hook.decision.
 requirements: [HOOK-001, HOOK-051]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -135,7 +139,7 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: error, payload: { error: { source: hook } } }
+          - { type: error, payload: { error: { code: agentry.hook.failed, category: unavailable, retryable: false, source: hook } } }
           - { type: run.ended, payload: { reason: blocked } }
       absentEvents:
         - { type: model.request }
@@ -143,16 +147,32 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: error, payload: { error: { source: hook } } }
+          - { type: error, payload: { error: { code: agentry.hook.failed, category: unavailable, retryable: false, source: hook } } }
           - { type: model.request }
           - { type: run.ended, payload: { reason: responded } }
     $sTele:
       events:
         mode: subsequence
         items:
-          - { type: error, payload: { error: { source: hook } } }
+          - { type: error, payload: { error: { code: agentry.hook.failed, category: unavailable, retryable: false, source: hook } } }
           - { type: model.request }
           - { type: run.ended, payload: { reason: responded } }
+  ports:
+    eventLog:
+      t1:
+        $sGuard:
+          $all:
+            - $count: { of: { type: hook.decision }, equals: 1 }
+            - $count: { of: { type: hook.decision, payload: { hook: guard-default@1, point: beforeModelCall, result: block, reasonCode: agentry.hook.failed } }, equals: 1 }
+            - $count: { of: { type: error, payload: { error: { code: test.hook.down } } }, equals: 0 }
+        $sOpen:
+          $all:
+            - $count: { of: { type: hook.decision }, equals: 0 }
+            - $count: { of: { type: error, payload: { error: { code: test.hook.down } } }, equals: 0 }
+        $sTele:
+          $all:
+            - $count: { of: { type: hook.decision }, equals: 0 }
+            - $count: { of: { type: error, payload: { error: { code: test.hook.down } } }, equals: 0 }
   stubCalls:
     guard-default: { count: 1 }
     guard-open: { count: 1 }

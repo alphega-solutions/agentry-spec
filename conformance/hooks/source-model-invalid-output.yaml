@@ -18,7 +18,11 @@ description: >-
   `hook`, then a block (CORE-180): the session's model is never called, the
   run ends `blocked`, and the principal gets the fallback message. The
   control session's model is called and the run responds, with no error.
-requirements: [HOOK-101, HOOK-050]
+  Each failure's `error` event has code agentry.hook.invalid_result,
+  category fatal, retryable false, source hook, and its block emits
+  hook.decision {result: block, reasonCode: agentry.hook.invalid_result}
+  (HOOK-051 as amended 2026-11-01).
+requirements: [HOOK-101, HOOK-050, HOOK-051]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:
@@ -138,7 +142,7 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: error, payload: { error: { source: hook } } }
+          - { type: error, payload: { error: { code: agentry.hook.invalid_result, category: fatal, retryable: false, source: hook } } }
           - { type: run.ended, payload: { reason: blocked } }
       absentEvents:
         - { type: model.request }
@@ -146,7 +150,7 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: error, payload: { error: { source: hook } } }
+          - { type: error, payload: { error: { code: agentry.hook.invalid_result, category: fatal, retryable: false, source: hook } } }
           - { type: run.ended, payload: { reason: blocked } }
       absentEvents:
         - { type: model.request }
@@ -154,7 +158,7 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: error, payload: { error: { source: hook } } }
+          - { type: error, payload: { error: { code: agentry.hook.invalid_result, category: fatal, retryable: false, source: hook } } }
           - { type: run.ended, payload: { reason: blocked } }
       absentEvents:
         - { type: model.request }
@@ -162,7 +166,7 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: error, payload: { error: { source: hook } } }
+          - { type: error, payload: { error: { code: agentry.hook.invalid_result, category: fatal, retryable: false, source: hook } } }
           - { type: run.ended, payload: { reason: blocked } }
       absentEvents:
         - { type: model.request }
@@ -175,6 +179,25 @@ expect:
       absentEvents:
         - { type: error }
         - { type: hook.decision }
+  ports:
+    eventLog:
+      t1:
+        $sText:
+          $all:
+            - $count: { of: { type: hook.decision }, equals: 1 }
+            - $count: { of: { type: hook.decision, payload: { hook: judge@1, point: beforeModelCall, result: block, reasonCode: agentry.hook.invalid_result } }, equals: 1 }
+        $sUnknownJson:
+          $all:
+            - $count: { of: { type: hook.decision }, equals: 1 }
+            - $count: { of: { type: hook.decision, payload: { hook: judge@1, point: beforeModelCall, result: block, reasonCode: agentry.hook.invalid_result } }, equals: 1 }
+        $sUnknownStructured:
+          $all:
+            - $count: { of: { type: hook.decision }, equals: 1 }
+            - $count: { of: { type: hook.decision, payload: { hook: judge@1, point: beforeModelCall, result: block, reasonCode: agentry.hook.invalid_result } }, equals: 1 }
+        $sNoReason:
+          $all:
+            - $count: { of: { type: hook.decision }, equals: 1 }
+            - $count: { of: { type: hook.decision, payload: { hook: judge@1, point: beforeModelCall, result: block, reasonCode: agentry.hook.invalid_result } }, equals: 1 }
   providerRequests:
     scripted-judge: { count: 5 }
     scripted-a: { count: 1 }

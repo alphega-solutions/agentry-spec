@@ -12,6 +12,11 @@ description: >-
     limit → no error, the model is called.
   - $sTele: slow-tele never answers; at 1000 ms it has failed → continue,
     `error` event, the model is called.
+  Each timeout's `error` event has code agentry.hook.timeout, category
+  unavailable, retryable false, source hook (HOOK-051 as amended
+  2026-11-01). The block in $sHang also emits hook.decision {result:
+  block, reasonCode: agentry.hook.timeout}; the continue in $sTele emits
+  no hook.decision.
 requirements: [HOOK-050, HOOK-051]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -125,7 +130,7 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: error, payload: { error: { source: hook } } }
+          - { type: error, payload: { error: { code: agentry.hook.timeout, category: unavailable, retryable: false, source: hook } } }
           - { type: run.ended, payload: { reason: blocked } }
       absentEvents:
         - { type: model.request }
@@ -141,9 +146,20 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: error, payload: { error: { source: hook } } }
+          - { type: error, payload: { error: { code: agentry.hook.timeout, category: unavailable, retryable: false, source: hook } } }
           - { type: model.request }
           - { type: run.ended, payload: { reason: responded } }
+  ports:
+    eventLog:
+      t1:
+        $sHang:
+          $all:
+            - $count: { of: { type: hook.decision }, equals: 1 }
+            - $count: { of: { type: hook.decision, payload: { hook: slow-guard@1, point: beforeModelCall, result: block, reasonCode: agentry.hook.timeout } }, equals: 1 }
+        $sSlow:
+          $count: { of: { type: hook.decision }, equals: 0 }
+        $sTele:
+          $count: { of: { type: hook.decision }, equals: 0 }
   stubCalls:
     slow-guard: { count: 2 }
     slow-tele: { count: 1 }

@@ -6,7 +6,11 @@ description: >-
   both error. $sAnnotateOnly: labeller declares only annotate, so its
   failure is continue (HOOK-053): the model is called. $sBlockable
   (control): labeller-blocking declares annotate and block, so the same
-  failure is a block. Both failures emit an `error` event (HOOK-051).
+  failure is a block. Both failures emit an `error` event with code
+  agentry.hook.failed, category unavailable, retryable false, source hook
+  (HOOK-051 as amended 2026-11-01), never the endpoint's own code
+  test.hook.down. The block also emits hook.decision {result: block,
+  reasonCode: agentry.hook.failed}; the continue emits no hook.decision.
 requirements: [HOOK-053, HOOK-051]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -109,17 +113,29 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: error, payload: { error: { source: hook } } }
+          - { type: error, payload: { error: { code: agentry.hook.failed, category: unavailable, retryable: false, source: hook } } }
           - { type: model.request }
           - { type: run.ended, payload: { reason: responded } }
     $sBlockable:
       events:
         mode: subsequence
         items:
-          - { type: error, payload: { error: { source: hook } } }
+          - { type: error, payload: { error: { code: agentry.hook.failed, category: unavailable, retryable: false, source: hook } } }
           - { type: run.ended, payload: { reason: blocked } }
       absentEvents:
         - { type: model.request }
+  ports:
+    eventLog:
+      t1:
+        $sAnnotateOnly:
+          $all:
+            - $count: { of: { type: hook.decision }, equals: 0 }
+            - $count: { of: { type: error, payload: { error: { code: test.hook.down } } }, equals: 0 }
+        $sBlockable:
+          $all:
+            - $count: { of: { type: hook.decision }, equals: 1 }
+            - $count: { of: { type: hook.decision, payload: { hook: labeller-blocking@1, point: beforeModelCall, result: block, reasonCode: agentry.hook.failed } }, equals: 1 }
+            - $count: { of: { type: error, payload: { error: { code: test.hook.down } } }, equals: 0 }
   stubCalls:
     labeller: { count: 1 }
     labeller-blocking: { count: 1 }

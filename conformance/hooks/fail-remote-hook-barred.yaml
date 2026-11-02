@@ -11,7 +11,11 @@ description: >-
   block at afterToolCall: the result is withheld and the model receives a
   `policy` error (CORE-180). $sControl: note_lookup's result is unlabelled,
   so scanner receives it and continues; the model receives the result.
-  scanner is called exactly once in all, for $sControl.
+  scanner is called exactly once in all, for $sControl. The `error` event
+  has code agentry.hook.content_barred, category policy, retryable false,
+  source hook, and the block emits hook.decision {result: block,
+  reasonCode: agentry.hook.content_barred} (HOOK-051 as amended
+  2026-11-01).
 requirements: [HOOK-054, HOOK-092, HOOK-051]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -151,7 +155,7 @@ expect:
         mode: subsequence
         items:
           - { type: tool.call, payload: { callId: c1, tool: lookup } }
-          - { type: error, payload: { error: { source: hook } } }
+          - { type: error, payload: { error: { code: agentry.hook.content_barred, category: policy, retryable: false, source: hook } } }
           - { type: tool.result, payload: { callId: c1, result: { error: { category: policy } } } }
           - { type: run.ended, payload: { reason: responded } }
       absentEvents:
@@ -163,6 +167,15 @@ expect:
           - { type: tool.result, payload: { callId: c1, result: { ok: { output: { value: "SYN-NOTE-0054" } } } } }
       absentEvents:
         - { type: error }
+  ports:
+    eventLog:
+      t1:
+        $sBarred:
+          $all:
+            - $count: { of: { type: hook.decision }, equals: 1 }
+            - $count: { of: { type: hook.decision, payload: { hook: scanner@1, point: afterToolCall, result: block, reasonCode: agentry.hook.content_barred } }, equals: 1 }
+        $sControl:
+          $count: { of: { type: hook.decision }, equals: 0 }
   stubCalls:
     scanner:
       - arguments: { sessionId: $sControl, point: afterToolCall, tool: { id: note_lookup } }
