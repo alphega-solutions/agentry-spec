@@ -9,8 +9,9 @@ description: >-
   file_record (`approval: always`), and the escalation is mirrored on the
   root.
 
-  The root's mirrored action lists both rules (in either order) and
-  requires 3 approvals — the highest in the chain, the root's own
+  The root's mirrored action lists both rules, root first then the
+  helper's (Area 8 amendment, "Further readings settled in review",
+  ORCH-060/HITL-010), and requires 3 approvals — the highest in the chain, the root's own
   (ORCH-062). Decisions against the root's escalation: rA (`approver`
   only) is refused with `unauthorized` (`agentry.hitl.reviewer_refused`),
   so the child persona's rule applies at the root; rR (`records` only) is
@@ -20,9 +21,12 @@ description: >-
   enough. rB3's approval with resume() is accepted; the helper resumes,
   file_record is dispatched once, and the root responds.
 
-  The owner's (helper's) own escalation record is not asserted: whether it
-  lists the root's rule is not specified (reported as an ambiguity);
-  decisions are submitted only at the root (ORCH-063).
+  The owner's (helper's) own escalation is an ordinary one (`delegated`
+  absent), and its copy of the action carries the same chain-effective
+  reviewer requirements: 3 approvals and the rules in the same order,
+  root first (Area 8 amendment: every level's copy of an action carries
+  the chain-effective `reviewerRequirements`). Decisions are submitted
+  only at the root (ORCH-063).
 requirements: [ORCH-062]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -169,10 +173,7 @@ expect:
                     reviewerRequirements:
                       requiredApprovals: 3
                       selfApprovalAllowed: false
-                      rules:
-                        $all:
-                          - $contains: ["'approver' in reviewer.roles", "'records' in reviewer.roles"]
-                          - $len: 2
+                      rules: ["'approver' in reviewer.roles", "'records' in reviewer.roles"]
           - { type: run.ended, payload: { reason: escalated } }
           - type: escalation.resolved
             payload:
@@ -186,6 +187,23 @@ expect:
       events:
         mode: subsequence
         items:
+          - type: escalation.raised
+            payload:
+              escalation:
+                sessionId: $h
+                pendingActions:
+                  - id: $act
+                    source: approval
+                    callId: h1
+                    tool: file_record
+                    delegated: { $absent: true }
+                    chain: { $absent: true }
+                    reviewerRequirements:
+                      requiredApprovals: 3
+                      selfApprovalAllowed: false
+                      rules: ["'approver' in reviewer.roles", "'records' in reviewer.roles"]
+          - { type: run.ended, payload: { reason: escalated } }
+          # dispatched only after the approvals, in the resume run
           - { type: tool.call, payload: { callId: h1, tool: file_record, arguments: { key: k1 } } }
           - { type: run.ended, payload: { reason: responded } }
   stubCalls:

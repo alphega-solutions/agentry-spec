@@ -11,20 +11,32 @@ description: >-
 
   The child's effective allowed providers are {scripted-a, scripted-b} ∩
   {scripted-a} = {scripted-a} (ORCH-014). Its primary model's provider is
-  therefore not allowed, and the child uses the first fallback that is
-  (read by analogy with PROV-051, which handles a primary model a policy
-  does not allow by moving to the first allowed fallback): its model
-  calls go to scripted-a/model-a, scripted-b never receives a request from
-  it, and the child responds.
+  therefore not allowed, and the child runs on the first of its models,
+  in order, that the intersection allows (Area 8 amendment, "Readings
+  settled with the Area 8 fixtures", ORCH-014/PROV-023): its fallback
+  scripted-a/model-a. Running on a model other than its primary, the
+  child emits PROV-051's `policy.decision` (kind `routing`, outcome
+  `switch`) before its model request ("Further readings settled in
+  review"); its model calls go to scripted-a/model-a, scripted-b never
+  receives a request from it, and the child responds.
 
 
   Control: a root session of helper@1 under the same snapshot calls its
-  primary, scripted-b/model-b.
+  primary, scripted-b/model-b, with no routing switch.
 
 
-  Reading: the intersection is applied when the child runs, not at load —
-  helper@1 is valid by itself, and which parent calls it is known only at
-  run time (reported as an ambiguity).
+  Load-time rule: every persona reachable through an agent tool must have
+  at least one model allowed through the intersection with every
+  possible (transitive) caller's allowed providers. A later load adds
+  narrow@1 (allows only scripted-b; model scripted-b/model-b, no
+  fallbacks — valid on its own under PROV-023), the agent tool ask_narrow
+  (→ narrow@1), and the persona narrow_caller@1, which allows only
+  scripted-a and has ask_narrow in its allowlist. narrow's intersection
+  with its caller is empty, so no model of narrow's is allowed through
+  it: a configuration error, and the previous snapshot stays in force.
+
+  Scripted responses: scripted-a 3 (parent, child, parent), scripted-b 1
+  (control). Stubs: lookup none (empty list; never called).
 requirements: [ORCH-014]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -107,6 +119,38 @@ script:
     persona: helper@1
     input: [{ type: text, text: "SYN-CONTROL-REQUEST" }]
     expect: { ok: true, endReason: responded }
+  # A reachable persona with no model allowed through its caller.
+  - load:
+      artifacts:
+        - kind: Persona
+          id: narrow
+          version: 1
+          schemaVersion: "0.1.0"
+          instructions: "You look things up."
+          tools: [lookup@1]
+          defaultProfile: default@1
+          allowedProfiles: [default@1]
+          allowedProviders: [scripted-b]
+          model: { provider: scripted-b, name: model-b }
+        - kind: Tool
+          id: ask_narrow
+          version: 1
+          schemaVersion: "0.1.0"
+          description: Ask the narrow persona to look something up.
+          input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+          effect: read
+          binding: { kind: agent, persona: narrow@1 }
+        - kind: Persona
+          id: narrow_caller
+          version: 1
+          schemaVersion: "0.1.0"
+          instructions: "You coordinate the narrow helper."
+          tools: [ask_narrow@1]
+          defaultProfile: default@1
+          allowedProfiles: [default@1]
+          allowedProviders: [scripted-a]
+          model: { provider: scripted-a, name: model-a }
+    expect: { ok: false, error: { category: configuration } }
 expect:
   sessions:
     $s:
@@ -121,6 +165,7 @@ expect:
         mode: subsequence
         items:
           - { type: session.created, payload: { persona: helper@1, parent: { sessionId: $s, callId: c1 } } }
+          - { type: policy.decision, payload: { kind: routing, outcome: switch } }
           - { type: model.request, payload: { provider: scripted-a, model: model-a } }
           - { type: run.ended, payload: { reason: responded } }
       absentEvents:
@@ -131,6 +176,8 @@ expect:
         items:
           - { type: model.request, payload: { provider: scripted-b, model: model-b, role: primary } }
           - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: policy.decision, payload: { kind: routing } }
   providerRequests:
     scripted-a: { count: 3 }
     scripted-b:

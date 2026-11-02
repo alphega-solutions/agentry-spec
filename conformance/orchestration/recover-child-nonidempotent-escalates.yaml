@@ -10,10 +10,9 @@ description: >-
 
 
   Turn 1 of the root responds. A crash is armed at `after_dispatch` for
-  the root's next action (turn 2). Reading of the crash step: the child
-  runs synchronously inside that action, and `after_dispatch` is defined
-  by a stub having run, which an agent-bound call has none of, so the
-  first point reached is the dispatch of the child's update_record h1:
+  the root's next action (turn 2). The crash fires at the first stub
+  dispatch during the root's action (Area 8 amendment, "Known fixture
+  limits"), which is the child's update_record h1:
   its stub ran (its one behaviour is consumed) and no outcome is recorded.
   Both runs — the root's $r2 (its agent call c1 in flight, ORCH-002
   started record holding the child's ID) and the child's $cr1 — are

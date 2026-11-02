@@ -22,9 +22,15 @@ description: >-
     provenances agent:helper, tool:chart and tool:notes, and is not
     dispatched.
 
-  ORCH-052's "binary content is returned as blob references" is not
-  verified here: the amended output mapping (structured value, or
-  `{ text }`) gives no place for a child's image or file parts.
+  - $sF: the child (no output schema) responds with a text part, an
+    `image` part and a `file` part, each binary part referencing a blob
+    already in the tenant's blob store. The parent's `ok` output is `{
+    text, files }`, where `files` holds the two blob references in part
+    order (ORCH-052, CORE-112; Area 8 amendment, "Readings settled with
+    the Area 8 fixtures", ORCH-050). No bytes are inlined.
+
+  Scripted responses (shared, consumed in call order): 14 — $sT 5, $sU 6,
+  $sF 3. Stubs: lookup 2, chart 1, notes 1, update_record 1.
 requirements: [ORCH-052]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -137,6 +143,18 @@ setup:
         # $sU 11. parent, step 2 (stopped by the taint rule)
         - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: a, value: "checked" } }]
           usage: { inputTokens: 60, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sF 12. parent, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_helper, arguments: { task: "Send the report for a" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sF 13. child, step 1: text, an image and a file
+        - parts:
+            - { type: text, text: "Report attached." }
+            - { type: image, mediaType: image/png, blob: { id: blob-img-1, hash: "sha256:82e0d9513a9797c3e32e35d6fff5c8648db4b0a8c74ffea2be6d5b827d3c7aa7", mediaType: image/png, size: 20 } }
+            - { type: file, mediaType: text/plain, name: report.txt, blob: { id: blob-file-1, hash: "sha256:488b66a845535f2173fe026ad21ad4238ca6b733b00a24ba332adab6729a0a80", mediaType: text/plain, size: 44 } }
+          usage: { inputTokens: 20, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sF 14. parent, step 2
+        - parts: [{ type: text, text: "The report is attached." }]
+          usage: { inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
   stubs:
     tools:
       lookup:
@@ -148,6 +166,19 @@ setup:
         - ok: { output: { note: "synthetic-note" } }
       update_record:
         - ok: { output: { updated: true } }
+  ports:
+    blobStore:
+      t1:
+        - id: blob-img-1
+          hash: "sha256:82e0d9513a9797c3e32e35d6fff5c8648db4b0a8c74ffea2be6d5b827d3c7aa7"
+          mediaType: image/png
+          size: 20
+          data: "U1lOVEhFVElDLUlNQUdFLTAwMDE="
+        - id: blob-file-1
+          hash: "sha256:488b66a845535f2173fe026ad21ad4238ca6b733b00a24ba332adab6729a0a80"
+          mediaType: text/plain
+          size: 44
+          data: "U1lOVEhFVElDLUZJTEUtMDAwMTogcXVhcnRlcmx5IHdpZGdldCByZXBvcnQ="
 script:
   - action: run
     bind: $sT
@@ -163,6 +194,13 @@ script:
     persona: assistant@1
     input: [{ type: text, text: "Ask the helper for everything about a, then mark it checked" }]
     expect: { ok: true, endReason: escalated }
+  - action: run
+    bind: $sF
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Ask the helper for the report on a" }]
+    expect: { ok: true, endReason: responded }
 expect:
   sessions:
     $sT:
@@ -202,6 +240,23 @@ expect:
           - { type: run.ended, payload: { reason: escalated } }
       absentEvents:
         - { type: tool.call, payload: { callId: c2 } }
+    $sF:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: tool.result
+            payload:
+              callId: c1
+              tool: ask_helper
+              result:
+                ok:
+                  output:
+                    text: "Report attached."
+                    files:
+                      - { id: blob-img-1, hash: "sha256:82e0d9513a9797c3e32e35d6fff5c8648db4b0a8c74ffea2be6d5b827d3c7aa7", mediaType: image/png, size: 20 }
+                      - { id: blob-file-1, hash: "sha256:488b66a845535f2173fe026ad21ad4238ca6b733b00a24ba332adab6729a0a80", mediaType: text/plain, size: 44 }
+          - { type: run.ended, payload: { reason: responded } }
   stubCalls:
     lookup: { count: 2 }
     chart: { count: 1 }
@@ -231,3 +286,12 @@ expect:
                   callId: c1
                   provenance: "agent:helper"
                   labels: { $all: [{ $contains: [pii, phi] }, { $len: 2 }] }
+      - {}
+      - {}
+      - messages:
+          $contains:
+            - role: tool
+              parts:
+                - type: tool_result
+                  callId: c1
+                  result: { ok: { output: { text: "Report attached.", files: [{ id: blob-img-1, hash: "sha256:82e0d9513a9797c3e32e35d6fff5c8648db4b0a8c74ffea2be6d5b827d3c7aa7", mediaType: image/png, size: 20 }, { id: blob-file-1, hash: "sha256:488b66a845535f2173fe026ad21ad4238ca6b733b00a24ba332adab6729a0a80", mediaType: text/plain, size: 44 }] } } }

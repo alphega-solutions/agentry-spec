@@ -116,6 +116,9 @@ script:
     capture:
       - event: { type: tool.call, payload: { tool: ask_manager } }
         bind: { payload.childSessionId: $mgr }
+      - session: $mgr
+        event: { type: tool.call, payload: { tool: ask_clerk } }
+        bind: { payload.childSessionId: $clerk }
       - event: { type: escalation.raised }
         bind: { payload.escalation.id: $escRoot, payload.escalation.pendingActions.0.id: $act }
     expect: { ok: true, endReason: escalated }

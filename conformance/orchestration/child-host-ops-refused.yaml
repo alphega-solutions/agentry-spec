@@ -17,6 +17,27 @@ description: >-
 
   Control: `getReviewerView` and `decide` on the root, with the same
   reviewer and the same pending action ID, are accepted.
+
+
+  Precedence (Area 8 amendment, "Further readings settled in review",
+  ORCH-006): a host operation naming a session of another tenant is
+  `not_found` (ADR-0014); otherwise one naming a child is refused with
+  `conflict` (`agentry.delegation.child_session`) whatever the child's
+  state, before any other check.
+
+  - The same suspended child, named by a t2 principal (`run`, `cancel`)
+    or t2 reviewer (`getReviewerView`), gives `not_found`, not the
+    child-session conflict.
+  - A second root $s2 calls ask_helper and its child $child2 responds at
+    once, so it is returned and closed `completed` (ORCH-050). `run`,
+    `resume` and `close` on that CLOSED child give `conflict` with code
+    `agentry.delegation.child_session` — the child-session check comes
+    before the closed-session check (CORE-022) — and persist nothing.
+
+  Scripted responses (scripted-a, shared, in call order): 5 — 1 $s step
+  1; 2 $child step 1 (escalates); 3 $s2 step 1; 4 $child2 step 1
+  (responds); 5 $s2 step 2. update_record is never dispatched (empty stub
+  list).
 requirements: [ORCH-006]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -71,6 +92,10 @@ setup:
       principals:
         - { id: p1, subject: user-1, assurance: multi_factor }
         - { id: r1, subject: reviewer-1, roles: [reviewer], assurance: multi_factor }
+    - id: t2
+      principals:
+        - { id: q1, subject: user-q1, assurance: multi_factor }
+        - { id: q2, subject: reviewer-q2, roles: [reviewer], assurance: multi_factor }
   providers:
     scripted-a:
       responses:
@@ -80,6 +105,15 @@ setup:
         # child, step 1 (escalates for approval)
         - parts: [{ type: tool_call, callId: h1, tool: update_record, arguments: { key: k1, value: v1 } }]
           usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $s2 parent, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_helper, arguments: { task: "Check k2" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $child2, step 1 (responds at once)
+        - parts: [{ type: text, text: "k2 needs no change." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $s2 parent, step 2
+        - parts: [{ type: text, text: "The helper says k2 needs no change." }]
+          usage: { inputTokens: 30, outputTokens: 7, cachedInputTokens: 0, reasoningTokens: 0 }
   stubs:
     tools:
       update_record: []
@@ -138,6 +172,47 @@ script:
     decisions:
       - { decisionId: "01900000-0000-7000-8000-0000000000d3", pendingActionId: $act, type: approve }
     expect: { ok: true }
+  # Another tenant naming the child: not_found, before the child-session check.
+  - action: run
+    session: $child
+    tenant: t2
+    principal: q1
+    input: [{ type: text, text: "Carry on" }]
+    expect: { ok: false, error: { category: not_found }, newEvents: 0 }
+  - action: cancel
+    session: $child
+    tenant: t2
+    principal: q1
+    expect: { ok: false, error: { category: not_found }, newEvents: 0 }
+  - action: getReviewerView
+    session: $child
+    tenant: t2
+    reviewer: q2
+    expect: { ok: false, error: { category: not_found }, newEvents: 0 }
+  # A closed child: still the child-session conflict.
+  - action: run
+    bind: $s2
+    tenant: t1
+    principal: p1
+    persona: coordinator@1
+    input: [{ type: text, text: "Have the helper check k2" }]
+    capture:
+      - event: { type: tool.call, payload: { callId: c1, tool: ask_helper } }
+        bind: { payload.childSessionId: $child2 }
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $child2
+    principal: p1
+    input: [{ type: text, text: "Carry on" }]
+    expect: { ok: false, error: { category: conflict, code: agentry.delegation.child_session }, newEvents: 0 }
+  - action: resume
+    session: $child2
+    reviewer: r1
+    decisions: []
+    expect: { ok: false, error: { category: conflict, code: agentry.delegation.child_session }, newEvents: 0 }
+  - action: close
+    session: $child2
+    expect: { ok: false, error: { category: conflict, code: agentry.delegation.child_session }, newEvents: 0 }
 expect:
   sessions:
     $s:
@@ -155,12 +230,26 @@ expect:
         - { type: escalation.resolved }
         - { type: run.started, payload: { kind: resume } }
         - { type: tool.call, payload: { callId: h1 } }
+    $s2:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: c1, tool: ask_helper, result: { ok: { output: { text: "k2 needs no change." } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+    $child2:
+      state: closed
+      closeReason: completed
   ports:
     eventLog:
       t1:
         $child:
           $count: { of: { type: run.started }, equals: 1 }
+        $child2:
+          $all:
+            - $count: { of: { type: run.started }, equals: 1 }
+            - $count: { of: { type: session.closed }, equals: 1 }
   stubCalls:
     update_record: { count: 0 }
   providerRequests:
-    scripted-a: { count: 2 }
+    scripted-a: { count: 5 }

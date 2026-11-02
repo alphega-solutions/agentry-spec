@@ -12,10 +12,9 @@ description: >-
 
 
   Turn 1 of the root responds. A crash is armed at `after_dispatch` for the
-  root's next action (turn 2). Reading of the crash step: the children run
-  synchronously inside that action, and `after_dispatch` is defined by a
-  stub having run, which agent-bound calls have none of, so the first
-  point reached is the dispatch of leaf's set_flag l1: its first behaviour
+  root's next action (turn 2). The crash fires at the first stub dispatch
+  during the root's action (Area 8 amendment, "Known fixture limits"),
+  which is leaf's set_flag l1: its first behaviour
   is consumed, no outcome is recorded. The three runs are orphaned when
   the lease lapses; the root's c1 and mid's m1 are in flight with started
   records holding their children's IDs (ORCH-002).
@@ -35,7 +34,10 @@ description: >-
   set_flag's result) comes before mid's step 2 request (holding
   ask_leaf's result), which comes before the root's (holding ask_mid's
   result). No second child is created at either level: each agent call has
-  one tool.call and one tool.result, each child has one session.created and
+  exactly one tool.call and one tool.result — re-dispatching an agent call
+  re-attaches to the recorded child and emits no new tool.call (Area 8
+  amendment, "Further readings settled in review", ORCH-002/ORCH-071/
+  TOOL-034) — each child has one session.created and
   one run, and no response is left for an extra child. No escalation is
   raised and nothing fails. Only then does the triggering run() proceed
   with its own run $r3 (turn 3), which responds.
@@ -241,12 +243,14 @@ expect:
         $s:
           $all:
             - $count: { of: { type: run.started }, equals: 3 }
+            # Re-dispatch emits no new tool.call (amendment, further readings)
             - $count: { of: { type: tool.call, payload: { callId: c1 } }, equals: 1 }
             - $count: { of: { type: tool.result, payload: { callId: c1 } }, equals: 1 }
         $mid:
           $all:
             - $count: { of: { type: session.created }, equals: 1 }
             - $count: { of: { type: run.started }, equals: 1 }
+            # Re-dispatch emits no new tool.call (amendment, further readings)
             - $count: { of: { type: tool.call, payload: { callId: m1 } }, equals: 1 }
             - $count: { of: { type: tool.result, payload: { callId: m1 } }, equals: 1 }
         $leaf:

@@ -21,9 +21,11 @@ description: >-
   policy bundle and so run by every session (ORCH-015), whose native stub
   records invocations in call order. No further model call is made in any
   session (the scripted provider holds only the three responses
-  consumed). Whether the root's and mid's pending agent calls receive a
-  `tool.result` is not asserted: ORCH-050 defers the `cancelled` case to
-  ORCH-070, which does not say.
+  consumed). The root's and mid's pending agent calls get no `tool.result`
+  (no result for c1 in the root, none for m1 in mid): an agent call
+  pending when its session is cancelled gets none (Area 8 amendment,
+  "Readings settled with the Area 8 fixtures", ORCH-070/TOOL-034). The
+  leaf's own lookup result is not asserted.
 requirements: [ORCH-070]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -153,6 +155,7 @@ expect:
       absentEvents:
         - { type: model.request, step: 2 }
         - { type: turn.completed }
+        - { type: tool.result, payload: { callId: c1 } }
     $mid:
       state: closed
       closeReason: cancelled
@@ -165,6 +168,7 @@ expect:
           - { type: session.closed, payload: { reason: cancelled } }
       absentEvents:
         - { type: model.request, step: 2 }
+        - { type: tool.result, payload: { callId: m1 } }
     $leaf:
       state: closed
       closeReason: cancelled

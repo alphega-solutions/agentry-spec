@@ -18,7 +18,10 @@ description: >-
   of the parent's tainting provenances, in order of first entry
   (HOOK-126). This discriminates inheritance from the child merely being
   tainted by its first message, whose provenance is only the least-trusted
-  tool:lookup (ORCH-011) and would give [tool:lookup] alone.
+  tool:lookup (ORCH-011) and would give [tool:lookup] alone. The parent's
+  mirrored escalation lists its own tainting provenances followed by the
+  owner's, without duplicates: [tool:lookup, tool:chart] (Area 8
+  amendment, "Further readings settled in review", ORCH-060/HITL-010).
 
 
   Session 2 (control, untainted parent): the parent calls ask_helper first;
@@ -136,6 +139,12 @@ expect:
         mode: subsequence
         items:
           - { type: tool.call, payload: { callId: c3, tool: ask_helper, childSessionId: $child1 } }
+          - type: escalation.raised
+            payload:
+              escalation:
+                sessionId: $s1
+                taintProvenances: ["tool:lookup", "tool:chart"]
+                pendingActions: [{ source: taint, callId: h1, delegated: true, chain: [$child1] }]
           - { type: run.ended, payload: { reason: escalated } }
     $child1:
       state: suspended

@@ -27,15 +27,18 @@ description: >-
 
   Observable: exactly one child session for c1, with exactly one
   `session.created` and one `run.started` (the child's run continued, not
-  restarted); every ask_helper `tool.call` in the parent names that same
-  child; the two lookup calls both ran in the child with the same
-  idempotency key, the first not completed. The parent has exactly two
-  `run.started` (turn 1 and the host's turn 2).
+  restarted); the parent has exactly one ask_helper `tool.call`, naming
+  that child — re-dispatching an agent call re-attaches to the recorded
+  child and emits no new `tool.call` (Area 8 amendment, "Further readings
+  settled in review", ORCH-002/ORCH-071/TOOL-034); the two lookup calls
+  both ran in the child with the same idempotency key, the first not
+  completed. The parent has exactly two `run.started` (turn 1 and the
+  host's turn 2).
 
 
-  Reading: the crash point is located inside the child because the format
-  defines `after_dispatch` in terms of stubs (see the Area 8 report);
-  ORCH-071's ordering is not asserted here.
+  The crash point is located inside the child because a crash fires at
+  the first stub dispatch during the root's action (Area 8 amendment,
+  "Known fixture limits"); ORCH-071's ordering is not asserted here.
 requirements: [ORCH-002]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -145,7 +148,8 @@ expect:
         $s:
           $all:
             - { $count: { of: { type: run.started }, equals: 2 } }
-            - { $count: { of: { type: tool.call, payload: { tool: ask_helper } }, gte: 1 } }
+            # Re-dispatch emits no new tool.call (amendment, further readings)
+            - { $count: { of: { type: tool.call, payload: { tool: ask_helper } }, equals: 1 } }
             - { $count: { of: { type: tool.call, payload: { tool: ask_helper, childSessionId: { $not: $child } } }, equals: 0 } }
             - { $count: { of: { type: tool.result, payload: { callId: c1 } }, equals: 1 } }
         $child:

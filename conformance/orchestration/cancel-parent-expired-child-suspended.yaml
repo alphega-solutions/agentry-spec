@@ -17,12 +17,16 @@ description: >-
   closes `expired`.
 
 
-  Reading: this is the "parent ... expires for any reason" case of
-  ORCH-070, not ORCH-066 (which covers expiry of the chain's escalation
-  with `close`): the root's own expiry closes it `expired`, and its child,
-  which never closes independently of its parent except by returning
-  (ORCH-070), is first cancelled and closed `cancelled`. All TTLs are equal
-  so no level could expire on its own schedule first. The order — child,
+  This is the "parent ... expires for any reason" case of ORCH-070, not
+  ORCH-066 (which applies only to the chain's escalation expiring under
+  `close`) — Area 8 amendment, "Readings settled with the Area 8
+  fixtures": a parent that expires on its own after `onExpiry: reject`
+  and a further `idleTtl` cancels its descendants first. The root's own
+  expiry closes it `expired`, and its child is first cancelled and closed
+  `cancelled`. The root's `idleTtl` governs the further wait and
+  descendants never expire on their own schedule ("Further readings
+  settled in review"); unequal idleTtls are covered by
+  orchestration.expire-reject-root-idlettl-governs. The order — child,
   then root — is observed through a telemetry `sessionEnd` hook, on-end,
   required by the policy bundle and so run by both sessions (ORCH-015),
   whose native stub records invocations in call order; both closes are

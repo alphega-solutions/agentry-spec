@@ -1,0 +1,208 @@
+schemaVersion: "0.1.0"
+id: orchestration.limit-two-agent-calls-first-escalates
+title: When the first of two agent calls in a step escalates, the second is not started until the escalation is resolved; the step's other call completes; after resume the second agent call runs
+description: >-
+  In one step the parent requests ask_filer (c1, → filer@1), note (c2, a
+  read tool whose default stub answers at once) and ask_helper (c3, →
+  helper@1). The filer child calls file_record (`approval: always`), which
+  escalates; helper would call lookup.
+
+  Run 1: c1 creates the filer child $a, whose escalation is mirrored on the
+  parent (ORCH-060); the parent's escalation holds exactly that mirrored
+  action — the parent has none of its own — and its run ends `escalated`.
+  c3 is not started while the escalation is open (Area 8 amendment,
+  "Further readings settled in review", ORCH-040/TOOL-033): run 1 has no
+  `tool.call` for c3, no helper child exists, lookup is not called and no
+  model request is made for it. c2 is processed to completion in run 1
+  (TOOL-033): its `tool.call` and `tool.result` belong to run 1.
+
+  At +1m resume() with r1's approval is accepted. The filer resumes,
+  file_record is dispatched, the filer responds and closes, and c1's
+  `tool.result` is recorded in the parent's resume run. Only then does c3
+  start: its `tool.call` belongs to the resume run, and its child $b is
+  created at +1m (`session.created` names the resume run as
+  `parent.runId`). $b calls lookup and responds. The parent's model then
+  receives all three results together, in request order (TOOL-032,
+  TOOL-033), and responds.
+
+  Scripted responses (scripted-a, shared, in call order): 6 — 1 parent
+  step 1 (three calls); 2 $a step 1 (file_record → escalates); 3 $a step 2
+  (resume run); 4 $b step 1 (lookup); 5 $b step 2; 6 parent step 2.
+  Stubs: file_record 1, lookup 1, note (default stub) 1, update_record 0.
+requirements: [ORCH-040, TOOL-033]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - { kind: Tool, id: note, version: 1, schemaVersion: "0.1.0", description: Read a note., input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }, effect: read, binding: { kind: native, handler: test.note } }
+      - kind: Tool
+        id: file_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: File a record.
+        input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }
+        effect: mutating
+        approval: always
+        binding: { kind: native, handler: test.file_record }
+      - { kind: Persona, id: filer, version: 1, schemaVersion: "0.1.0", instructions: "You file records.", tools: [file_record@1], defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a } }
+      - { kind: Tool, id: ask_filer, version: 1, schemaVersion: "0.1.0", description: Ask the filer persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: mutating, binding: { kind: agent, persona: filer@1 } }
+      - { kind: Persona, id: helper, version: 1, schemaVersion: "0.1.0", instructions: "You look things up.", tools: [lookup@1], defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a } }
+      - { kind: Tool, id: ask_helper, version: 1, schemaVersion: "0.1.0", description: Ask the helper persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: read, binding: { kind: agent, persona: helper@1 } }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, note@1, file_record@1, ask_filer@1, ask_helper@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model: { provider: scripted-a, name: model-a }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        # 1: parent, step 1
+        - parts:
+            - { type: tool_call, callId: c1, tool: ask_filer, arguments: { task: "File k1" } }
+            - { type: tool_call, callId: c2, tool: note, arguments: { key: n } }
+            - { type: tool_call, callId: c3, tool: ask_helper, arguments: { task: "Find b" } }
+          usage: { inputTokens: 20, outputTokens: 15, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 2: $a, step 1 — approval: always escalates
+        - parts: [{ type: tool_call, callId: f1, tool: file_record, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # --- resume ---
+        # 3: $a, step 2 (resume run)
+        - parts: [{ type: text, text: "Filed k1." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 4: $b, step 1
+        - parts: [{ type: tool_call, callId: h1, tool: lookup, arguments: { key: b } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 5: $b, step 2
+        - parts: [{ type: text, text: "b holds B." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 6: parent, step 2
+        - parts: [{ type: text, text: "k1 is filed and b holds B." }]
+          usage: { inputTokens: 50, outputTokens: 8, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      file_record:
+        - ok: { output: { filed: "k1" } }
+      lookup:
+        - ok: { output: { value: "B" } }
+      update_record: []
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "File k1, read note n, and find b" }]
+    capture:
+      - event: { type: tool.call, payload: { callId: c1, tool: ask_filer } }
+        bind: { payload.childSessionId: $a }
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $esc, payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  - clock: { advance: PT1M }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000d01", pendingActionId: $act, type: approve }
+    capture:
+      - event: { type: tool.call, payload: { callId: c3, tool: ask_helper } }
+        bind: { payload.childSessionId: $b }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: run.started, runId: $r1 }
+          - { type: tool.call, runId: $r1, payload: { callId: c1, tool: ask_filer, childSessionId: $a } }
+          - type: escalation.raised
+            runId: $r1
+            payload:
+              escalation:
+                id: $esc
+                pendingActions: [{ id: $act, callId: f1, tool: file_record, source: approval, delegated: true, chain: [$a] }]
+          - { type: run.ended, runId: $r1, payload: { reason: escalated } }
+          - { type: run.started, runId: { $all: [$r2, { $not: $r1 }] }, payload: { kind: resume } }
+          - { type: escalation.resolved, runId: $r2, payload: { escalationId: $esc, decisions: ["01900000-0000-7000-8000-000000000d01"] } }
+          - { type: tool.result, runId: $r2, payload: { callId: c1, tool: ask_filer, result: { ok: { output: { text: "Filed k1." } } } } }
+          - { type: tool.call, runId: $r2, timestamp: { $regex: "^2026-01-01T00:01:00" }, payload: { callId: c3, tool: ask_helper, childSessionId: $b } }
+          - { type: tool.result, runId: $r2, payload: { callId: c3, tool: ask_helper, result: { ok: { output: { text: "b holds B." } } } } }
+          - { type: model.request, runId: $r2, step: 2 }
+          - { type: run.ended, runId: $r2, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call, runId: $r1, payload: { callId: c3 } }
+        - { type: tool.result, runId: $r1, payload: { callId: c3 } }
+    $a:
+      state: closed
+      closeReason: completed
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, payload: { persona: filer@1, parent: { sessionId: $s, runId: $r1, callId: c1, tool: ask_filer, depth: 1 } } }
+          - { type: escalation.raised, payload: { escalation: { pendingActions: [{ id: $act, delegated: { $absent: true } }] } } }
+          - { type: run.ended, payload: { reason: escalated } }
+          - { type: tool.call, payload: { callId: f1, tool: file_record, arguments: { key: k1 } } }
+          - { type: run.ended, payload: { reason: responded } }
+          - { type: session.closed, payload: { reason: completed } }
+    $b:
+      state: closed
+      closeReason: completed
+      events:
+        mode: subsequence
+        items:
+          - type: session.created
+            timestamp: { $regex: "^2026-01-01T00:01:00" }
+            payload: { persona: helper@1, parent: { sessionId: $s, runId: $r2, callId: c3, tool: ask_helper, depth: 1 } }
+          - { type: tool.call, payload: { callId: h1, tool: lookup } }
+          - { type: run.ended, payload: { reason: responded } }
+          - { type: session.closed, payload: { reason: completed } }
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $all:
+            - $count: { of: { type: tool.call, payload: { callId: c3 } }, equals: 1 }
+            - $count: { of: { type: tool.result, payload: { callId: c3 } }, equals: 1 }
+            - $count: { of: { type: tool.call, runId: $r1, payload: { callId: c2, tool: note } }, equals: 1 }
+            - $count: { of: { type: tool.result, runId: $r1, payload: { callId: c2, tool: note } }, equals: 1 }
+            - $count: { of: { type: tool.result, payload: { callId: c2 } }, equals: 1 }
+  stubCalls:
+    file_record: [{ arguments: { key: k1 }, context: { sessionId: $a } }]
+    lookup: [{ arguments: { key: b }, context: { sessionId: $b } }]
+    note: [{ arguments: { key: n }, context: { sessionId: $s, runId: $r1 } }]
+    update_record: { count: 0 }
+  providerRequests:
+    scripted-a:
+      - {}
+      - { messages: { $contains: [{ role: principal, parts: [{ type: structured, value: { task: "File k1" } }] }] } }
+      # after resume: the filer first; the helper only after c1 has returned
+      - messages:
+          $contains:
+            - role: tool
+              parts: [{ type: tool_result, callId: f1, result: { ok: { output: { filed: "k1" } } } }]
+      - { messages: { $contains: [{ role: principal, parts: [{ type: structured, value: { task: "Find b" } }] }] } }
+      - {}
+      - messages:
+          $contains:
+            - role: tool
+              parts:
+                - { type: tool_result, callId: c1, result: { ok: { output: { text: "Filed k1." } } } }
+                - { type: tool_result, callId: c2 }
+                - { type: tool_result, callId: c3, result: { ok: { output: { text: "b holds B." } } } }

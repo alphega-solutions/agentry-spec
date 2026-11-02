@@ -15,9 +15,12 @@ description: >-
     marked `delegated: true` with chain [helper session], and its reviewer
     requirements say `selfApprovalAllowed: false` and list only the taint
     rule (ORCH-061). The owner's escalation carries the helper's tainting
-    provenance [tool:lookup]; the root's carries its own, which are none —
-    the root is not tainted (ORCH-060 as amended 2026-11-02: each session's
-    own). At the root, p1's approval is refused with `unauthorized`
+    provenance [tool:lookup]. The root is not tainted, so it has no
+    tainting provenances of its own, and its escalation's
+    `taintProvenances` are its own (none) followed by those of the owner of
+    the mirrored `taint` action: [tool:lookup] — never empty while a
+    `taint` action is present (Area 8 amendment, "Further readings settled
+    in review", ORCH-060/HITL-010). At the root, p1's approval is refused with `unauthorized`
     (`agentry.hitl.reviewer_refused`) although p1 satisfies every rule —
     self-approval is never allowed for `taint`; rA's is refused (fails the
     taint rule; the approval rule does not stand in for it); rS's is
@@ -187,6 +190,7 @@ expect:
   sessions:
     $sTaint:
       state: suspended
+      checkpoint: { taint: { tainted: false } }
       events:
         mode: subsequence
         items:
@@ -195,7 +199,7 @@ expect:
               escalation:
                 sources: [taint]
                 reasonCodes: [agentry.taint.mutating]
-                taintProvenances: []
+                taintProvenances: ["tool:lookup"]
                 pendingActions:
                   - id: $actTaint
                     kind: tool_call

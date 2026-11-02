@@ -26,9 +26,10 @@ description: >-
     cycle back to ask_alpha. Declared `mutating`, it loads.
 
   Each rejection is a configuration error naming the agent tool and its
-  `/effect` field (CFG-032 as amended 2026-11-01). Reading: the error is
-  attributed to the agent tool whose declaration is too weak, not to the
-  persona that makes the tool reachable.
+  `/effect` field (CFG-032 as amended 2026-11-01; Area 8 amendment,
+  "Readings settled with the Area 8 fixtures": ORCH-020 errors name the
+  agent tool whose declaration is too weak, not the persona that makes
+  the tool reachable).
 requirements: [ORCH-020]
 contract: ">=0.1.0 <1.0.0"
 features: []

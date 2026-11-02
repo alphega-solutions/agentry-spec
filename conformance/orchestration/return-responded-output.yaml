@@ -6,7 +6,8 @@ description: >-
   writer@1, which has no output schema; its child answers with two text
   parts, so the parent receives `ok` with output exactly `{ text: "Line
   one.\nLine two." }` (ORCH-050 as amended 2026-11-02: the text parts joined
-  with a newline). ask_counter is bound to persona counter@1, which declares
+  with a newline; no `files`, since the child returned no image or file
+  parts). ask_counter is bound to persona counter@1, which declares
   an output schema; its child answers with a `structured` part and a text
   part, so the parent receives `ok` with output exactly the structured
   value `{ count: 2 }`, without the text. Both children end `responded` and
@@ -125,7 +126,7 @@ expect:
             payload:
               callId: c1
               tool: ask_writer
-              result: { ok: { output: { text: "Line one.\nLine two." }, blob: { $absent: true } } }
+              result: { ok: { output: { text: "Line one.\nLine two.", files: { $absent: true } }, blob: { $absent: true } } }
           - type: tool.result
             payload:
               callId: c2

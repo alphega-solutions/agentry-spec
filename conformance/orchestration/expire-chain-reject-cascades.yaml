@@ -21,15 +21,19 @@ description: >-
   and the reviewer view shows the action decided by expiry.
 
 
-  At 01:00 resume() on the root with no new decisions is accepted. The
-  rejection is applied in the owning child (ORCH-064): the child's resume
-  run emits `escalation.resolved` listing the expiry rejection, h1 is not
-  dispatched, and the child's model receives h1's result as a `policy`
-  error `agentry.hitl.rejected` (HITL §7.3); the child responds and closes
-  `completed`; the root then emits its own `escalation.resolved` with the
-  same decision, receives ask_helper's `ok` result `{text}` (ORCH-050 as
-  amended), and responds. Scripted responses are shared and consumed in
-  call order (commented below).
+  At 01:00 resume() on the root with no new decisions is accepted. Both
+  sessions start a new run at once, from the root down to the owner (Area
+  8 amendment, ORCH-064 as settled in review), each emitting `run.started`
+  and then `escalation.resolved` listing the expiry rejection; the
+  rejection is applied in the owning child: h1 is not dispatched, and the
+  child's model receives h1's result as a `policy` error
+  `agentry.hitl.rejected` (HITL §7.3); the child responds and closes
+  `completed`. The root, which has been waiting in its pending agent call,
+  then receives ask_helper's `ok` result `{text}` (ORCH-050 as amended)
+  and responds. The start order across sessions is not observable (known
+  fixture limits); the return order is, through the shared provider.
+  Scripted responses are shared and consumed in call order (commented
+  below): 4.
 requirements: [ORCH-065, HITL-082]
 contract: ">=0.1.0 <1.0.0"
 features: []

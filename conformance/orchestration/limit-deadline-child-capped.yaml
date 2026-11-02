@@ -14,11 +14,11 @@ description: >-
   model receives it and the parent run responds (ORCH-051). Uncapped, the
   child would instead have waited for lookup's own 30 s timeout.
 
-  Reading: at +10s both the child's capped limit and the parent call's own
-  deadline elapse. The child's limit is what ORCH-043 sets for the
-  delegated work, so the result is the delegation outcome
-  (`agentry.delegation.limit`), not the parent's own tool timeout
-  (`agentry.tool.timeout`).
+  At +10s both the child's capped limit and the parent call's own deadline
+  elapse. A child whose run timeout is capped by that deadline ends
+  `timeout` and returns `agentry.delegation.limit`; an agent call never
+  ends with `agentry.tool.timeout` (Area 8 amendment, "Readings settled
+  with the Area 8 fixtures", ORCH-043/ORCH-044).
 
   Scripted responses (scripted-a, in call order): 1 parent step 1; 2 child
   step 1 (lookup hangs); 3 parent step 2.

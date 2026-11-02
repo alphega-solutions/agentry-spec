@@ -19,7 +19,8 @@ description: >-
   - Trace context: each child's `session.created` carries a well-formed
     W3C traceparent. That its trace-id equals the parent call's (a child
     span) cannot be asserted: placeholders bind whole values, so a part of
-    one string cannot be compared with another (format gap, reported).
+    one string cannot be compared with another (Area 8 amendment, "Known
+    fixture limits").
 requirements: [ORCH-004, ORCH-080, ORCH-081]
 contract: ">=0.1.0 <1.0.0"
 features: []

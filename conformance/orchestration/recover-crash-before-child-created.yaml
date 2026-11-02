@@ -1,0 +1,156 @@
+schemaVersion: "0.1.0"
+id: orchestration.recover-crash-before-child-created
+title: A crash after an agent call's started record but before its child exists is recovered by creating the child under the recorded ID, with no second tool.call
+description: >-
+  The parent (coordinator) calls ask_helper (c1, agent → helper@1), which
+  is `mutating` because helper can reach update_record (ORCH-020); helper
+  only calls lookup here. A crash is armed at `after_started_record` for
+  the parent's first run. The first started record stored during that
+  action is c1's (ORCH-002: the started record, holding the child's
+  session ID, is stored before the child starts), so the implementation
+  stops with c1's started record in the idempotency store and no child
+  session in existence.
+
+  After the restart and one hour on the virtual clock (past the PT5M
+  lease, so the run is orphaned), run() on the parent triggers recovery
+  (HITL-092). Recovery finds c1's started record without an outcome
+  (ORCH-071). Agent calls are idempotent by construction (ORCH-002,
+  "whatever the agent tool's effect"), so c1 is re-dispatched rather than
+  escalated as a `recovery` action; the re-dispatch creates the child
+  under the recorded ID and emits its `session.created` then, at +1h
+  (Area 8 amendment, "Further readings settled in review",
+  ORCH-002/ORCH-071/TOOL-034), and emits no new `tool.call`: the parent
+  has exactly one `tool.call` for c1, naming that child, which is the ID
+  held by the started record. The child runs, responds and closes
+  `completed`; the parent's orphaned run continues (no new `run.started`)
+  with c1's result to `responded`; then the host's own run responds.
+
+  Scripted responses (scripted-a, shared, in call order): 5 — 1 parent
+  turn 1 step 1 (c1; crash after its started record); 2 child step 1
+  (lookup, during recovery); 3 child step 2; 4 parent turn 1 step 2
+  (orphaned run continues); 5 parent turn 2 (the host's run). Stubs:
+  lookup 1, update_record 0.
+requirements: [ORCH-002, ORCH-071]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Persona
+        id: helper
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You look things up and update records."
+        tools: [lookup@1, update_record@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: ask_helper
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the helper persona to look something up.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: mutating
+        binding: { kind: agent, persona: helper@1 }
+      - kind: Persona
+        id: coordinator
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You coordinate helpers."
+        tools: [lookup@1, update_record@1, ask_helper@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # 1. parent, turn 1 step 1 (crash after c1's started record)
+        - parts: [{ type: tool_call, callId: c1, tool: ask_helper, arguments: { task: "Find record a" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 2. recovery: child, step 1
+        - parts: [{ type: tool_call, callId: h1, tool: lookup, arguments: { key: a } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 3. recovery: child, step 2
+        - parts: [{ type: text, text: "Record a holds A." }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 4. recovery: parent, turn 1 step 2 (orphaned run continues)
+        - parts: [{ type: text, text: "The helper says record a holds A." }]
+          usage: { inputTokens: 40, outputTokens: 8, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 5. host's own run: parent, turn 2
+        - parts: [{ type: text, text: "You are welcome." }]
+          usage: { inputTokens: 50, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "A" } }
+      update_record: []
+script:
+  - crash: { at: after_started_record }
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: coordinator@1
+    input: [{ type: text, text: "Ask the helper to find record a" }]
+  - restart: {}
+  - clock: { advance: PT1H }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Thanks" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: run.started, runId: $r1 }
+          - { type: tool.call, runId: $r1, turn: 1, payload: { callId: c1, tool: ask_helper, childSessionId: $child } }
+          - { type: tool.result, runId: $r1, turn: 1, payload: { callId: c1, tool: ask_helper, result: { ok: { output: { text: "Record a holds A." } } } } }
+          - { type: run.ended, runId: $r1, payload: { reason: responded } }
+          - { type: run.started, runId: { $not: $r1 }, timestamp: { $regex: "^2026-01-01T01:00:00" } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: escalation.raised }
+    $child:
+      state: closed
+      closeReason: completed
+      events:
+        mode: subsequence
+        items:
+          # created only during recovery (+1h), under the recorded ID
+          - { type: session.created, timestamp: { $regex: "^2026-01-01T01:00:00" }, payload: { persona: helper@1, parent: { sessionId: $s, runId: $r1, callId: c1, tool: ask_helper, depth: 1 } } }
+          - { type: run.started }
+          - { type: tool.result, payload: { callId: h1, tool: lookup, result: { ok: { output: { value: "A" } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+          - { type: session.closed, payload: { reason: completed } }
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $all:
+            - $count: { of: { type: run.started }, equals: 2 }
+            # Re-dispatch emits no new tool.call (amendment, further readings)
+            - $count: { of: { type: tool.call, payload: { callId: c1 } }, equals: 1 }
+            - $count: { of: { type: tool.result, payload: { callId: c1 } }, equals: 1 }
+        $child:
+          $all:
+            - $count: { of: { type: session.created }, equals: 1 }
+            - $count: { of: { type: run.started }, equals: 1 }
+    idempotencyStore:
+      t1:
+        $k: { state: completed, childSessionId: $child, outcome: { ok: { output: { text: "Record a holds A." } } } }
+  stubCalls:
+    lookup: [{ arguments: { key: a }, completed: true, context: { sessionId: $child } }]
+    update_record: { count: 0 }
+  providerRequests:
+    scripted-a: { count: 5 }

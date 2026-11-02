@@ -16,6 +16,17 @@ description: >-
 
   Control: the parent itself, under default@1, goes on to take three
   steps and responds.
+
+  The child's lookup result is untrusted (the baseline bundle trusts no
+  tool), so the child is tainted; every result from a tainted child — `ok`
+  or error — taints the parent (Area 8 amendment, "Further readings
+  settled in review", ORCH-052/HOOK-120). The error result's `provenances`
+  are agent:helper followed by tool:lookup, and the parent's taint
+  provenances gain both, in that order; the parent's own later lookup adds
+  nothing new.
+
+  Scripted responses (shared, in call order): 4 — parent, child, parent,
+  parent. lookup stubs: 2 (child h1, parent c2).
 requirements: [ORCH-005]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -104,12 +115,14 @@ expect:
   sessions:
     $s:
       state: idle
+      checkpoint: { taint: { tainted: true, provenances: ["agent:helper", "tool:lookup"] } }
       events:
         mode: subsequence
         items:
           - { type: session.created, payload: { persona: coordinator@1, profile: default@1 } }
           - type: tool.result
             step: 1
+            provenances: ["agent:helper", "tool:lookup"]
             payload:
               callId: c1
               tool: ask_helper

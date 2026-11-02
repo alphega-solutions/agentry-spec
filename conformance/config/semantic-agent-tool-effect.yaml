@@ -11,6 +11,10 @@ description: >-
     accepted.
   - `ask_relay` declared without egress → rejected, because egress is
     reachable transitively; `egress: true` → accepted.
+
+  Each rejection names the agent tool (`details.artifact`) and the field
+  (`/effect` or `/egress`) (Area 8 amendment, "Readings settled with the
+  Area 8 fixtures", ORCH-020; CFG-032).
 requirements: [CFG-042, ORCH-020]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -41,7 +45,7 @@ script:
   - load:
       artifacts:
         - { kind: Tool, id: ask_writer, version: 1, schemaVersion: "0.1.0", description: Ask the writer persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: read, binding: { kind: agent, persona: writer@1 } }
-    expect: { ok: false, error: { category: configuration } }
+    expect: { ok: false, error: { category: configuration, details: { artifact: ask_writer@1, field: /effect } } }
   - load:
       artifacts:
         - { kind: Tool, id: ask_writer, version: 1, schemaVersion: "0.1.0", description: Ask the writer persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: mutating, binding: { kind: agent, persona: writer@1 } }
@@ -49,7 +53,7 @@ script:
   - load:
       artifacts:
         - { kind: Tool, id: ask_mailer, version: 1, schemaVersion: "0.1.0", description: Ask the mailer persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: read, binding: { kind: agent, persona: mailer@1 } }
-    expect: { ok: false, error: { category: configuration } }
+    expect: { ok: false, error: { category: configuration, details: { artifact: ask_mailer@1, field: /egress } } }
   - load:
       artifacts:
         - { kind: Tool, id: ask_mailer, version: 1, schemaVersion: "0.1.0", description: Ask the mailer persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: read, egress: true, binding: { kind: agent, persona: mailer@1 } }
@@ -58,7 +62,7 @@ script:
       artifacts:
         - { kind: Persona, id: relay, version: 1, schemaVersion: "0.1.0", instructions: "You pass work to the mailer.", tools: [ask_mailer@1], defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a } }
         - { kind: Tool, id: ask_relay, version: 1, schemaVersion: "0.1.0", description: Ask the relay persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: read, binding: { kind: agent, persona: relay@1 } }
-    expect: { ok: false, error: { category: configuration } }
+    expect: { ok: false, error: { category: configuration, details: { artifact: ask_relay@1, field: /egress } } }
   - load:
       artifacts:
         - { kind: Persona, id: relay, version: 1, schemaVersion: "0.1.0", instructions: "You pass work to the mailer.", tools: [ask_mailer@1], defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a } }
