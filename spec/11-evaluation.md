@@ -202,3 +202,10 @@ Schemas: `schemas/eval/v1/bundle.yaml` (trace bundle), `case.yaml` (eval case an
 **Verified elsewhere**
 
 - Requirements on the runner, the test-double kit and the spec repository itself are listed with how they are verified under `verifiedElsewhere` in `conformance/coverage.yaml`. The spec repository's own obligations (EVAL-002 placeholders, EVAL-010 coverage) are exercised by `tools/selftest.py` in spec CI.
+
+**Readings settled with the Area 11 fixtures**
+
+- EVAL-044: an eval run executes cells in declared order, then repeats, then cases, each case graded before the next starts. Every run of a case starts from the case's stub behaviours afresh; setup stubs of the surrounding fixture do not apply inside an eval run. A cell's `model` replaces the persona's primary model for that cell. An unstubbed call is delivered to the model as a tool result error and the run continues (as EVAL-062).
+- EVAL-050: a judge's model answers with a `structured` part `{score}`, a number in [0, 1]. Grader `evidence` lists event IDs in log order. A grader that cannot run records `passed: false` and a `code` on its result.
+- EVAL-080: a cell's `tokens` are `inputTokens + outputTokens` over its sessions (PROV-071), and `cost` likewise, both excluding judge calls; `variance` is the population variance p(1−p) of each case's pass indicator across repeats, averaged over cases; `results` are listed in execution order. A report with no gate configured has `gate: {passed: true, failures: []}`; a pass rate is below the threshold only when strictly less. A run's `baseline` names the run ID of an earlier report available to the runner.
+- EVAL-070: conversion runs the redaction and labelling hooks of the configuration in force when `convert` is called, emits no events into the recorded session, and drops every blob, so a draft fixture carries no `blobStore` contents.

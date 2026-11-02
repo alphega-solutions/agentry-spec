@@ -1,0 +1,478 @@
+# Golden trace bundle (EVAL-026, EVAL-061) — synthetic.
+# Snapshot: baseline with source kb (vector store) and provider scripted-sum
+# in the deployment, and default@1 with automatic retrieval (kb, limit 1)
+# and `summarize` compaction by scripted-sum/sum-1. Two turns. Each turn's
+# retrieval is recorded as context.retrieved with the result part's JSON in
+# a blob. Turn 2's context (scripted-a contextLimit 120, maxOutputTokens 20:
+# space 100, trigger above 90) would be 8 + 23 + 20 + 48 = 99 tokens, so
+# turn 1 is summarized: context.compacted (summarize, units [{turn: 1}]) with
+# the 5-word summary part's JSON in a blob, then 8 + 5 + 48 = 61. Both runs
+# end `responded`. Generated: hashes and IDs computed.
+schemaVersion: 0.1.0
+tenant: t1
+sessionId: 019cbd39-ae80-7001-8000-005500000001
+exportedAt: '2026-03-05T09:05:00.000Z'
+contract: 0.1.0
+exporter: agentry-spec synthetic golden bundle
+events:
+- schemaVersion: 0.1.0
+  eventId: 019cbd39-aee4-7002-8000-005500000002
+  sessionId: 019cbd39-ae80-7001-8000-005500000001
+  seq: 1
+  type: session.created
+  timestamp: '2026-03-05T09:00:00.100Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:5d5fd5a488fbd5146e7b569d071cf15e0f460f87ea6e5ae0696766ea4f28f63a
+  traceContext: {traceparent: 00-8ff92f3577b34da6a3ce929d0e0e473a-0000000000000001-01}
+  payload: {persona: assistant@1, profile: default@1}
+- schemaVersion: 0.1.0
+  eventId: 019cbd39-af48-7004-8000-005500000004
+  sessionId: 019cbd39-ae80-7001-8000-005500000001
+  runId: 019cbd39-aee4-7003-8000-005500000003
+  seq: 2
+  type: run.started
+  timestamp: '2026-03-05T09:00:00.200Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:5d5fd5a488fbd5146e7b569d071cf15e0f460f87ea6e5ae0696766ea4f28f63a
+  traceContext: {traceparent: 00-8ff92f3577b34da6a3ce929d0e0e473a-0000000000000002-01}
+  payload: {kind: run}
+- schemaVersion: 0.1.0
+  eventId: 019cbd39-afac-7005-8000-005500000005
+  sessionId: 019cbd39-ae80-7001-8000-005500000001
+  runId: 019cbd39-aee4-7003-8000-005500000003
+  seq: 3
+  turn: 1
+  type: turn.started
+  timestamp: '2026-03-05T09:00:00.300Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:5d5fd5a488fbd5146e7b569d071cf15e0f460f87ea6e5ae0696766ea4f28f63a
+  traceContext: {traceparent: 00-8ff92f3577b34da6a3ce929d0e0e473a-0000000000000003-01}
+  payload: {}
+- schemaVersion: 0.1.0
+  eventId: 019cbd39-b010-7006-8000-005500000006
+  sessionId: 019cbd39-ae80-7001-8000-005500000001
+  runId: 019cbd39-aee4-7003-8000-005500000003
+  seq: 4
+  turn: 1
+  type: context.retrieved
+  timestamp: '2026-03-05T09:00:00.400Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:5d5fd5a488fbd5146e7b569d071cf15e0f460f87ea6e5ae0696766ea4f28f63a
+  traceContext: {traceparent: 00-8ff92f3577b34da6a3ce929d0e0e473a-0000000000000004-01}
+  provenances: ['retrieval:kb']
+  labels: []
+  payload:
+    source: kb
+    query: SYN-AP-01 SYN-AP-02 SYN-AP-03 SYN-AP-04 SYN-AP-05 SYN-AP-06 SYN-AP-07 SYN-AP-08 SYN-AP-09 SYN-AP-10 SYN-AP-11 SYN-AP-12 SYN-AP-13 SYN-AP-14 SYN-AP-15 SYN-AP-16 SYN-AP-17 SYN-AP-18 SYN-AP-19 SYN-AP-20
+    limit: 1
+    results:
+    - blob:
+        id: blob-golden-55-01
+        hash: sha256:0ea6296ccd741e756edcf83994de7b0413669d4320893d55d6231b480ae5bd95
+        mediaType: application/json
+        size: 88
+      labels: []
+- schemaVersion: 0.1.0
+  eventId: 019cbd39-b074-7007-8000-005500000007
+  sessionId: 019cbd39-ae80-7001-8000-005500000001
+  runId: 019cbd39-aee4-7003-8000-005500000003
+  seq: 5
+  turn: 1
+  step: 1
+  type: model.request
+  timestamp: '2026-03-05T09:00:00.500Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:5d5fd5a488fbd5146e7b569d071cf15e0f460f87ea6e5ae0696766ea4f28f63a
+  traceContext: {traceparent: 00-8ff92f3577b34da6a3ce929d0e0e473a-0000000000000005-01}
+  payload:
+    provider: scripted-a
+    model: model-a
+    role: primary
+    context:
+      id: blob-golden-55-02
+      hash: sha256:6c31f4c56df33a047eb0a229ba2019a3c7820a4690ca30dcdf6b449bd210c5e6
+      mediaType: application/json
+      size: 585
+- schemaVersion: 0.1.0
+  eventId: 019cbd39-b0d8-7008-8000-005500000008
+  sessionId: 019cbd39-ae80-7001-8000-005500000001
+  runId: 019cbd39-aee4-7003-8000-005500000003
+  seq: 6
+  turn: 1
+  step: 1
+  type: model.response
+  timestamp: '2026-03-05T09:00:00.600Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:5d5fd5a488fbd5146e7b569d071cf15e0f460f87ea6e5ae0696766ea4f28f63a
+  traceContext: {traceparent: 00-8ff92f3577b34da6a3ce929d0e0e473a-0000000000000006-01}
+  provenances: [model]
+  labels: []
+  payload:
+    provider: scripted-a
+    model: model-a
+    message:
+      role: assistant
+      parts:
+      - type: text
+        text: SYN-AR-01 SYN-AR-02 SYN-AR-03 SYN-AR-04 SYN-AR-05 SYN-AR-06 SYN-AR-07 SYN-AR-08 SYN-AR-09 SYN-AR-10 SYN-AR-11 SYN-AR-12 SYN-AR-13 SYN-AR-14 SYN-AR-15 SYN-AR-16 SYN-AR-17 SYN-AR-18 SYN-AR-19
+          SYN-AR-20
+        provenance: model
+        labels: []
+    usage: {inputTokens: 31, outputTokens: 20, cachedInputTokens: 0, reasoningTokens: 0}
+- schemaVersion: 0.1.0
+  eventId: 019cbd39-b13c-7009-8000-005500000009
+  sessionId: 019cbd39-ae80-7001-8000-005500000001
+  runId: 019cbd39-aee4-7003-8000-005500000003
+  seq: 7
+  turn: 1
+  type: turn.completed
+  timestamp: '2026-03-05T09:00:00.700Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:5d5fd5a488fbd5146e7b569d071cf15e0f460f87ea6e5ae0696766ea4f28f63a
+  traceContext: {traceparent: 00-8ff92f3577b34da6a3ce929d0e0e473a-0000000000000007-01}
+  payload: {}
+- schemaVersion: 0.1.0
+  eventId: 019cbd39-b1a0-700a-8000-00550000000a
+  sessionId: 019cbd39-ae80-7001-8000-005500000001
+  runId: 019cbd39-aee4-7003-8000-005500000003
+  seq: 8
+  type: run.ended
+  timestamp: '2026-03-05T09:00:00.800Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:5d5fd5a488fbd5146e7b569d071cf15e0f460f87ea6e5ae0696766ea4f28f63a
+  traceContext: {traceparent: 00-8ff92f3577b34da6a3ce929d0e0e473a-0000000000000008-01}
+  payload: {reason: responded}
+- schemaVersion: 0.1.0
+  eventId: 019cbd39-b204-700c-8000-00550000000c
+  sessionId: 019cbd39-ae80-7001-8000-005500000001
+  runId: 019cbd39-b1a0-700b-8000-00550000000b
+  seq: 9
+  type: run.started
+  timestamp: '2026-03-05T09:00:00.900Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:5d5fd5a488fbd5146e7b569d071cf15e0f460f87ea6e5ae0696766ea4f28f63a
+  traceContext: {traceparent: 00-8ff92f3577b34da6a3ce929d0e0e473a-0000000000000009-01}
+  payload: {kind: run}
+- schemaVersion: 0.1.0
+  eventId: 019cbd39-b268-700d-8000-00550000000d
+  sessionId: 019cbd39-ae80-7001-8000-005500000001
+  runId: 019cbd39-b1a0-700b-8000-00550000000b
+  seq: 10
+  turn: 2
+  type: turn.started
+  timestamp: '2026-03-05T09:00:01.000Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:5d5fd5a488fbd5146e7b569d071cf15e0f460f87ea6e5ae0696766ea4f28f63a
+  traceContext: {traceparent: 00-8ff92f3577b34da6a3ce929d0e0e473a-000000000000000a-01}
+  payload: {}
+- schemaVersion: 0.1.0
+  eventId: 019cbd39-b2cc-700e-8000-00550000000e
+  sessionId: 019cbd39-ae80-7001-8000-005500000001
+  runId: 019cbd39-b1a0-700b-8000-00550000000b
+  seq: 11
+  turn: 2
+  type: context.retrieved
+  timestamp: '2026-03-05T09:00:01.100Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:5d5fd5a488fbd5146e7b569d071cf15e0f460f87ea6e5ae0696766ea4f28f63a
+  traceContext: {traceparent: 00-8ff92f3577b34da6a3ce929d0e0e473a-000000000000000b-01}
+  provenances: ['retrieval:kb']
+  labels: []
+  payload:
+    source: kb
+    query: SYN-BP-01 SYN-BP-02 SYN-BP-03 SYN-BP-04 SYN-BP-05 SYN-BP-06 SYN-BP-07 SYN-BP-08 SYN-BP-09 SYN-BP-10 SYN-BP-11 SYN-BP-12 SYN-BP-13 SYN-BP-14 SYN-BP-15 SYN-BP-16 SYN-BP-17 SYN-BP-18 SYN-BP-19 SYN-BP-20
+      SYN-BP-21 SYN-BP-22 SYN-BP-23 SYN-BP-24 SYN-BP-25 SYN-BP-26 SYN-BP-27 SYN-BP-28 SYN-BP-29 SYN-BP-30 SYN-BP-31 SYN-BP-32 SYN-BP-33 SYN-BP-34 SYN-BP-35 SYN-BP-36 SYN-BP-37 SYN-BP-38 SYN-BP-39 SYN-BP-40
+      SYN-BP-41 SYN-BP-42 SYN-BP-43 SYN-BP-44 SYN-BP-45
+    limit: 1
+    results:
+    - blob:
+        id: blob-golden-55-03
+        hash: sha256:83777f7d77e32c72b0ce796c06d4fbf508c5460755650815292644be062b1628
+        mediaType: application/json
+        size: 92
+      labels: []
+- schemaVersion: 0.1.0
+  eventId: 019cbd39-b330-700f-8000-00550000000f
+  sessionId: 019cbd39-ae80-7001-8000-005500000001
+  runId: 019cbd39-b1a0-700b-8000-00550000000b
+  seq: 12
+  turn: 2
+  step: 1
+  type: context.compacted
+  timestamp: '2026-03-05T09:00:01.200Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:5d5fd5a488fbd5146e7b569d071cf15e0f460f87ea6e5ae0696766ea4f28f63a
+  traceContext: {traceparent: 00-8ff92f3577b34da6a3ce929d0e0e473a-000000000000000c-01}
+  provenances: [principal, 'retrieval:kb', model]
+  labels: []
+  payload:
+    mode: summarize
+    units:
+    - {turn: 1}
+    summary:
+      id: blob-golden-55-04
+      hash: sha256:fc56ceafb057f30fade18c47c2affdbada5ee843079d43ed8750ee0c271f578a
+      mediaType: application/json
+      size: 164
+    provenances: [principal, 'retrieval:kb', model]
+    labels: []
+    usage: {inputTokens: 41, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0}
+- schemaVersion: 0.1.0
+  eventId: 019cbd39-b394-7010-8000-005500000010
+  sessionId: 019cbd39-ae80-7001-8000-005500000001
+  runId: 019cbd39-b1a0-700b-8000-00550000000b
+  seq: 13
+  turn: 2
+  step: 1
+  type: model.request
+  timestamp: '2026-03-05T09:00:01.300Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:5d5fd5a488fbd5146e7b569d071cf15e0f460f87ea6e5ae0696766ea4f28f63a
+  traceContext: {traceparent: 00-8ff92f3577b34da6a3ce929d0e0e473a-000000000000000d-01}
+  payload:
+    provider: scripted-a
+    model: model-a
+    role: primary
+    context:
+      id: blob-golden-55-05
+      hash: sha256:17de4614af2f901f46d226a9c13f96508ce267ea1e70670eba1176096188aa5d
+      mediaType: application/json
+      size: 1035
+- schemaVersion: 0.1.0
+  eventId: 019cbd39-b3f8-7011-8000-005500000011
+  sessionId: 019cbd39-ae80-7001-8000-005500000001
+  runId: 019cbd39-b1a0-700b-8000-00550000000b
+  seq: 14
+  turn: 2
+  step: 1
+  type: model.response
+  timestamp: '2026-03-05T09:00:01.400Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:5d5fd5a488fbd5146e7b569d071cf15e0f460f87ea6e5ae0696766ea4f28f63a
+  traceContext: {traceparent: 00-8ff92f3577b34da6a3ce929d0e0e473a-000000000000000e-01}
+  provenances: [model]
+  labels: []
+  payload:
+    provider: scripted-a
+    model: model-a
+    message:
+      role: assistant
+      parts:
+      - {type: text, text: SYN-BR-01 SYN-BR-02 SYN-BR-03 SYN-BR-04 SYN-BR-05, provenance: model, labels: []}
+    usage: {inputTokens: 61, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0}
+- schemaVersion: 0.1.0
+  eventId: 019cbd39-b45c-7012-8000-005500000012
+  sessionId: 019cbd39-ae80-7001-8000-005500000001
+  runId: 019cbd39-b1a0-700b-8000-00550000000b
+  seq: 15
+  turn: 2
+  type: turn.completed
+  timestamp: '2026-03-05T09:00:01.500Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:5d5fd5a488fbd5146e7b569d071cf15e0f460f87ea6e5ae0696766ea4f28f63a
+  traceContext: {traceparent: 00-8ff92f3577b34da6a3ce929d0e0e473a-000000000000000f-01}
+  payload: {}
+- schemaVersion: 0.1.0
+  eventId: 019cbd39-b4c0-7013-8000-005500000013
+  sessionId: 019cbd39-ae80-7001-8000-005500000001
+  runId: 019cbd39-b1a0-700b-8000-00550000000b
+  seq: 16
+  type: run.ended
+  timestamp: '2026-03-05T09:00:01.600Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:5d5fd5a488fbd5146e7b569d071cf15e0f460f87ea6e5ae0696766ea4f28f63a
+  traceContext: {traceparent: 00-8ff92f3577b34da6a3ce929d0e0e473a-0000000000000010-01}
+  payload: {reason: responded}
+blobs:
+- ref:
+    id: blob-golden-55-01
+    hash: sha256:0ea6296ccd741e756edcf83994de7b0413669d4320893d55d6231b480ae5bd95
+    mediaType: application/json
+    size: 88
+  labels: []
+  base64: eyJ0eXBlIjoidGV4dCIsInRleHQiOiJTWU4tS0ItMDA2MS1BIGZpdmUgZGF5cyIsInByb3ZlbmFuY2UiOiJyZXRyaWV2YWw6a2IiLCJsYWJlbHMiOltdfQ==
+- ref:
+    id: blob-golden-55-02
+    hash: sha256:6c31f4c56df33a047eb0a229ba2019a3c7820a4690ca30dcdf6b449bd210c5e6
+    mediaType: application/json
+    size: 585
+  labels: []
+  base64: W3sicm9sZSI6InN5c3RlbSIsInBhcnRzIjpbeyJ0eXBlIjoidGV4dCIsInRleHQiOiJGb2xsb3cgb3JnYW5pc2F0aW9uYWwgcG9saWN5LiIsInByb3ZlbmFuY2UiOiJzeXN0ZW0iLCJsYWJlbHMiOltdfSx7InR5cGUiOiJ0ZXh0IiwidGV4dCI6IllvdSBhcmUgYSB0ZXN0IGFzc2lzdGFudC4iLCJwcm92ZW5hbmNlIjoic3lzdGVtIiwibGFiZWxzIjpbXX1dfSx7InJvbGUiOiJwcmluY2lwYWwiLCJwYXJ0cyI6W3sidHlwZSI6InRleHQiLCJ0ZXh0IjoiU1lOLUFQLTAxIFNZTi1BUC0wMiBTWU4tQVAtMDMgU1lOLUFQLTA0IFNZTi1BUC0wNSBTWU4tQVAtMDYgU1lOLUFQLTA3IFNZTi1BUC0wOCBTWU4tQVAtMDkgU1lOLUFQLTEwIFNZTi1BUC0xMSBTWU4tQVAtMTIgU1lOLUFQLTEzIFNZTi1BUC0xNCBTWU4tQVAtMTUgU1lOLUFQLTE2IFNZTi1BUC0xNyBTWU4tQVAtMTggU1lOLUFQLTE5IFNZTi1BUC0yMCIsInByb3ZlbmFuY2UiOiJwcmluY2lwYWwiLCJsYWJlbHMiOltdfSx7InR5cGUiOiJ0ZXh0IiwidGV4dCI6IlNZTi1LQi0wMDYxLUEgZml2ZSBkYXlzIiwicHJvdmVuYW5jZSI6InJldHJpZXZhbDprYiIsImxhYmVscyI6W119XX1d
+- ref:
+    id: blob-golden-55-03
+    hash: sha256:83777f7d77e32c72b0ce796c06d4fbf508c5460755650815292644be062b1628
+    mediaType: application/json
+    size: 92
+  labels: []
+  base64: eyJ0eXBlIjoidGV4dCIsInRleHQiOiJTWU4tS0ItMDA2MS1CIG9yaWdpbmFsIGNhcmQiLCJwcm92ZW5hbmNlIjoicmV0cmlldmFsOmtiIiwibGFiZWxzIjpbXX0=
+- ref:
+    id: blob-golden-55-04
+    hash: sha256:fc56ceafb057f30fade18c47c2affdbada5ee843079d43ed8750ee0c271f578a
+    mediaType: application/json
+    size: 164
+  labels: []
+  base64: eyJ0eXBlIjoidGV4dCIsInRleHQiOiJTWU4tU1VNTUFSWS0wMDYxLTAxIFNZTi1TVU1NQVJZLTAwNjEtMDIgU1lOLVNVTU1BUlktMDA2MS0wMyBTWU4tU1VNTUFSWS0wMDYxLTA0IFNZTi1TVU1NQVJZLTAwNjEtMDUiLCJwcm92ZW5hbmNlIjoicmV0cmlldmFsOmtiIiwibGFiZWxzIjpbXX0=
+- ref:
+    id: blob-golden-55-05
+    hash: sha256:17de4614af2f901f46d226a9c13f96508ce267ea1e70670eba1176096188aa5d
+    mediaType: application/json
+    size: 1035
+  labels: []
+  base64: W3sicm9sZSI6InN5c3RlbSIsInBhcnRzIjpbeyJ0eXBlIjoidGV4dCIsInRleHQiOiJGb2xsb3cgb3JnYW5pc2F0aW9uYWwgcG9saWN5LiIsInByb3ZlbmFuY2UiOiJzeXN0ZW0iLCJsYWJlbHMiOltdfSx7InR5cGUiOiJ0ZXh0IiwidGV4dCI6IllvdSBhcmUgYSB0ZXN0IGFzc2lzdGFudC4iLCJwcm92ZW5hbmNlIjoic3lzdGVtIiwibGFiZWxzIjpbXX1dfSx7InJvbGUiOiJhc3Npc3RhbnQiLCJwYXJ0cyI6W3sidHlwZSI6InRleHQiLCJ0ZXh0IjoiU1lOLVNVTU1BUlktMDA2MS0wMSBTWU4tU1VNTUFSWS0wMDYxLTAyIFNZTi1TVU1NQVJZLTAwNjEtMDMgU1lOLVNVTU1BUlktMDA2MS0wNCBTWU4tU1VNTUFSWS0wMDYxLTA1IiwicHJvdmVuYW5jZSI6InJldHJpZXZhbDprYiIsImxhYmVscyI6W119XX0seyJyb2xlIjoicHJpbmNpcGFsIiwicGFydHMiOlt7InR5cGUiOiJ0ZXh0IiwidGV4dCI6IlNZTi1CUC0wMSBTWU4tQlAtMDIgU1lOLUJQLTAzIFNZTi1CUC0wNCBTWU4tQlAtMDUgU1lOLUJQLTA2IFNZTi1CUC0wNyBTWU4tQlAtMDggU1lOLUJQLTA5IFNZTi1CUC0xMCBTWU4tQlAtMTEgU1lOLUJQLTEyIFNZTi1CUC0xMyBTWU4tQlAtMTQgU1lOLUJQLTE1IFNZTi1CUC0xNiBTWU4tQlAtMTcgU1lOLUJQLTE4IFNZTi1CUC0xOSBTWU4tQlAtMjAgU1lOLUJQLTIxIFNZTi1CUC0yMiBTWU4tQlAtMjMgU1lOLUJQLTI0IFNZTi1CUC0yNSBTWU4tQlAtMjYgU1lOLUJQLTI3IFNZTi1CUC0yOCBTWU4tQlAtMjkgU1lOLUJQLTMwIFNZTi1CUC0zMSBTWU4tQlAtMzIgU1lOLUJQLTMzIFNZTi1CUC0zNCBTWU4tQlAtMzUgU1lOLUJQLTM2IFNZTi1CUC0zNyBTWU4tQlAtMzggU1lOLUJQLTM5IFNZTi1CUC00MCBTWU4tQlAtNDEgU1lOLUJQLTQyIFNZTi1CUC00MyBTWU4tQlAtNDQgU1lOLUJQLTQ1IiwicHJvdmVuYW5jZSI6InByaW5jaXBhbCIsImxhYmVscyI6W119LHsidHlwZSI6InRleHQiLCJ0ZXh0IjoiU1lOLUtCLTAwNjEtQiBvcmlnaW5hbCBjYXJkIiwicHJvdmVuYW5jZSI6InJldHJpZXZhbDprYiIsImxhYmVscyI6W119XX1d
+snapshot:
+  schemaVersion: 0.1.0
+  tenant: t1
+  hash: sha256:5d5fd5a488fbd5146e7b569d071cf15e0f460f87ea6e5ae0696766ea4f28f63a
+  createdAt: '2026-03-05T09:00:00.000Z'
+  artifacts:
+    Deployment:
+    - kind: Deployment
+      id: test
+      version: 1
+      schemaVersion: 0.1.0
+      environment: test
+      policyBundles: [org@1]
+      attachmentSources: [upload, email]
+      providers:
+      - {id: scripted-a, adapter: scripted, endpoint: 'memory://scripted-a', region: test-region, retainsData: false}
+      - {id: scripted-b, adapter: scripted, endpoint: 'memory://scripted-b', region: test-region, retainsData: false}
+      - {id: scripted-sum, adapter: scripted, endpoint: 'memory://scripted-sum', region: test-region, retainsData: false}
+      ports:
+        eventLog: {adapter: memory, region: test-region}
+        checkpointStore: {adapter: memory, region: test-region}
+        idempotencyStore: {adapter: memory, region: test-region}
+        snapshotStore: {adapter: memory, region: test-region}
+        blobStore: {adapter: memory, region: test-region}
+        auditLog: {adapter: memory, region: test-region}
+        secrets: {adapter: memory, region: test-region}
+        vectorStore:
+          adapter: memory
+          region: test-region
+          sources: [kb]
+      retention: {events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D}
+    Persona:
+    - kind: Persona
+      id: assistant
+      version: 1
+      schemaVersion: 0.1.0
+      displayName: Test assistant
+      instructions: You are a test assistant.
+      tools: [lookup@1, update_record@1]
+      fallbackMessage: This request was blocked.
+      defaultProfile: default@1
+      allowedProfiles: [default@1, streamed@1]
+      model:
+        provider: scripted-a
+        name: model-a
+        fallbacks:
+        - {provider: scripted-b, name: model-b}
+    PolicyBundle:
+    - kind: PolicyBundle
+      id: org
+      version: 1
+      schemaVersion: 0.1.0
+      policyInstructions: Follow organisational policy.
+      defaultFallbackMessage: I can't help with that request.
+      sensitivityPolicies:
+        pii:
+          allowedProviders: [scripted-a, scripted-b]
+          redaction:
+          - {mode: mask}
+        phi:
+          allowedProviders: [scripted-a]
+          redaction:
+          - {mode: mask}
+    HarnessProfile:
+    - kind: HarnessProfile
+      id: default
+      version: 1
+      schemaVersion: 0.1.0
+      idleTtl: PT24H
+      suspendedTtl: PT72H
+      stepLimit: 8
+      deliveryMode: buffered
+      budget: {tokens: 100000}
+      timeouts: {run: PT5M, tool: PT30S}
+      retry: {unavailable: 2}
+      outputRetryLimit: 2
+      limits: {partSize: 1048576, sessionSize: 10485760}
+      defaultAttachmentLabels: []
+      context:
+        compaction:
+          mode: summarize
+          model: {provider: scripted-sum, name: sum-1}
+          triggerPercent: 90
+        retrieval: {auto: true, source: kb, limit: 1}
+      onExpiry: close
+    - kind: HarnessProfile
+      id: streamed
+      version: 1
+      schemaVersion: 0.1.0
+      idleTtl: PT24H
+      suspendedTtl: PT72H
+      stepLimit: 8
+      deliveryMode: streamed
+      budget: {tokens: 100000}
+      timeouts: {run: PT5M, tool: PT30S}
+      retry: {unavailable: 2}
+      limits: {partSize: 1048576, sessionSize: 10485760}
+      onExpiry: close
+    Tool:
+    - kind: Tool
+      id: lookup
+      version: 1
+      schemaVersion: 0.1.0
+      description: Look up a record by key.
+      input:
+        type: object
+        additionalProperties: false
+        required: [key]
+        properties:
+          key: {type: string}
+      effect: read
+      binding: {kind: native, handler: test.lookup}
+      egress: false
+      idempotent: false
+      approval: never
+      sensitivity: []
+      credentialMode: principal
+      onTainted: escalate
+      onTaintedEgress: block
+    - kind: Tool
+      id: update_record
+      version: 1
+      schemaVersion: 0.1.0
+      description: Update a record.
+      input:
+        type: object
+        additionalProperties: false
+        required: [key, value]
+        properties:
+          key: {type: string}
+          value: {type: string}
+      effect: mutating
+      idempotent: false
+      binding: {kind: native, handler: test.update_record}
+      egress: false
+      approval: never
+      sensitivity: []
+      credentialMode: principal
+      onTainted: escalate
+      onTaintedEgress: block
+auditRecords: []

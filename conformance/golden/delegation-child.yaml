@@ -1,0 +1,686 @@
+# Golden trace bundle (EVAL-025, EVAL-026, EVAL-062) — synthetic, with a child.
+# Snapshot: baseline plus helper@1 (persona, tools [lookup@1]) and the agent
+# tool ask_helper@1 (read, bound to helper@1), allowed to assistant@1. The
+# model calls ask_helper (c1, {task: Look up record k1}); a child session
+# (depth 1, its own bundle under `children`) answers "Record k1 holds
+# SYN-VALUE-0004." and is closed `completed`; the parent's tool.result is ok
+# {text: ...} with provenance agent:helper; the parent responds "The helper
+# says record k1 holds SYN-VALUE-0004." Generated: hashes and IDs computed.
+schemaVersion: 0.1.0
+tenant: t1
+sessionId: 019cb813-5280-7001-8000-004400000001
+exportedAt: '2026-03-04T09:05:00.000Z'
+contract: 0.1.0
+exporter: agentry-spec synthetic golden bundle
+events:
+- schemaVersion: 0.1.0
+  eventId: 019cb813-52e4-7002-8000-004400000002
+  sessionId: 019cb813-5280-7001-8000-004400000001
+  seq: 1
+  type: session.created
+  timestamp: '2026-03-04T09:00:00.100Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:a7faa5cfd75dde10c0945620c11dbd21f11b77182befaeedb2cbf41ad5dd36b2
+  traceContext: {traceparent: 00-7ef92f3577b34da6a3ce929d0e0e4739-0000000000000001-01}
+  payload: {persona: assistant@1, profile: default@1}
+- schemaVersion: 0.1.0
+  eventId: 019cb813-5348-7004-8000-004400000004
+  sessionId: 019cb813-5280-7001-8000-004400000001
+  runId: 019cb813-52e4-7003-8000-004400000003
+  seq: 2
+  type: run.started
+  timestamp: '2026-03-04T09:00:00.200Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:a7faa5cfd75dde10c0945620c11dbd21f11b77182befaeedb2cbf41ad5dd36b2
+  traceContext: {traceparent: 00-7ef92f3577b34da6a3ce929d0e0e4739-0000000000000002-01}
+  payload: {kind: run}
+- schemaVersion: 0.1.0
+  eventId: 019cb813-53ac-7005-8000-004400000005
+  sessionId: 019cb813-5280-7001-8000-004400000001
+  runId: 019cb813-52e4-7003-8000-004400000003
+  seq: 3
+  turn: 1
+  type: turn.started
+  timestamp: '2026-03-04T09:00:00.300Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:a7faa5cfd75dde10c0945620c11dbd21f11b77182befaeedb2cbf41ad5dd36b2
+  traceContext: {traceparent: 00-7ef92f3577b34da6a3ce929d0e0e4739-0000000000000003-01}
+  payload: {}
+- schemaVersion: 0.1.0
+  eventId: 019cb813-5410-7006-8000-004400000006
+  sessionId: 019cb813-5280-7001-8000-004400000001
+  runId: 019cb813-52e4-7003-8000-004400000003
+  seq: 4
+  turn: 1
+  step: 1
+  type: model.request
+  timestamp: '2026-03-04T09:00:00.400Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:a7faa5cfd75dde10c0945620c11dbd21f11b77182befaeedb2cbf41ad5dd36b2
+  traceContext: {traceparent: 00-7ef92f3577b34da6a3ce929d0e0e4739-0000000000000004-01}
+  payload:
+    provider: scripted-a
+    model: model-a
+    role: primary
+    context:
+      id: blob-golden-44-01
+      hash: sha256:f6ef855695b5cfdc41d3cd9891051ab96e5eb47a220e02f8026128e64c55a0a0
+      mediaType: application/json
+      size: 328
+- schemaVersion: 0.1.0
+  eventId: 019cb813-5474-7007-8000-004400000007
+  sessionId: 019cb813-5280-7001-8000-004400000001
+  runId: 019cb813-52e4-7003-8000-004400000003
+  seq: 5
+  turn: 1
+  step: 1
+  type: model.response
+  timestamp: '2026-03-04T09:00:00.500Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:a7faa5cfd75dde10c0945620c11dbd21f11b77182befaeedb2cbf41ad5dd36b2
+  traceContext: {traceparent: 00-7ef92f3577b34da6a3ce929d0e0e4739-0000000000000005-01}
+  provenances: [model]
+  labels: []
+  payload:
+    provider: scripted-a
+    model: model-a
+    message:
+      role: assistant
+      parts:
+      - type: tool_call
+        callId: c1
+        tool: ask_helper
+        arguments: {task: Look up record k1}
+        provenance: model
+        labels: []
+    usage: {inputTokens: 22, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0}
+- schemaVersion: 0.1.0
+  eventId: 019cb813-54d8-7009-8000-004400000009
+  sessionId: 019cb813-5280-7001-8000-004400000001
+  runId: 019cb813-52e4-7003-8000-004400000003
+  seq: 6
+  turn: 1
+  step: 1
+  type: tool.call
+  timestamp: '2026-03-04T09:00:00.600Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:a7faa5cfd75dde10c0945620c11dbd21f11b77182befaeedb2cbf41ad5dd36b2
+  traceContext: {traceparent: 00-7ef92f3577b34da6a3ce929d0e0e4739-0000000000000006-01}
+  provenances: [model]
+  labels: []
+  payload:
+    callId: c1
+    tool: ask_helper
+    arguments: {task: Look up record k1}
+    childSessionId: 019cb813-5474-7008-8000-004400000008
+- schemaVersion: 0.1.0
+  eventId: 019cb813-585c-7013-8000-004400000013
+  sessionId: 019cb813-5280-7001-8000-004400000001
+  runId: 019cb813-52e4-7003-8000-004400000003
+  seq: 7
+  turn: 1
+  step: 1
+  type: tool.result
+  timestamp: '2026-03-04T09:00:01.500Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:a7faa5cfd75dde10c0945620c11dbd21f11b77182befaeedb2cbf41ad5dd36b2
+  traceContext: {traceparent: 00-7ef92f3577b34da6a3ce929d0e0e4739-0000000000000007-01}
+  provenances: ['agent:helper']
+  labels: []
+  payload:
+    callId: c1
+    tool: ask_helper
+    result:
+      ok:
+        output: {text: Record k1 holds SYN-VALUE-0004.}
+- schemaVersion: 0.1.0
+  eventId: 019cb813-58c0-7014-8000-004400000014
+  sessionId: 019cb813-5280-7001-8000-004400000001
+  runId: 019cb813-52e4-7003-8000-004400000003
+  seq: 8
+  turn: 1
+  step: 2
+  type: model.request
+  timestamp: '2026-03-04T09:00:01.600Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:a7faa5cfd75dde10c0945620c11dbd21f11b77182befaeedb2cbf41ad5dd36b2
+  traceContext: {traceparent: 00-7ef92f3577b34da6a3ce929d0e0e4739-0000000000000008-01}
+  payload:
+    provider: scripted-a
+    model: model-a
+    role: primary
+    context:
+      id: blob-golden-44-02
+      hash: sha256:6425987250aa4493109ea27539d2765f74076afd15dc276097c5fbd740d1fa39
+      mediaType: application/json
+      size: 681
+- schemaVersion: 0.1.0
+  eventId: 019cb813-5924-7015-8000-004400000015
+  sessionId: 019cb813-5280-7001-8000-004400000001
+  runId: 019cb813-52e4-7003-8000-004400000003
+  seq: 9
+  turn: 1
+  step: 2
+  type: model.response
+  timestamp: '2026-03-04T09:00:01.700Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:a7faa5cfd75dde10c0945620c11dbd21f11b77182befaeedb2cbf41ad5dd36b2
+  traceContext: {traceparent: 00-7ef92f3577b34da6a3ce929d0e0e4739-0000000000000009-01}
+  provenances: [model]
+  labels: []
+  payload:
+    provider: scripted-a
+    model: model-a
+    message:
+      role: assistant
+      parts:
+      - {type: text, text: The helper says record k1 holds SYN-VALUE-0004., provenance: model, labels: []}
+    usage: {inputTokens: 34, outputTokens: 9, cachedInputTokens: 0, reasoningTokens: 0}
+- schemaVersion: 0.1.0
+  eventId: 019cb813-5988-7016-8000-004400000016
+  sessionId: 019cb813-5280-7001-8000-004400000001
+  runId: 019cb813-52e4-7003-8000-004400000003
+  seq: 10
+  turn: 1
+  type: turn.completed
+  timestamp: '2026-03-04T09:00:01.800Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:a7faa5cfd75dde10c0945620c11dbd21f11b77182befaeedb2cbf41ad5dd36b2
+  traceContext: {traceparent: 00-7ef92f3577b34da6a3ce929d0e0e4739-000000000000000a-01}
+  payload: {}
+- schemaVersion: 0.1.0
+  eventId: 019cb813-59ec-7017-8000-004400000017
+  sessionId: 019cb813-5280-7001-8000-004400000001
+  runId: 019cb813-52e4-7003-8000-004400000003
+  seq: 11
+  type: run.ended
+  timestamp: '2026-03-04T09:00:01.900Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:a7faa5cfd75dde10c0945620c11dbd21f11b77182befaeedb2cbf41ad5dd36b2
+  traceContext: {traceparent: 00-7ef92f3577b34da6a3ce929d0e0e4739-000000000000000b-01}
+  payload: {reason: responded}
+blobs:
+- ref:
+    id: blob-golden-44-01
+    hash: sha256:f6ef855695b5cfdc41d3cd9891051ab96e5eb47a220e02f8026128e64c55a0a0
+    mediaType: application/json
+    size: 328
+  labels: []
+  base64: W3sicm9sZSI6InN5c3RlbSIsInBhcnRzIjpbeyJ0eXBlIjoidGV4dCIsInRleHQiOiJGb2xsb3cgb3JnYW5pc2F0aW9uYWwgcG9saWN5LiIsInByb3ZlbmFuY2UiOiJzeXN0ZW0iLCJsYWJlbHMiOltdfSx7InR5cGUiOiJ0ZXh0IiwidGV4dCI6IllvdSBhcmUgYSB0ZXN0IGFzc2lzdGFudC4iLCJwcm92ZW5hbmNlIjoic3lzdGVtIiwibGFiZWxzIjpbXX1dfSx7InJvbGUiOiJwcmluY2lwYWwiLCJwYXJ0cyI6W3sidHlwZSI6InRleHQiLCJ0ZXh0IjoiQXNrIHRoZSBoZWxwZXIgYWJvdXQgcmVjb3JkIGsxLiIsInByb3ZlbmFuY2UiOiJwcmluY2lwYWwiLCJsYWJlbHMiOltdfV19XQ==
+- ref:
+    id: blob-golden-44-02
+    hash: sha256:6425987250aa4493109ea27539d2765f74076afd15dc276097c5fbd740d1fa39
+    mediaType: application/json
+    size: 681
+  labels: []
+  base64: W3sicm9sZSI6InN5c3RlbSIsInBhcnRzIjpbeyJ0eXBlIjoidGV4dCIsInRleHQiOiJGb2xsb3cgb3JnYW5pc2F0aW9uYWwgcG9saWN5LiIsInByb3ZlbmFuY2UiOiJzeXN0ZW0iLCJsYWJlbHMiOltdfSx7InR5cGUiOiJ0ZXh0IiwidGV4dCI6IllvdSBhcmUgYSB0ZXN0IGFzc2lzdGFudC4iLCJwcm92ZW5hbmNlIjoic3lzdGVtIiwibGFiZWxzIjpbXX1dfSx7InJvbGUiOiJwcmluY2lwYWwiLCJwYXJ0cyI6W3sidHlwZSI6InRleHQiLCJ0ZXh0IjoiQXNrIHRoZSBoZWxwZXIgYWJvdXQgcmVjb3JkIGsxLiIsInByb3ZlbmFuY2UiOiJwcmluY2lwYWwiLCJsYWJlbHMiOltdfV19LHsicm9sZSI6ImFzc2lzdGFudCIsInBhcnRzIjpbeyJ0eXBlIjoidG9vbF9jYWxsIiwiY2FsbElkIjoiYzEiLCJ0b29sIjoiYXNrX2hlbHBlciIsImFyZ3VtZW50cyI6eyJ0YXNrIjoiTG9vayB1cCByZWNvcmQgazEifSwicHJvdmVuYW5jZSI6Im1vZGVsIiwibGFiZWxzIjpbXX1dfSx7InJvbGUiOiJ0b29sIiwicGFydHMiOlt7InR5cGUiOiJ0b29sX3Jlc3VsdCIsImNhbGxJZCI6ImMxIiwidG9vbCI6ImFza19oZWxwZXIiLCJyZXN1bHQiOnsib2siOnsib3V0cHV0Ijp7InRleHQiOiJSZWNvcmQgazEgaG9sZHMgU1lOLVZBTFVFLTAwMDQuIn19fSwicHJvdmVuYW5jZSI6ImFnZW50OmhlbHBlciIsImxhYmVscyI6W119XX1d
+snapshot:
+  schemaVersion: 0.1.0
+  tenant: t1
+  hash: sha256:a7faa5cfd75dde10c0945620c11dbd21f11b77182befaeedb2cbf41ad5dd36b2
+  createdAt: '2026-03-04T09:00:00.000Z'
+  artifacts:
+    Deployment:
+    - kind: Deployment
+      id: test
+      version: 1
+      schemaVersion: 0.1.0
+      environment: test
+      policyBundles: [org@1]
+      attachmentSources: [upload, email]
+      providers:
+      - {id: scripted-a, adapter: scripted, endpoint: 'memory://scripted-a', region: test-region, retainsData: false}
+      - {id: scripted-b, adapter: scripted, endpoint: 'memory://scripted-b', region: test-region, retainsData: false}
+      ports:
+        eventLog: {adapter: memory, region: test-region}
+        checkpointStore: {adapter: memory, region: test-region}
+        idempotencyStore: {adapter: memory, region: test-region}
+        snapshotStore: {adapter: memory, region: test-region}
+        blobStore: {adapter: memory, region: test-region}
+        auditLog: {adapter: memory, region: test-region}
+        secrets: {adapter: memory, region: test-region}
+      retention: {events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D}
+    Persona:
+    - kind: Persona
+      id: assistant
+      version: 1
+      schemaVersion: 0.1.0
+      displayName: Test assistant
+      instructions: You are a test assistant.
+      tools: [lookup@1, update_record@1, ask_helper@1]
+      fallbackMessage: This request was blocked.
+      defaultProfile: default@1
+      allowedProfiles: [default@1, streamed@1]
+      model:
+        provider: scripted-a
+        name: model-a
+        fallbacks:
+        - {provider: scripted-b, name: model-b}
+    - kind: Persona
+      id: helper
+      version: 1
+      schemaVersion: 0.1.0
+      instructions: You look up records for other assistants.
+      tools: [lookup@1]
+      defaultProfile: default@1
+      allowedProfiles: [default@1]
+      model: {provider: scripted-a, name: model-a}
+    PolicyBundle:
+    - kind: PolicyBundle
+      id: org
+      version: 1
+      schemaVersion: 0.1.0
+      policyInstructions: Follow organisational policy.
+      defaultFallbackMessage: I can't help with that request.
+      sensitivityPolicies:
+        pii:
+          allowedProviders: [scripted-a, scripted-b]
+          redaction:
+          - {mode: mask}
+        phi:
+          allowedProviders: [scripted-a]
+          redaction:
+          - {mode: mask}
+    HarnessProfile:
+    - kind: HarnessProfile
+      id: default
+      version: 1
+      schemaVersion: 0.1.0
+      idleTtl: PT24H
+      suspendedTtl: PT72H
+      stepLimit: 8
+      deliveryMode: buffered
+      budget: {tokens: 100000}
+      timeouts: {run: PT5M, tool: PT30S}
+      retry: {unavailable: 2}
+      outputRetryLimit: 2
+      limits: {partSize: 1048576, sessionSize: 10485760}
+      defaultAttachmentLabels: []
+      onExpiry: close
+    - kind: HarnessProfile
+      id: streamed
+      version: 1
+      schemaVersion: 0.1.0
+      idleTtl: PT24H
+      suspendedTtl: PT72H
+      stepLimit: 8
+      deliveryMode: streamed
+      budget: {tokens: 100000}
+      timeouts: {run: PT5M, tool: PT30S}
+      retry: {unavailable: 2}
+      limits: {partSize: 1048576, sessionSize: 10485760}
+      onExpiry: close
+    Tool:
+    - kind: Tool
+      id: ask_helper
+      version: 1
+      schemaVersion: 0.1.0
+      description: Ask the helper persona to look up a record.
+      input:
+        type: object
+        additionalProperties: false
+        required: [task]
+        properties:
+          task: {type: string}
+      effect: read
+      idempotent: true
+      binding: {kind: agent, persona: helper@1}
+      egress: false
+      approval: never
+      sensitivity: []
+      credentialMode: principal
+      onTainted: escalate
+      onTaintedEgress: block
+    - kind: Tool
+      id: lookup
+      version: 1
+      schemaVersion: 0.1.0
+      description: Look up a record by key.
+      input:
+        type: object
+        additionalProperties: false
+        required: [key]
+        properties:
+          key: {type: string}
+      effect: read
+      binding: {kind: native, handler: test.lookup}
+      egress: false
+      idempotent: false
+      approval: never
+      sensitivity: []
+      credentialMode: principal
+      onTainted: escalate
+      onTaintedEgress: block
+    - kind: Tool
+      id: update_record
+      version: 1
+      schemaVersion: 0.1.0
+      description: Update a record.
+      input:
+        type: object
+        additionalProperties: false
+        required: [key, value]
+        properties:
+          key: {type: string}
+          value: {type: string}
+      effect: mutating
+      idempotent: false
+      binding: {kind: native, handler: test.update_record}
+      egress: false
+      approval: never
+      sensitivity: []
+      credentialMode: principal
+      onTainted: escalate
+      onTaintedEgress: block
+auditRecords: []
+children:
+- schemaVersion: 0.1.0
+  tenant: t1
+  sessionId: 019cb813-5474-7008-8000-004400000008
+  exportedAt: '2026-03-04T09:05:00.000Z'
+  contract: 0.1.0
+  exporter: agentry-spec synthetic golden bundle
+  events:
+  - schemaVersion: 0.1.0
+    eventId: 019cb813-553c-700a-8000-00440000000a
+    sessionId: 019cb813-5474-7008-8000-004400000008
+    seq: 1
+    type: session.created
+    timestamp: '2026-03-04T09:00:00.700Z'
+    tenantId: t1
+    principalRef: {subject: user-1, tenant: t1}
+    snapshotHash: sha256:a7faa5cfd75dde10c0945620c11dbd21f11b77182befaeedb2cbf41ad5dd36b2
+    traceContext: {traceparent: 00-7ef92f3577b34da6a3ce929d0e0e4739-0000000000000101-01}
+    payload:
+      persona: helper@1
+      profile: default@1
+      parent:
+        sessionId: 019cb813-5280-7001-8000-004400000001
+        runId: 019cb813-52e4-7003-8000-004400000003
+        callId: c1
+        tool: ask_helper
+        depth: 1
+  - schemaVersion: 0.1.0
+    eventId: 019cb813-55a0-700c-8000-00440000000c
+    sessionId: 019cb813-5474-7008-8000-004400000008
+    runId: 019cb813-553c-700b-8000-00440000000b
+    seq: 2
+    type: run.started
+    timestamp: '2026-03-04T09:00:00.800Z'
+    tenantId: t1
+    principalRef: {subject: user-1, tenant: t1}
+    snapshotHash: sha256:a7faa5cfd75dde10c0945620c11dbd21f11b77182befaeedb2cbf41ad5dd36b2
+    traceContext: {traceparent: 00-7ef92f3577b34da6a3ce929d0e0e4739-0000000000000102-01}
+    payload: {kind: run}
+  - schemaVersion: 0.1.0
+    eventId: 019cb813-5604-700d-8000-00440000000d
+    sessionId: 019cb813-5474-7008-8000-004400000008
+    runId: 019cb813-553c-700b-8000-00440000000b
+    seq: 3
+    turn: 1
+    type: turn.started
+    timestamp: '2026-03-04T09:00:00.900Z'
+    tenantId: t1
+    principalRef: {subject: user-1, tenant: t1}
+    snapshotHash: sha256:a7faa5cfd75dde10c0945620c11dbd21f11b77182befaeedb2cbf41ad5dd36b2
+    traceContext: {traceparent: 00-7ef92f3577b34da6a3ce929d0e0e4739-0000000000000103-01}
+    payload: {}
+  - schemaVersion: 0.1.0
+    eventId: 019cb813-5668-700e-8000-00440000000e
+    sessionId: 019cb813-5474-7008-8000-004400000008
+    runId: 019cb813-553c-700b-8000-00440000000b
+    seq: 4
+    turn: 1
+    step: 1
+    type: model.request
+    timestamp: '2026-03-04T09:00:01.000Z'
+    tenantId: t1
+    principalRef: {subject: user-1, tenant: t1}
+    snapshotHash: sha256:a7faa5cfd75dde10c0945620c11dbd21f11b77182befaeedb2cbf41ad5dd36b2
+    traceContext: {traceparent: 00-7ef92f3577b34da6a3ce929d0e0e4739-0000000000000104-01}
+    payload:
+      provider: scripted-a
+      model: model-a
+      role: primary
+      context:
+        id: blob-golden-44c-01
+        hash: sha256:53bf2b6c4b07ae55944ce88dd1c11fd3a1272628fa68979becc87494b84a16e1
+        mediaType: application/json
+        size: 342
+  - schemaVersion: 0.1.0
+    eventId: 019cb813-56cc-700f-8000-00440000000f
+    sessionId: 019cb813-5474-7008-8000-004400000008
+    runId: 019cb813-553c-700b-8000-00440000000b
+    seq: 5
+    turn: 1
+    step: 1
+    type: model.response
+    timestamp: '2026-03-04T09:00:01.100Z'
+    tenantId: t1
+    principalRef: {subject: user-1, tenant: t1}
+    snapshotHash: sha256:a7faa5cfd75dde10c0945620c11dbd21f11b77182befaeedb2cbf41ad5dd36b2
+    traceContext: {traceparent: 00-7ef92f3577b34da6a3ce929d0e0e4739-0000000000000105-01}
+    provenances: [model]
+    labels: []
+    payload:
+      provider: scripted-a
+      model: model-a
+      message:
+        role: assistant
+        parts:
+        - {type: text, text: Record k1 holds SYN-VALUE-0004., provenance: model, labels: []}
+      usage: {inputTokens: 18, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0}
+  - schemaVersion: 0.1.0
+    eventId: 019cb813-5730-7010-8000-004400000010
+    sessionId: 019cb813-5474-7008-8000-004400000008
+    runId: 019cb813-553c-700b-8000-00440000000b
+    seq: 6
+    turn: 1
+    type: turn.completed
+    timestamp: '2026-03-04T09:00:01.200Z'
+    tenantId: t1
+    principalRef: {subject: user-1, tenant: t1}
+    snapshotHash: sha256:a7faa5cfd75dde10c0945620c11dbd21f11b77182befaeedb2cbf41ad5dd36b2
+    traceContext: {traceparent: 00-7ef92f3577b34da6a3ce929d0e0e4739-0000000000000106-01}
+    payload: {}
+  - schemaVersion: 0.1.0
+    eventId: 019cb813-5794-7011-8000-004400000011
+    sessionId: 019cb813-5474-7008-8000-004400000008
+    runId: 019cb813-553c-700b-8000-00440000000b
+    seq: 7
+    type: run.ended
+    timestamp: '2026-03-04T09:00:01.300Z'
+    tenantId: t1
+    principalRef: {subject: user-1, tenant: t1}
+    snapshotHash: sha256:a7faa5cfd75dde10c0945620c11dbd21f11b77182befaeedb2cbf41ad5dd36b2
+    traceContext: {traceparent: 00-7ef92f3577b34da6a3ce929d0e0e4739-0000000000000107-01}
+    payload: {reason: responded}
+  - schemaVersion: 0.1.0
+    eventId: 019cb813-57f8-7012-8000-004400000012
+    sessionId: 019cb813-5474-7008-8000-004400000008
+    seq: 8
+    type: session.closed
+    timestamp: '2026-03-04T09:00:01.400Z'
+    tenantId: t1
+    principalRef: {subject: user-1, tenant: t1}
+    snapshotHash: sha256:a7faa5cfd75dde10c0945620c11dbd21f11b77182befaeedb2cbf41ad5dd36b2
+    traceContext: {traceparent: 00-7ef92f3577b34da6a3ce929d0e0e4739-0000000000000108-01}
+    payload: {reason: completed}
+  blobs:
+  - ref:
+      id: blob-golden-44c-01
+      hash: sha256:53bf2b6c4b07ae55944ce88dd1c11fd3a1272628fa68979becc87494b84a16e1
+      mediaType: application/json
+      size: 342
+    labels: []
+    base64: W3sicm9sZSI6InN5c3RlbSIsInBhcnRzIjpbeyJ0eXBlIjoidGV4dCIsInRleHQiOiJGb2xsb3cgb3JnYW5pc2F0aW9uYWwgcG9saWN5LiIsInByb3ZlbmFuY2UiOiJzeXN0ZW0iLCJsYWJlbHMiOltdfSx7InR5cGUiOiJ0ZXh0IiwidGV4dCI6IllvdSBsb29rIHVwIHJlY29yZHMgZm9yIG90aGVyIGFzc2lzdGFudHMuIiwicHJvdmVuYW5jZSI6InN5c3RlbSIsImxhYmVscyI6W119XX0seyJyb2xlIjoicHJpbmNpcGFsIiwicGFydHMiOlt7InR5cGUiOiJzdHJ1Y3R1cmVkIiwidmFsdWUiOnsidGFzayI6Ikxvb2sgdXAgcmVjb3JkIGsxIn0sInByb3ZlbmFuY2UiOiJtb2RlbCIsImxhYmVscyI6W119XX1d
+  snapshot:
+    schemaVersion: 0.1.0
+    tenant: t1
+    hash: sha256:a7faa5cfd75dde10c0945620c11dbd21f11b77182befaeedb2cbf41ad5dd36b2
+    createdAt: '2026-03-04T09:00:00.000Z'
+    artifacts:
+      Deployment:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: 0.1.0
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+        - {id: scripted-a, adapter: scripted, endpoint: 'memory://scripted-a', region: test-region, retainsData: false}
+        - {id: scripted-b, adapter: scripted, endpoint: 'memory://scripted-b', region: test-region, retainsData: false}
+        ports:
+          eventLog: {adapter: memory, region: test-region}
+          checkpointStore: {adapter: memory, region: test-region}
+          idempotencyStore: {adapter: memory, region: test-region}
+          snapshotStore: {adapter: memory, region: test-region}
+          blobStore: {adapter: memory, region: test-region}
+          auditLog: {adapter: memory, region: test-region}
+          secrets: {adapter: memory, region: test-region}
+        retention: {events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D}
+      Persona:
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: 0.1.0
+        displayName: Test assistant
+        instructions: You are a test assistant.
+        tools: [lookup@1, update_record@1, ask_helper@1]
+        fallbackMessage: This request was blocked.
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+          - {provider: scripted-b, name: model-b}
+      - kind: Persona
+        id: helper
+        version: 1
+        schemaVersion: 0.1.0
+        instructions: You look up records for other assistants.
+        tools: [lookup@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: {provider: scripted-a, name: model-a}
+      PolicyBundle:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: 0.1.0
+        policyInstructions: Follow organisational policy.
+        defaultFallbackMessage: I can't help with that request.
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction:
+            - {mode: mask}
+          phi:
+            allowedProviders: [scripted-a]
+            redaction:
+            - {mode: mask}
+      HarnessProfile:
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: 0.1.0
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: {tokens: 100000}
+        timeouts: {run: PT5M, tool: PT30S}
+        retry: {unavailable: 2}
+        outputRetryLimit: 2
+        limits: {partSize: 1048576, sessionSize: 10485760}
+        defaultAttachmentLabels: []
+        onExpiry: close
+      - kind: HarnessProfile
+        id: streamed
+        version: 1
+        schemaVersion: 0.1.0
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: streamed
+        budget: {tokens: 100000}
+        timeouts: {run: PT5M, tool: PT30S}
+        retry: {unavailable: 2}
+        limits: {partSize: 1048576, sessionSize: 10485760}
+        onExpiry: close
+      Tool:
+      - kind: Tool
+        id: ask_helper
+        version: 1
+        schemaVersion: 0.1.0
+        description: Ask the helper persona to look up a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [task]
+          properties:
+            task: {type: string}
+        effect: read
+        idempotent: true
+        binding: {kind: agent, persona: helper@1}
+        egress: false
+        approval: never
+        sensitivity: []
+        credentialMode: principal
+        onTainted: escalate
+        onTaintedEgress: block
+      - kind: Tool
+        id: lookup
+        version: 1
+        schemaVersion: 0.1.0
+        description: Look up a record by key.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties:
+            key: {type: string}
+        effect: read
+        binding: {kind: native, handler: test.lookup}
+        egress: false
+        idempotent: false
+        approval: never
+        sensitivity: []
+        credentialMode: principal
+        onTainted: escalate
+        onTaintedEgress: block
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: 0.1.0
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties:
+            key: {type: string}
+            value: {type: string}
+        effect: mutating
+        idempotent: false
+        binding: {kind: native, handler: test.update_record}
+        egress: false
+        approval: never
+        sensitivity: []
+        credentialMode: principal
+        onTainted: escalate
+        onTaintedEgress: block
+  auditRecords: []

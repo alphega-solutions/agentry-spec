@@ -52,6 +52,9 @@ properties:
                     kind: { enum: [schema, trajectory, policy, escalation, budget, judge] }
                     passed: { type: boolean }
                     score: { type: number, minimum: 0, maximum: 1 }
+                    code:
+                      description: Why a grader could not run, e.g. `agentry.eval.judge_not_allowed` (EVAL-051); then `passed` is false.
+                      $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/errorCode"
                     evidence:
                       description: Event IDs the grader used (EVAL-052).
                       type: array

@@ -1,0 +1,482 @@
+# Golden trace bundle (EVAL-026, EVAL-063) — synthetic.
+# Snapshot: baseline plus the native beforeToolCall hook guard@1 (results
+# [block, annotate]), required by assistant@1. Step 1: the model calls
+# update_record (c1); guard blocks it (hook.decision `block`,
+# test.guard.blocked, audited); the model receives agentry.hook.blocked.
+# Step 2: the model calls lookup (c2); guard answers `continue`, which is
+# not recorded; lookup returns SYN-VALUE-0005. Step 3: the model responds.
+# The recorded inputHash is computed per HOOK-062 as amended: SHA-256 of the
+# RFC 8785 JSON of guard's view {principal (user-1, t1, roles [], attributes
+# {}, multi_factor), session (assistant@1, untainted, turn 1, step 1),
+# content [the c1 tool_call part], tool, call}. Generated: hashes computed.
+schemaVersion: 0.1.0
+tenant: t1
+sessionId: 019cc260-0a80-7001-8000-006600000001
+exportedAt: '2026-03-06T09:05:00.000Z'
+contract: 0.1.0
+exporter: agentry-spec synthetic golden bundle
+events:
+- schemaVersion: 0.1.0
+  eventId: 019cc260-0ae4-7002-8000-006600000002
+  sessionId: 019cc260-0a80-7001-8000-006600000001
+  seq: 1
+  type: session.created
+  timestamp: '2026-03-06T09:00:00.100Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:0d6de43c172c9f36e746b8146518a2444b590a232234c95c52791aa9f42cf7a3
+  traceContext: {traceparent: 00-90f92f3577b34da6a3ce929d0e0e473b-0000000000000001-01}
+  payload: {persona: assistant@1, profile: default@1}
+- schemaVersion: 0.1.0
+  eventId: 019cc260-0b48-7004-8000-006600000004
+  sessionId: 019cc260-0a80-7001-8000-006600000001
+  runId: 019cc260-0ae4-7003-8000-006600000003
+  seq: 2
+  type: run.started
+  timestamp: '2026-03-06T09:00:00.200Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:0d6de43c172c9f36e746b8146518a2444b590a232234c95c52791aa9f42cf7a3
+  traceContext: {traceparent: 00-90f92f3577b34da6a3ce929d0e0e473b-0000000000000002-01}
+  payload: {kind: run}
+- schemaVersion: 0.1.0
+  eventId: 019cc260-0bac-7005-8000-006600000005
+  sessionId: 019cc260-0a80-7001-8000-006600000001
+  runId: 019cc260-0ae4-7003-8000-006600000003
+  seq: 3
+  turn: 1
+  type: turn.started
+  timestamp: '2026-03-06T09:00:00.300Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:0d6de43c172c9f36e746b8146518a2444b590a232234c95c52791aa9f42cf7a3
+  traceContext: {traceparent: 00-90f92f3577b34da6a3ce929d0e0e473b-0000000000000003-01}
+  payload: {}
+- schemaVersion: 0.1.0
+  eventId: 019cc260-0c10-7006-8000-006600000006
+  sessionId: 019cc260-0a80-7001-8000-006600000001
+  runId: 019cc260-0ae4-7003-8000-006600000003
+  seq: 4
+  turn: 1
+  step: 1
+  type: model.request
+  timestamp: '2026-03-06T09:00:00.400Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:0d6de43c172c9f36e746b8146518a2444b590a232234c95c52791aa9f42cf7a3
+  traceContext: {traceparent: 00-90f92f3577b34da6a3ce929d0e0e473b-0000000000000004-01}
+  payload:
+    provider: scripted-a
+    model: model-a
+    role: primary
+    context:
+      id: blob-golden-66-01
+      hash: sha256:5c65353a56fa05d9b9494ef8bffc0175b73936402479b247c41a220a958d25fb
+      mediaType: application/json
+      size: 343
+- schemaVersion: 0.1.0
+  eventId: 019cc260-0c74-7007-8000-006600000007
+  sessionId: 019cc260-0a80-7001-8000-006600000001
+  runId: 019cc260-0ae4-7003-8000-006600000003
+  seq: 5
+  turn: 1
+  step: 1
+  type: model.response
+  timestamp: '2026-03-06T09:00:00.500Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:0d6de43c172c9f36e746b8146518a2444b590a232234c95c52791aa9f42cf7a3
+  traceContext: {traceparent: 00-90f92f3577b34da6a3ce929d0e0e473b-0000000000000005-01}
+  provenances: [model]
+  labels: []
+  payload:
+    provider: scripted-a
+    model: model-a
+    message:
+      role: assistant
+      parts:
+      - type: tool_call
+        callId: c1
+        tool: update_record
+        arguments: {key: k1, value: SYN-VALUE-0006}
+        provenance: model
+        labels: []
+    usage: {inputTokens: 26, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0}
+- schemaVersion: 0.1.0
+  eventId: 019cc260-0cd8-7008-8000-006600000008
+  sessionId: 019cc260-0a80-7001-8000-006600000001
+  runId: 019cc260-0ae4-7003-8000-006600000003
+  seq: 6
+  turn: 1
+  step: 1
+  type: hook.decision
+  timestamp: '2026-03-06T09:00:00.600Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:0d6de43c172c9f36e746b8146518a2444b590a232234c95c52791aa9f42cf7a3
+  traceContext: {traceparent: 00-90f92f3577b34da6a3ce929d0e0e473b-0000000000000006-01}
+  payload:
+    hook: guard@1
+    point: beforeToolCall
+    result: block
+    reasonCode: test.guard.blocked
+    inputHash: sha256:df98e4ee26967f3ec03b86d010581a56d52bbac12a2fe4ad2b6f397659ec1cb4
+- schemaVersion: 0.1.0
+  eventId: 019cc260-0d3c-700a-8000-00660000000a
+  sessionId: 019cc260-0a80-7001-8000-006600000001
+  runId: 019cc260-0ae4-7003-8000-006600000003
+  seq: 7
+  turn: 1
+  step: 1
+  type: tool.result
+  timestamp: '2026-03-06T09:00:00.700Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:0d6de43c172c9f36e746b8146518a2444b590a232234c95c52791aa9f42cf7a3
+  traceContext: {traceparent: 00-90f92f3577b34da6a3ce929d0e0e473b-0000000000000007-01}
+  provenances: ['tool:update_record']
+  labels: []
+  payload:
+    callId: c1
+    tool: update_record
+    result:
+      error: {code: agentry.hook.blocked, category: policy, retryable: false, source: hook, message: Blocked by policy.}
+- schemaVersion: 0.1.0
+  eventId: 019cc260-0da0-700b-8000-00660000000b
+  sessionId: 019cc260-0a80-7001-8000-006600000001
+  runId: 019cc260-0ae4-7003-8000-006600000003
+  seq: 8
+  turn: 1
+  step: 2
+  type: model.request
+  timestamp: '2026-03-06T09:00:00.800Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:0d6de43c172c9f36e746b8146518a2444b590a232234c95c52791aa9f42cf7a3
+  traceContext: {traceparent: 00-90f92f3577b34da6a3ce929d0e0e473b-0000000000000008-01}
+  payload:
+    provider: scripted-a
+    model: model-a
+    role: primary
+    context:
+      id: blob-golden-66-02
+      hash: sha256:fd3dc364660a58d8130cd6bcebcffdc5b235dbd0e2aa66fbff88b4dded7e5a6b
+      mediaType: application/json
+      size: 783
+- schemaVersion: 0.1.0
+  eventId: 019cc260-0e04-700c-8000-00660000000c
+  sessionId: 019cc260-0a80-7001-8000-006600000001
+  runId: 019cc260-0ae4-7003-8000-006600000003
+  seq: 9
+  turn: 1
+  step: 2
+  type: model.response
+  timestamp: '2026-03-06T09:00:00.900Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:0d6de43c172c9f36e746b8146518a2444b590a232234c95c52791aa9f42cf7a3
+  traceContext: {traceparent: 00-90f92f3577b34da6a3ce929d0e0e473b-0000000000000009-01}
+  provenances: [model]
+  labels: []
+  payload:
+    provider: scripted-a
+    model: model-a
+    message:
+      role: assistant
+      parts:
+      - type: tool_call
+        callId: c2
+        tool: lookup
+        arguments: {key: k1}
+        provenance: model
+        labels: []
+    usage: {inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0}
+- schemaVersion: 0.1.0
+  eventId: 019cc260-0e68-700d-8000-00660000000d
+  sessionId: 019cc260-0a80-7001-8000-006600000001
+  runId: 019cc260-0ae4-7003-8000-006600000003
+  seq: 10
+  turn: 1
+  step: 2
+  type: tool.call
+  timestamp: '2026-03-06T09:00:01.000Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:0d6de43c172c9f36e746b8146518a2444b590a232234c95c52791aa9f42cf7a3
+  traceContext: {traceparent: 00-90f92f3577b34da6a3ce929d0e0e473b-000000000000000a-01}
+  provenances: [model]
+  labels: []
+  payload:
+    callId: c2
+    tool: lookup
+    arguments: {key: k1}
+- schemaVersion: 0.1.0
+  eventId: 019cc260-0ecc-700e-8000-00660000000e
+  sessionId: 019cc260-0a80-7001-8000-006600000001
+  runId: 019cc260-0ae4-7003-8000-006600000003
+  seq: 11
+  turn: 1
+  step: 2
+  type: tool.result
+  timestamp: '2026-03-06T09:00:01.100Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:0d6de43c172c9f36e746b8146518a2444b590a232234c95c52791aa9f42cf7a3
+  traceContext: {traceparent: 00-90f92f3577b34da6a3ce929d0e0e473b-000000000000000b-01}
+  provenances: ['tool:lookup']
+  labels: []
+  payload:
+    callId: c2
+    tool: lookup
+    result:
+      ok:
+        output: {key: k1, value: SYN-VALUE-0005}
+- schemaVersion: 0.1.0
+  eventId: 019cc260-0f30-700f-8000-00660000000f
+  sessionId: 019cc260-0a80-7001-8000-006600000001
+  runId: 019cc260-0ae4-7003-8000-006600000003
+  seq: 12
+  turn: 1
+  step: 3
+  type: model.request
+  timestamp: '2026-03-06T09:00:01.200Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:0d6de43c172c9f36e746b8146518a2444b590a232234c95c52791aa9f42cf7a3
+  traceContext: {traceparent: 00-90f92f3577b34da6a3ce929d0e0e473b-000000000000000c-01}
+  payload:
+    provider: scripted-a
+    model: model-a
+    role: primary
+    context:
+      id: blob-golden-66-03
+      hash: sha256:72d4783cab7b19272d152fad2a1bcea19329aaf5cf003efa69ee5bacef70d1b4
+      mediaType: application/json
+      size: 1106
+- schemaVersion: 0.1.0
+  eventId: 019cc260-0f94-7010-8000-006600000010
+  sessionId: 019cc260-0a80-7001-8000-006600000001
+  runId: 019cc260-0ae4-7003-8000-006600000003
+  seq: 13
+  turn: 1
+  step: 3
+  type: model.response
+  timestamp: '2026-03-06T09:00:01.300Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:0d6de43c172c9f36e746b8146518a2444b590a232234c95c52791aa9f42cf7a3
+  traceContext: {traceparent: 00-90f92f3577b34da6a3ce929d0e0e473b-000000000000000d-01}
+  provenances: [model]
+  labels: []
+  payload:
+    provider: scripted-a
+    model: model-a
+    message:
+      role: assistant
+      parts:
+      - {type: text, text: Record k1 was not updated; it holds SYN-VALUE-0005., provenance: model, labels: []}
+    usage: {inputTokens: 52, outputTokens: 9, cachedInputTokens: 0, reasoningTokens: 0}
+- schemaVersion: 0.1.0
+  eventId: 019cc260-0ff8-7011-8000-006600000011
+  sessionId: 019cc260-0a80-7001-8000-006600000001
+  runId: 019cc260-0ae4-7003-8000-006600000003
+  seq: 14
+  turn: 1
+  type: turn.completed
+  timestamp: '2026-03-06T09:00:01.400Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:0d6de43c172c9f36e746b8146518a2444b590a232234c95c52791aa9f42cf7a3
+  traceContext: {traceparent: 00-90f92f3577b34da6a3ce929d0e0e473b-000000000000000e-01}
+  payload: {}
+- schemaVersion: 0.1.0
+  eventId: 019cc260-105c-7012-8000-006600000012
+  sessionId: 019cc260-0a80-7001-8000-006600000001
+  runId: 019cc260-0ae4-7003-8000-006600000003
+  seq: 15
+  type: run.ended
+  timestamp: '2026-03-06T09:00:01.500Z'
+  tenantId: t1
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:0d6de43c172c9f36e746b8146518a2444b590a232234c95c52791aa9f42cf7a3
+  traceContext: {traceparent: 00-90f92f3577b34da6a3ce929d0e0e473b-000000000000000f-01}
+  payload: {reason: responded}
+blobs:
+- ref:
+    id: blob-golden-66-01
+    hash: sha256:5c65353a56fa05d9b9494ef8bffc0175b73936402479b247c41a220a958d25fb
+    mediaType: application/json
+    size: 343
+  labels: []
+  base64: W3sicm9sZSI6InN5c3RlbSIsInBhcnRzIjpbeyJ0eXBlIjoidGV4dCIsInRleHQiOiJGb2xsb3cgb3JnYW5pc2F0aW9uYWwgcG9saWN5LiIsInByb3ZlbmFuY2UiOiJzeXN0ZW0iLCJsYWJlbHMiOltdfSx7InR5cGUiOiJ0ZXh0IiwidGV4dCI6IllvdSBhcmUgYSB0ZXN0IGFzc2lzdGFudC4iLCJwcm92ZW5hbmNlIjoic3lzdGVtIiwibGFiZWxzIjpbXX1dfSx7InJvbGUiOiJwcmluY2lwYWwiLCJwYXJ0cyI6W3sidHlwZSI6InRleHQiLCJ0ZXh0IjoiU2V0IHJlY29yZCBrMSB0byBTWU4tVkFMVUUtMDAwNiwgdGhlbiByZWFkIGl0LiIsInByb3ZlbmFuY2UiOiJwcmluY2lwYWwiLCJsYWJlbHMiOltdfV19XQ==
+- ref:
+    id: blob-golden-66-02
+    hash: sha256:fd3dc364660a58d8130cd6bcebcffdc5b235dbd0e2aa66fbff88b4dded7e5a6b
+    mediaType: application/json
+    size: 783
+  labels: []
+  base64: W3sicm9sZSI6InN5c3RlbSIsInBhcnRzIjpbeyJ0eXBlIjoidGV4dCIsInRleHQiOiJGb2xsb3cgb3JnYW5pc2F0aW9uYWwgcG9saWN5LiIsInByb3ZlbmFuY2UiOiJzeXN0ZW0iLCJsYWJlbHMiOltdfSx7InR5cGUiOiJ0ZXh0IiwidGV4dCI6IllvdSBhcmUgYSB0ZXN0IGFzc2lzdGFudC4iLCJwcm92ZW5hbmNlIjoic3lzdGVtIiwibGFiZWxzIjpbXX1dfSx7InJvbGUiOiJwcmluY2lwYWwiLCJwYXJ0cyI6W3sidHlwZSI6InRleHQiLCJ0ZXh0IjoiU2V0IHJlY29yZCBrMSB0byBTWU4tVkFMVUUtMDAwNiwgdGhlbiByZWFkIGl0LiIsInByb3ZlbmFuY2UiOiJwcmluY2lwYWwiLCJsYWJlbHMiOltdfV19LHsicm9sZSI6ImFzc2lzdGFudCIsInBhcnRzIjpbeyJ0eXBlIjoidG9vbF9jYWxsIiwiY2FsbElkIjoiYzEiLCJ0b29sIjoidXBkYXRlX3JlY29yZCIsImFyZ3VtZW50cyI6eyJrZXkiOiJrMSIsInZhbHVlIjoiU1lOLVZBTFVFLTAwMDYifSwicHJvdmVuYW5jZSI6Im1vZGVsIiwibGFiZWxzIjpbXX1dfSx7InJvbGUiOiJ0b29sIiwicGFydHMiOlt7InR5cGUiOiJ0b29sX3Jlc3VsdCIsImNhbGxJZCI6ImMxIiwidG9vbCI6InVwZGF0ZV9yZWNvcmQiLCJyZXN1bHQiOnsiZXJyb3IiOnsiY29kZSI6ImFnZW50cnkuaG9vay5ibG9ja2VkIiwiY2F0ZWdvcnkiOiJwb2xpY3kiLCJyZXRyeWFibGUiOmZhbHNlLCJzb3VyY2UiOiJob29rIiwibWVzc2FnZSI6IkJsb2NrZWQgYnkgcG9saWN5LiJ9fSwicHJvdmVuYW5jZSI6InRvb2w6dXBkYXRlX3JlY29yZCIsImxhYmVscyI6W119XX1d
+- ref:
+    id: blob-golden-66-03
+    hash: sha256:72d4783cab7b19272d152fad2a1bcea19329aaf5cf003efa69ee5bacef70d1b4
+    mediaType: application/json
+    size: 1106
+  labels: []
+  base64: W3sicm9sZSI6InN5c3RlbSIsInBhcnRzIjpbeyJ0eXBlIjoidGV4dCIsInRleHQiOiJGb2xsb3cgb3JnYW5pc2F0aW9uYWwgcG9saWN5LiIsInByb3ZlbmFuY2UiOiJzeXN0ZW0iLCJsYWJlbHMiOltdfSx7InR5cGUiOiJ0ZXh0IiwidGV4dCI6IllvdSBhcmUgYSB0ZXN0IGFzc2lzdGFudC4iLCJwcm92ZW5hbmNlIjoic3lzdGVtIiwibGFiZWxzIjpbXX1dfSx7InJvbGUiOiJwcmluY2lwYWwiLCJwYXJ0cyI6W3sidHlwZSI6InRleHQiLCJ0ZXh0IjoiU2V0IHJlY29yZCBrMSB0byBTWU4tVkFMVUUtMDAwNiwgdGhlbiByZWFkIGl0LiIsInByb3ZlbmFuY2UiOiJwcmluY2lwYWwiLCJsYWJlbHMiOltdfV19LHsicm9sZSI6ImFzc2lzdGFudCIsInBhcnRzIjpbeyJ0eXBlIjoidG9vbF9jYWxsIiwiY2FsbElkIjoiYzEiLCJ0b29sIjoidXBkYXRlX3JlY29yZCIsImFyZ3VtZW50cyI6eyJrZXkiOiJrMSIsInZhbHVlIjoiU1lOLVZBTFVFLTAwMDYifSwicHJvdmVuYW5jZSI6Im1vZGVsIiwibGFiZWxzIjpbXX1dfSx7InJvbGUiOiJ0b29sIiwicGFydHMiOlt7InR5cGUiOiJ0b29sX3Jlc3VsdCIsImNhbGxJZCI6ImMxIiwidG9vbCI6InVwZGF0ZV9yZWNvcmQiLCJyZXN1bHQiOnsiZXJyb3IiOnsiY29kZSI6ImFnZW50cnkuaG9vay5ibG9ja2VkIiwiY2F0ZWdvcnkiOiJwb2xpY3kiLCJyZXRyeWFibGUiOmZhbHNlLCJzb3VyY2UiOiJob29rIiwibWVzc2FnZSI6IkJsb2NrZWQgYnkgcG9saWN5LiJ9fSwicHJvdmVuYW5jZSI6InRvb2w6dXBkYXRlX3JlY29yZCIsImxhYmVscyI6W119XX0seyJyb2xlIjoiYXNzaXN0YW50IiwicGFydHMiOlt7InR5cGUiOiJ0b29sX2NhbGwiLCJjYWxsSWQiOiJjMiIsInRvb2wiOiJsb29rdXAiLCJhcmd1bWVudHMiOnsia2V5IjoiazEifSwicHJvdmVuYW5jZSI6Im1vZGVsIiwibGFiZWxzIjpbXX1dfSx7InJvbGUiOiJ0b29sIiwicGFydHMiOlt7InR5cGUiOiJ0b29sX3Jlc3VsdCIsImNhbGxJZCI6ImMyIiwidG9vbCI6Imxvb2t1cCIsInJlc3VsdCI6eyJvayI6eyJvdXRwdXQiOnsia2V5IjoiazEiLCJ2YWx1ZSI6IlNZTi1WQUxVRS0wMDA1In19fSwicHJvdmVuYW5jZSI6InRvb2w6bG9va3VwIiwibGFiZWxzIjpbXX1dfV0=
+snapshot:
+  schemaVersion: 0.1.0
+  tenant: t1
+  hash: sha256:0d6de43c172c9f36e746b8146518a2444b590a232234c95c52791aa9f42cf7a3
+  createdAt: '2026-03-06T09:00:00.000Z'
+  artifacts:
+    Deployment:
+    - kind: Deployment
+      id: test
+      version: 1
+      schemaVersion: 0.1.0
+      environment: test
+      policyBundles: [org@1]
+      attachmentSources: [upload, email]
+      providers:
+      - {id: scripted-a, adapter: scripted, endpoint: 'memory://scripted-a', region: test-region, retainsData: false}
+      - {id: scripted-b, adapter: scripted, endpoint: 'memory://scripted-b', region: test-region, retainsData: false}
+      ports:
+        eventLog: {adapter: memory, region: test-region}
+        checkpointStore: {adapter: memory, region: test-region}
+        idempotencyStore: {adapter: memory, region: test-region}
+        snapshotStore: {adapter: memory, region: test-region}
+        blobStore: {adapter: memory, region: test-region}
+        auditLog: {adapter: memory, region: test-region}
+        secrets: {adapter: memory, region: test-region}
+      retention: {events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D}
+    Persona:
+    - kind: Persona
+      id: assistant
+      version: 1
+      schemaVersion: 0.1.0
+      displayName: Test assistant
+      instructions: You are a test assistant.
+      tools: [lookup@1, update_record@1]
+      fallbackMessage: This request was blocked.
+      defaultProfile: default@1
+      allowedProfiles: [default@1, streamed@1]
+      model:
+        provider: scripted-a
+        name: model-a
+        fallbacks:
+        - {provider: scripted-b, name: model-b}
+      requiredHooks: [guard@1]
+    PolicyBundle:
+    - kind: PolicyBundle
+      id: org
+      version: 1
+      schemaVersion: 0.1.0
+      policyInstructions: Follow organisational policy.
+      defaultFallbackMessage: I can't help with that request.
+      sensitivityPolicies:
+        pii:
+          allowedProviders: [scripted-a, scripted-b]
+          redaction:
+          - {mode: mask}
+        phi:
+          allowedProviders: [scripted-a]
+          redaction:
+          - {mode: mask}
+    HarnessProfile:
+    - kind: HarnessProfile
+      id: default
+      version: 1
+      schemaVersion: 0.1.0
+      idleTtl: PT24H
+      suspendedTtl: PT72H
+      stepLimit: 8
+      deliveryMode: buffered
+      budget: {tokens: 100000}
+      timeouts: {run: PT5M, tool: PT30S}
+      retry: {unavailable: 2}
+      outputRetryLimit: 2
+      limits: {partSize: 1048576, sessionSize: 10485760}
+      defaultAttachmentLabels: []
+      onExpiry: close
+    - kind: HarnessProfile
+      id: streamed
+      version: 1
+      schemaVersion: 0.1.0
+      idleTtl: PT24H
+      suspendedTtl: PT72H
+      stepLimit: 8
+      deliveryMode: streamed
+      budget: {tokens: 100000}
+      timeouts: {run: PT5M, tool: PT30S}
+      retry: {unavailable: 2}
+      limits: {partSize: 1048576, sessionSize: 10485760}
+      onExpiry: close
+    Tool:
+    - kind: Tool
+      id: lookup
+      version: 1
+      schemaVersion: 0.1.0
+      description: Look up a record by key.
+      input:
+        type: object
+        additionalProperties: false
+        required: [key]
+        properties:
+          key: {type: string}
+      effect: read
+      binding: {kind: native, handler: test.lookup}
+      egress: false
+      idempotent: false
+      approval: never
+      sensitivity: []
+      credentialMode: principal
+      onTainted: escalate
+      onTaintedEgress: block
+    - kind: Tool
+      id: update_record
+      version: 1
+      schemaVersion: 0.1.0
+      description: Update a record.
+      input:
+        type: object
+        additionalProperties: false
+        required: [key, value]
+        properties:
+          key: {type: string}
+          value: {type: string}
+      effect: mutating
+      idempotent: false
+      binding: {kind: native, handler: test.update_record}
+      egress: false
+      approval: never
+      sensitivity: []
+      credentialMode: principal
+      onTainted: escalate
+      onTaintedEgress: block
+    Hook:
+    - kind: Hook
+      id: guard
+      version: 1
+      schemaVersion: 0.1.0
+      points: [beforeToolCall]
+      results: [block, annotate]
+      timeoutMs: 1000
+      purpose: guardrail
+      failureMode: failClosed
+      source: {kind: native, handler: test.hook.guard}
+auditRecords:
+- schemaVersion: 0.1.0
+  id: 019cc260-0cd8-7009-8000-006600000009
+  timestamp: '2026-03-06T09:00:00.600Z'
+  tenant: t1
+  sessionId: 019cc260-0a80-7001-8000-006600000001
+  principalRef: {subject: user-1, tenant: t1}
+  snapshotHash: sha256:0d6de43c172c9f36e746b8146518a2444b590a232234c95c52791aa9f42cf7a3
+  type: hook_decision
+  eventIds: [019cc260-0cd8-7008-8000-006600000008]
+  details:
+    hook: guard@1
+    point: beforeToolCall
+    result: block
+    reasonCode: test.guard.blocked
+    inputHash: sha256:df98e4ee26967f3ec03b86d010581a56d52bbac12a2fe4ad2b6f397659ec1cb4
