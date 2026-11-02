@@ -27,7 +27,7 @@ description: >-
   result enters context at delivery, so the session is untainted at both
   tool points and tainted at step 2's beforeModelCall (the baseline trusts
   no tools).
-requirements: [HOOK-091, HOOK-115]
+requirements: [HOOK-091, HOOK-115, EVAL-032]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:

@@ -20,7 +20,7 @@ description: >-
     `error` event naming model-a and agentry.provider.unavailable (PROV-065
     reading, amendment 2026-11-02): exactly three at step 2, the last
     before the fallback's request.
-requirements: [PROV-065]
+requirements: [PROV-065, EVAL-031]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:

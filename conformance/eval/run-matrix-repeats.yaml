@@ -1,0 +1,204 @@
+schemaVersion: "0.1.0"
+id: eval.run-matrix-repeats
+title: Each case runs once per matrix cell per repeat, each run its own session, with governance in force
+description: >-
+  Two cells — scripted-a/model-a and scripted-b/model-b, both default@1 —
+  and `repeats: 2`, one case: 2 × 2 = 4 results, each with its own
+  session (EVAL-044 as amended 2026-11-02). Deployment: the baseline copy
+  with `environment: eval`; the bundle trusts no tools.
+
+
+  In every run of c-taint the model calls lookup (untrusted, so its
+  result taints the session) and then update_record. The taint rule
+  applies in the eval run as in production: a `policy.decision` (taint,
+  escalate) and an escalation from source `taint`, no dispatch. The case's
+  scripted decision rejects it (reviewer `eval-reviewer-1`) and the model
+  answers. Graders: escalated from `taint`; lookup called, update_record
+  not called. Every result passes: pass rate 1 and variance 0 per cell.
+
+
+  Each session's model calls go to its cell's provider only. Each session
+  has exactly one `escalation.raised`, so no two results share a session.
+  Readings: runs consume scripted responses in the order cell, then repeat,
+  then case (the fixture format does not say; here each provider's
+  responses are the same for both repeats); results are listed per cell
+  by repeat; each run of a case starts from the case's own stub
+  behaviours (lookup lists four identical behaviours, so a runner sharing
+  one list across runs also passes). Scripted provider responses:
+  scripted-a 6, scripted-b 6 (3 per run). Stubs: lookup 4 calls;
+  update_record none (empty list).
+requirements: [EVAL-044]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: eval
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+  tenants:
+    - id: eval-1
+      principals:
+        - { id: ep1, subject: eval-user-1, assurance: multi_factor }
+        - { id: er1, subject: eval-reviewer-1, assurance: multi_factor }
+  providers:
+    scripted-a:
+      responses:
+        # cell 0, repeat 1
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "SYN-NOT-UPDATED" }]
+          usage: { inputTokens: 40, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # cell 0, repeat 2
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "SYN-NOT-UPDATED" }]
+          usage: { inputTokens: 40, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      responses:
+        # cell 1, repeat 1
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "SYN-NOT-UPDATED" }]
+          usage: { inputTokens: 40, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # cell 1, repeat 2
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "SYN-NOT-UPDATED" }]
+          usage: { inputTokens: 40, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record: []
+script:
+  - action: evalRun
+    run:
+      schemaVersion: "0.1.0"
+      id: eval-matrix
+      tenant: eval-1
+      deployment: test@1
+      cases: [c-taint]
+      matrix:
+        cells:
+          - { model: { provider: scripted-a, name: model-a }, profile: default@1 }
+          - { model: { provider: scripted-b, name: model-b }, profile: default@1 }
+      repeats: 2
+    cases:
+      - schemaVersion: "0.1.0"
+        id: c-taint
+        persona: assistant@1
+        principal: { subject: eval-user-1 }
+        inputs:
+          - [{ type: text, text: "Look up k1 and set it to v1" }]
+        stubs:
+          tools:
+            lookup:
+              - ok: { output: { value: "SYN-VALUE-0001" } }
+              - ok: { output: { value: "SYN-VALUE-0001" } }
+              - ok: { output: { value: "SYN-VALUE-0001" } }
+              - ok: { output: { value: "SYN-VALUE-0001" } }
+        decisions:
+          - { match: { source: taint }, type: reject, reviewer: eval-reviewer-1 }
+        graders:
+          - { kind: escalation, escalates: true, source: taint }
+          - { kind: trajectory, called: [lookup], notCalled: [update_record] }
+    expect:
+      ok: true
+      report:
+        runId: eval-matrix
+        cells:
+          - model: { provider: scripted-a, name: model-a }
+            profile: default@1
+            passRate: 1
+            variance: 0
+            results:
+              - { caseId: c-taint, repeat: 1, passed: true, sessionId: $a1, graders: [{ kind: escalation, passed: true }, { kind: trajectory, passed: true }] }
+              - { caseId: c-taint, repeat: 2, passed: true, sessionId: $a2, graders: [{ kind: escalation, passed: true }, { kind: trajectory, passed: true }] }
+          - model: { provider: scripted-b, name: model-b }
+            profile: default@1
+            passRate: 1
+            variance: 0
+            results:
+              - { caseId: c-taint, repeat: 1, passed: true, sessionId: $b1, graders: [{ kind: escalation, passed: true }, { kind: trajectory, passed: true }] }
+              - { caseId: c-taint, repeat: 2, passed: true, sessionId: $b2, graders: [{ kind: escalation, passed: true }, { kind: trajectory, passed: true }] }
+expect:
+  sessions:
+    $a1:
+      events:
+        mode: contains
+        items:
+          - { type: model.request, payload: { provider: scripted-a, model: model-a } }
+          - { type: policy.decision, payload: { kind: taint, outcome: escalate, callId: c2 } }
+          - { type: escalation.raised, payload: { escalation: { sources: [taint] } } }
+      absentEvents:
+        - { type: model.request, payload: { provider: scripted-b } }
+        - { type: tool.call, payload: { tool: update_record } }
+    $a2:
+      events:
+        mode: contains
+        items:
+          - { type: model.request, payload: { provider: scripted-a, model: model-a } }
+          - { type: policy.decision, payload: { kind: taint, outcome: escalate, callId: c2 } }
+          - { type: escalation.raised, payload: { escalation: { sources: [taint] } } }
+      absentEvents:
+        - { type: model.request, payload: { provider: scripted-b } }
+        - { type: tool.call, payload: { tool: update_record } }
+    $b1:
+      events:
+        mode: contains
+        items:
+          - { type: model.request, payload: { provider: scripted-b, model: model-b } }
+          - { type: policy.decision, payload: { kind: taint, outcome: escalate, callId: c2 } }
+          - { type: escalation.raised, payload: { escalation: { sources: [taint] } } }
+      absentEvents:
+        - { type: model.request, payload: { provider: scripted-a } }
+        - { type: tool.call, payload: { tool: update_record } }
+    $b2:
+      events:
+        mode: contains
+        items:
+          - { type: model.request, payload: { provider: scripted-b, model: model-b } }
+          - { type: policy.decision, payload: { kind: taint, outcome: escalate, callId: c2 } }
+          - { type: escalation.raised, payload: { escalation: { sources: [taint] } } }
+      absentEvents:
+        - { type: model.request, payload: { provider: scripted-a } }
+        - { type: tool.call, payload: { tool: update_record } }
+  ports:
+    eventLog:
+      eval-1:
+        $a1: { $count: { of: { type: escalation.raised }, equals: 1 } }
+        $a2: { $count: { of: { type: escalation.raised }, equals: 1 } }
+        $b1: { $count: { of: { type: escalation.raised }, equals: 1 } }
+        $b2: { $count: { of: { type: escalation.raised }, equals: 1 } }
+  stubCalls:
+    lookup: { count: 4 }
+    update_record: { count: 0 }
+  providerRequests:
+    scripted-a: { count: 6 }
+    scripted-b: { count: 6 }

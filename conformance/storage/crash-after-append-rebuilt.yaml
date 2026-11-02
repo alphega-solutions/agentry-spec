@@ -24,7 +24,7 @@ description: >-
   log holds exactly $n events, numbered 1..$n, where $n is
   `session.closed`'s seq (CORE-160, PORT-020). At the end the checkpoint
   accounts only for sequence numbers in the log (PORT-035).
-requirements: [PORT-034, PORT-035]
+requirements: [PORT-034, PORT-035, EVAL-035, EVAL-030]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:

@@ -1,0 +1,236 @@
+schemaVersion: "0.1.0"
+id: eval.convert-draft-redacted
+title: "`convert` turns a recorded session into a draft marked for review, with placeholders, no reasoning, no hook input hashes, no unredacted blobs and configuration by reference"
+description: >-
+  The recorded session runs in tenant `tenant-syn-0071` as principal
+  subject `subject-syn-0071`. The profile records reasoning in traces
+  (`trace.includeReasoning`), and the scripted model's first response holds
+  an unlabelled reasoning part (`SYN-REASONING-0071`) and a lookup call.
+  The deployment's policy bundle requires a labelling rule hook
+  (`pii-tagger`, afterToolCall) that annotates lookup's result `pii`: its
+  `hook.decision` records `labelsAdded: [pii]` and an `inputHash`. The `pii`
+  policy masks content, so the `tool.result` inline view is redacted and its
+  full content (`SYN-PII-NAME-0071`) is held only in the BlobStore through
+  `contentRef` (CORE-154). Every labelled part is therefore redacted, and
+  conversion is not refused.
+
+
+  The session is converted twice. As a fixture (EVAL-070): `{review:
+  required, kind: fixture, content}` (EVAL-072), where `content` is a
+  fixture draft in which: the run step binds the session to a placeholder
+  and names the tenant by something other than the recorded tenant ID; the
+  tenant and principal in `setup` are not the recorded ones; the persona is
+  referenced as `assistant@1` and no configuration artifact is copied into
+  `setup.config.artifacts` (EVAL-071, configuration by `id@version`); the
+  scripted responses replay the recorded model responses without the
+  reasoning part; lookup's stub returns the redacted result as recorded
+  (`$maskedOk`), never the raw value; no blob is carried into
+  `setup.ports` (the only blobs the session references hold unredacted
+  content: the assembled contexts and the `contentRef` of the redacted
+  result); and the expected events keep the hook decision but carry no
+  `inputHash`, and none of the recorded session, run or event IDs, tenant
+  ID or principal subject. As a case: `{review: required, kind: case,
+  content}`, where `content` names persona `assistant@1`, keeps the
+  principal's input, does not use the recorded principal subject, and has
+  no policy grader pattern carrying an input hash.
+
+
+  Reading (format): the draft's `content` follows
+  `conformance/schema/fixture.yaml` (kind fixture) or
+  `schemas/eval/v1/case.yaml` (kind case); a converted fixture draft
+  expresses the recorded model responses as `setup.providers` scripts,
+  tool results as `setup.stubs`, and the recorded outcome as
+  `expect.sessions` event patterns. Absence is asserted at the positions
+  where these values would appear, since the format has no deep
+  "nowhere in the draft" matcher. The converter makes no model or tool
+  call: scripted-a is called exactly twice and lookup's stub once.
+requirements: [EVAL-070, EVAL-071, EVAL-072]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 71
+  config:
+    base: baseline
+    artifacts:
+      - kind: Hook
+        id: pii-tagger
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [afterToolCall]
+        results: [annotate]
+        timeoutMs: 1000
+        source: { kind: rule, when: "tool.id == 'lookup'", then: { result: annotate, labels: [pii] } }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        requiredHooks: [pii-tagger@1]
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+        trace: { includeReasoning: true }
+  tenants:
+    - id: tenant-syn-0071
+      principals: [{ id: p1, subject: subject-syn-0071, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { reasoning: true }
+      responses:
+        - parts:
+            - { type: reasoning, provider: scripted-a, data: "SYN-REASONING-0071", opaque: false }
+            - { type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }
+          usage: { inputTokens: 20, outputTokens: 12, cachedInputTokens: 0, reasoningTokens: 6 }
+        - parts: [{ type: text, text: "Record found." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b: { responses: [] }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { name: "SYN-PII-NAME-0071" } }
+  limits:
+    inlinePayloadBytes: 65536
+script:
+  - action: run
+    bind: $s
+    tenant: tenant-syn-0071
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1" }]
+    capture:
+      - event: { type: run.started }
+        bind: { runId: $r }
+      - event: { type: model.response }
+        bind: { eventId: $evResp }
+      - event: { type: hook.decision }
+        bind: { eventId: $evHook, payload.inputHash: $hash }
+      - event: { type: tool.result }
+        bind: { eventId: $evResult, contentRef.id: $fullBlob, payload.result.ok: $maskedOk }
+    expect: { ok: true, endReason: responded }
+  - action: convert
+    session: $s
+    tenant: tenant-syn-0071
+    as: fixture
+    expect:
+      ok: true
+      draft:
+        review: required
+        kind: fixture
+        content:
+          setup:
+            config:
+              artifacts: { $absent: true }
+            tenants:
+              $every:
+                id: { $not: tenant-syn-0071 }
+                principals: { $every: { subject: { $not: subject-syn-0071 } } }
+            providers:
+              scripted-a:
+                responses:
+                  - parts:
+                      $all:
+                        - $count: { of: { type: reasoning }, equals: 0 }
+                        - $contains: [{ type: tool_call, tool: lookup, arguments: { key: k1 } }]
+                  - parts: { $contains: [{ type: text, text: "Record found." }] }
+            stubs:
+              tools:
+                lookup:
+                  - ok: { $all: [$maskedOk, { $not: { output: { name: "SYN-PII-NAME-0071" } } }] }
+            ports: { $not: { blobStore: { $any: true } } }
+          script:
+            $contains:
+              - action: run
+                bind: { $all: [$D, { $regex: "^\\$[A-Za-z_][A-Za-z0-9_]*$" }] }
+                tenant: { $not: tenant-syn-0071 }
+                persona: assistant@1
+                input: [{ type: text, text: "Look up k1" }]
+          expect:
+            sessions:
+              $D:
+                events:
+                  items:
+                    $all:
+                      - $count: { of: { type: hook.decision, payload: { hook: pii-tagger@1, result: annotate } }, equals: 1 }
+                      - $count: { of: { type: tool.call, payload: { callId: c1, tool: lookup } }, equals: 1 }
+                      - $count: { of: { payload: { inputHash: { $any: true } } }, equals: 0 }
+                      - $count: { of: { payload: { message: { parts: { $contains: [{ type: reasoning }] } } } }, equals: 0 }
+                      - $count: { of: { sessionId: $s }, equals: 0 }
+                      - $count: { of: { runId: $r }, equals: 0 }
+                      - $count: { of: { eventId: $evResp }, equals: 0 }
+                      - $count: { of: { eventId: $evHook }, equals: 0 }
+                      - $count: { of: { eventId: $evResult }, equals: 0 }
+                      - $count: { of: { tenantId: tenant-syn-0071 }, equals: 0 }
+                      - $count: { of: { principalRef: { subject: subject-syn-0071 } }, equals: 0 }
+                      - $count: { of: { contentRef: { id: $fullBlob } }, equals: 0 }
+  - action: convert
+    session: $s
+    tenant: tenant-syn-0071
+    as: case
+    expect:
+      ok: true
+      draft:
+        review: required
+        kind: case
+        content:
+          persona: assistant@1
+          inputs: [[{ type: text, text: "Look up k1" }]]
+          principal: { $not: { subject: subject-syn-0071 } }
+          graders:
+            $count: { of: { expected: { $contains: [{ payload: { inputHash: { $any: true } } }] } }, equals: 0 }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: model.response
+            eventId: $evResp
+            step: 1
+            payload:
+              message:
+                parts:
+                  $contains:
+                    - { type: reasoning, provider: scripted-a, data: "SYN-REASONING-0071" }
+          - type: hook.decision
+            eventId: $evHook
+            payload: { hook: pii-tagger@1, point: afterToolCall, result: annotate, labelsAdded: [pii], inputHash: $hash }
+          - type: tool.result
+            eventId: $evResult
+            labels: { $contains: [pii] }
+            contentRef: { id: $fullBlob }
+            payload: { callId: c1, result: { ok: $maskedOk } }
+          - { type: run.ended, runId: $r, payload: { reason: responded } }
+      absentEvents:
+        - type: tool.result
+          payload: { result: { ok: { output: { name: "SYN-PII-NAME-0071" } } } }
+  ports:
+    blobStore:
+      tenant-syn-0071:
+        $contains:
+          - { id: $fullBlob }
+  stubCalls:
+    lookup: { count: 1 }
+  providerRequests:
+    scripted-a: { count: 2 }
+    scripted-b: { count: 0 }

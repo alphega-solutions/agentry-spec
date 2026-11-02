@@ -1,0 +1,123 @@
+schemaVersion: "0.1.0"
+id: eval.run-production-binding-refused
+title: An eval run whose deployment environment is not `eval` is refused; the same run against an `eval` deployment runs
+description: >-
+  The baseline deployment `test@1` has `environment: test`. An `evalRun`
+  naming it is refused with a configuration error
+  (`agentry.eval.production_binding`, EVAL-040 as amended 2026-11-02):
+  nothing runs, no event is persisted, no provider receives a request and
+  no tool is called. The configuration is then reloaded with `test@1`
+  replaced by a full copy whose only change is `environment: eval`
+  (control). The same run (new run ID) is accepted: its one case runs
+  once, as a session in the eval tenant `eval-1`, and the report has one
+  cell with one passing result. Scripted provider responses: scripted-a 1
+  (the control's only model call). Stubs: none; the case calls no tool.
+requirements: [EVAL-040]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+  tenants:
+    - id: eval-1
+      principals:
+        - { id: ep1, subject: eval-user-1, assurance: multi_factor }
+  providers:
+    scripted-a:
+      responses:
+        # control run, the case's only model call
+        - parts: [{ type: text, text: "SYN-HELLO-0001" }]
+          usage: { inputTokens: 10, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  # 0: deployment environment `test` → refused
+  - action: evalRun
+    run:
+      schemaVersion: "0.1.0"
+      id: eval-prod-refused
+      tenant: eval-1
+      deployment: test@1
+      cases: [c-hello]
+      matrix:
+        cells:
+          - { model: { provider: scripted-a, name: model-a }, profile: default@1 }
+      repeats: 1
+    cases:
+      - schemaVersion: "0.1.0"
+        id: c-hello
+        persona: assistant@1
+        principal: { subject: eval-user-1 }
+        inputs:
+          - [{ type: text, text: "Say hello" }]
+        graders:
+          - { kind: schema, equals: "SYN-HELLO-0001" }
+    expect:
+      ok: false
+      error: { category: configuration, code: agentry.eval.production_binding }
+      newEvents: 0
+  # 1: same deployment, environment `eval`
+  - load:
+      artifacts:
+        - kind: Deployment
+          id: test
+          version: 1
+          schemaVersion: "0.1.0"
+          environment: eval
+          policyBundles: [org@1]
+          attachmentSources: [upload, email]
+          providers:
+            - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+            - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          ports:
+            eventLog: { adapter: memory, region: test-region }
+            checkpointStore: { adapter: memory, region: test-region }
+            idempotencyStore: { adapter: memory, region: test-region }
+            snapshotStore: { adapter: memory, region: test-region }
+            blobStore: { adapter: memory, region: test-region }
+            auditLog: { adapter: memory, region: test-region }
+            secrets: { adapter: memory, region: test-region }
+          retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+    expect: { ok: true }
+  # 2: control — accepted and run
+  - action: evalRun
+    run:
+      schemaVersion: "0.1.0"
+      id: eval-prod-control
+      tenant: eval-1
+      deployment: test@1
+      cases: [c-hello]
+      matrix:
+        cells:
+          - { model: { provider: scripted-a, name: model-a }, profile: default@1 }
+      repeats: 1
+    cases:
+      - schemaVersion: "0.1.0"
+        id: c-hello
+        persona: assistant@1
+        principal: { subject: eval-user-1 }
+        inputs:
+          - [{ type: text, text: "Say hello" }]
+        graders:
+          - { kind: schema, equals: "SYN-HELLO-0001" }
+    expect:
+      ok: true
+      report:
+        runId: eval-prod-control
+        cells:
+          - model: { provider: scripted-a, name: model-a }
+            profile: default@1
+            passRate: 1
+            results:
+              - { caseId: c-hello, repeat: 1, passed: true, sessionId: $s }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, tenantId: eval-1, payload: { persona: assistant@1, profile: default@1 } }
+          - { type: run.ended, payload: { reason: responded } }
+  providerRequests:
+    scripted-a: { count: 1 }
+    scripted-b: { count: 0 }

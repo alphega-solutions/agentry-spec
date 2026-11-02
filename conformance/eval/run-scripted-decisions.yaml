@@ -1,0 +1,208 @@
+schemaVersion: "0.1.0"
+id: eval.run-scripted-decisions
+title: Scripted reviewer decisions answer an eval case's escalation; an escalation no decision rule matches fails the case and leaves its session suspended
+description: >-
+  `set_status` and `set_flag` are mutating tools with `approval: always`.
+  Both cases carry the same scripted decision: approve any `approval`
+  action on `set_status`, as the synthetic reviewer `eval-reviewer-1` of
+  the eval tenant. One cell (scripted-a/model-a, default@1), one repeat,
+  cases in declared order. Deployment: the baseline copy with
+  `environment: eval`.
+
+
+  - c-approved: the model calls set_status; the approval escalation is
+    answered by the rule: the decision is recorded (audit `decision`
+    record with that reviewer), the escalation resolves, the call is
+    dispatched to the case's stub and the model answers. The case passes.
+
+  - c-unmatched: the model calls set_flag; no decision rule matches its
+    action, so the case fails and its session stays suspended with the
+    escalation open; nothing is resolved or dispatched (the fixture's
+    set_flag stub has an empty list). Its only grader (escalated, source
+    approval) would pass, so the failure comes from the unmatched
+    escalation (EVAL-043, EVAL-044 as amended 2026-11-02).
+
+
+  Scripted provider responses: scripted-a 3 (c-approved 2, c-unmatched
+  1). Stubs: set_status 1 (in the case); set_flag none.
+requirements: [EVAL-043]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: eval
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: Tool
+        id: set_status
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Set a record's status.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: mutating
+        idempotent: true
+        approval: always
+        binding: { kind: native, handler: test.set_status }
+      - kind: Tool
+        id: set_flag
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Set a flag on a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: mutating
+        idempotent: true
+        approval: always
+        binding: { kind: native, handler: test.set_flag }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, set_status@1, set_flag@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: eval-1
+      principals:
+        - { id: ep1, subject: eval-user-1, assurance: multi_factor }
+        - { id: er1, subject: eval-reviewer-1, assurance: multi_factor }
+  providers:
+    scripted-a:
+      responses:
+        # c-approved
+        - parts: [{ type: tool_call, callId: c1, tool: set_status, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "SYN-STATUS-SET" }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # c-unmatched
+        - parts: [{ type: tool_call, callId: c1, tool: set_flag, arguments: { key: k2 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      set_flag: []
+script:
+  - action: evalRun
+    run:
+      schemaVersion: "0.1.0"
+      id: eval-decisions
+      tenant: eval-1
+      deployment: test@1
+      cases: [c-approved, c-unmatched]
+      matrix:
+        cells:
+          - { model: { provider: scripted-a, name: model-a }, profile: default@1 }
+      repeats: 1
+    cases:
+      - schemaVersion: "0.1.0"
+        id: c-approved
+        persona: assistant@1
+        principal: { subject: eval-user-1 }
+        inputs:
+          - [{ type: text, text: "Set the status of k1" }]
+        stubs:
+          tools:
+            set_status:
+              - ok: { output: { status: "SYN-SET" } }
+        decisions:
+          - { match: { source: approval, tool: set_status }, type: approve, reviewer: eval-reviewer-1 }
+        graders:
+          - { kind: trajectory, called: [set_status] }
+      - schemaVersion: "0.1.0"
+        id: c-unmatched
+        persona: assistant@1
+        principal: { subject: eval-user-1 }
+        inputs:
+          - [{ type: text, text: "Set the flag on k2" }]
+        decisions:
+          - { match: { source: approval, tool: set_status }, type: approve, reviewer: eval-reviewer-1 }
+        graders:
+          - { kind: escalation, escalates: true, source: approval }
+    expect:
+      ok: true
+      report:
+        runId: eval-decisions
+        cells:
+          - passRate: 0.5
+            results:
+              - { caseId: c-approved, repeat: 1, passed: true, sessionId: $sA }
+              - { caseId: c-unmatched, repeat: 1, passed: false, sessionId: $sU }
+expect:
+  sessions:
+    $sA:
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            payload:
+              escalation:
+                sources: [approval]
+                pendingActions: [{ kind: tool_call, source: approval, callId: c1, tool: set_status }]
+          - { type: escalation.resolved }
+          - { type: tool.call, payload: { callId: c1, tool: set_status, arguments: { key: k1 } } }
+          - { type: tool.result, payload: { callId: c1, result: { ok: { output: { status: "SYN-SET" } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+    $sU:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            payload:
+              escalation:
+                sources: [approval]
+                pendingActions: [{ kind: tool_call, source: approval, callId: c1, tool: set_flag }]
+          - { type: run.ended, payload: { reason: escalated } }
+      absentEvents:
+        - { type: escalation.resolved }
+        - { type: tool.call }
+  ports:
+    auditLog:
+      eval-1:
+        $all:
+          - $contains:
+              - type: decision
+                sessionId: $sA
+                reviewer: { subject: eval-reviewer-1, tenant: eval-1 }
+          - $count: { of: { type: decision, sessionId: $sU }, equals: 0 }
+  stubCalls:
+    set_status:
+      - { arguments: { key: k1 }, completed: true }
+    set_flag: { count: 0 }
+  providerRequests:
+    scripted-a: { count: 3 }
+    scripted-b: { count: 0 }

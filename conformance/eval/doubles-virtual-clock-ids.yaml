@@ -1,0 +1,145 @@
+schemaVersion: "0.1.0"
+id: eval.doubles-virtual-clock-ids
+title: Event timestamps and the time component of every UUIDv7 come from the injectable virtual clock
+description: >-
+  The virtual clock starts at 2026-03-14T15:09:26.535Z (epoch milliseconds
+  1773500966535, 48-bit hex 019cece52687). Run $r1 (which creates the
+  session) runs there. The clock is then advanced by PT26H to
+  2026-03-15T17:09:26.535Z (1773594566535, 019cf2795f87) for run $r2, and
+  set to 2026-07-04T08:30:00.250Z (1783153800250, 019f2c3fb43a) for run
+  $r3. No timer is pending, so the clock does not move during a run.
+
+
+  Every event's timestamp equals the virtual clock time at its emission,
+  and the first 48 bits of every UUIDv7 — the session ID, each run ID and
+  each event ID — equal the clock's Unix milliseconds at the time it was
+  generated (RFC 9562), written as the first 12 hex digits
+  `xxxxxxxx-xxxx`. A wall-clock timestamp or ID could match none of these.
+  Each run's events carry that run's time and ID prefix only; the counts
+  per run are controls, so the absence checks cannot pass vacuously.
+  Timestamps may carry extra trailing zeros in the fraction. The ID
+  generator's seed is fixed (`idSeed`); that a different seed yields
+  different IDs is not checked here.
+requirements: [EVAL-034]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-03-14T15:09:26.535Z"
+  idSeed: 34
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "One." }]
+          usage: { inputTokens: 20, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Two." }]
+          usage: { inputTokens: 30, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Three." }]
+          usage: { inputTokens: 40, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b: { responses: [] }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "First" }]
+    capture:
+      - event: { type: run.started }
+        bind: { runId: $r1 }
+    expect: { ok: true, endReason: responded }
+  - clock: { advance: PT26H }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Second" }]
+    capture:
+      - event: { type: run.started }
+        bind: { runId: $r2 }
+    expect: { ok: true, endReason: responded }
+  - clock: { set: "2026-07-04T08:30:00.250Z" }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Third" }]
+    capture:
+      - event: { type: run.started }
+        bind: { runId: $r3 }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - type: session.created
+            sessionId: { $regex: "^019cece5-2687-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" }
+            eventId: { $regex: "^019cece5-2687-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" }
+            timestamp: { $regex: "^2026-03-14T15:09:26\\.5350*Z$" }
+          - type: run.started
+            runId: { $all: [$r1, { $regex: "^019cece5-2687-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" }] }
+          - type: run.started
+            runId: { $all: [$r2, { $regex: "^019cf279-5f87-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" }] }
+          - type: run.started
+            runId: { $all: [$r3, { $regex: "^019f2c3f-b43a-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" }] }
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $all:
+            # controls: each run persisted events
+            - $count: { of: { runId: $r1 }, gte: 4 }
+            - $count: { of: { runId: $r2 }, gte: 4 }
+            - $count: { of: { runId: $r3 }, gte: 4 }
+            # run 1 (and session.created): clock 2026-03-14T15:09:26.535Z
+            - $count:
+                of:
+                  runId: $r1
+                  timestamp: { $not: { $regex: "^2026-03-14T15:09:26\\.5350*Z$" } }
+                equals: 0
+            - $count:
+                of:
+                  runId: $r1
+                  eventId: { $not: { $regex: "^019cece5-2687-7" } }
+                equals: 0
+            # run 2: clock 2026-03-15T17:09:26.535Z
+            - $count:
+                of:
+                  runId: $r2
+                  timestamp: { $not: { $regex: "^2026-03-15T17:09:26\\.5350*Z$" } }
+                equals: 0
+            - $count:
+                of:
+                  runId: $r2
+                  eventId: { $not: { $regex: "^019cf279-5f87-7" } }
+                equals: 0
+            # run 3: clock 2026-07-04T08:30:00.250Z
+            - $count:
+                of:
+                  runId: $r3
+                  timestamp: { $not: { $regex: "^2026-07-04T08:30:00\\.250*Z$" } }
+                equals: 0
+            - $count:
+                of:
+                  runId: $r3
+                  eventId: { $not: { $regex: "^019f2c3f-b43a-7" } }
+                equals: 0
+            # every persisted event carries one of the three clock times
+            - $count:
+                of:
+                  timestamp: { $not: { $regex: "^(2026-03-14T15:09:26\\.535|2026-03-15T17:09:26\\.535|2026-07-04T08:30:00\\.25)0*Z$" } }
+                equals: 0
+            - $count:
+                of:
+                  eventId: { $not: { $regex: "^(019cece5-2687|019cf279-5f87|019f2c3f-b43a)-7" } }
+                equals: 0
+            - $count:
+                of:
+                  sessionId: { $not: { $regex: "^019cece5-2687-7" } }
+                equals: 0
+  providerRequests:
+    scripted-a: { count: 3 }
+    scripted-b: { count: 0 }
