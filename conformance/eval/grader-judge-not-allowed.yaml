@@ -32,11 +32,10 @@ description: >-
   0.5.
 
 
-  Format gap: a grader result (`schemas/eval/v1/report.yaml`) has no
-  field for an error code, so `agentry.eval.judge_not_allowed` cannot be
-  asserted on the report; the fixture asserts the failed grader with no
-  score and no usage, and that scripted-b's only request is c-plain's
-  judge call. Reading: a judge's answer is a `structured` part `{score}`.
+  The failed grader's result carries `code: agentry.eval.judge_not_allowed`
+  (report `results[].graders[].code`); scripted-b's only request is
+  c-plain's judge call. Reading: a judge's answer is a `structured` part
+  `{score}`.
   Scripted provider responses: scripted-a 2, scripted-b 1 (c-plain's
   judge), scripted-judge 1. Stubs: none.
 requirements: [EVAL-051]
@@ -196,7 +195,7 @@ script:
                 passed: false
                 sessionId: $sPhi
                 graders:
-                  - { kind: judge, passed: false, score: { $absent: true }, usage: { $absent: true } }
+                  - { kind: judge, passed: false, code: agentry.eval.judge_not_allowed, score: { $absent: true }, usage: { $absent: true } }
                   - kind: judge
                     passed: true
                     score: 0.9

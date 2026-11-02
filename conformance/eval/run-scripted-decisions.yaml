@@ -18,9 +18,11 @@ description: >-
   - c-unmatched: the model calls set_flag; no decision rule matches its
     action, so the case fails and its session stays suspended with the
     escalation open; nothing is resolved or dispatched (the fixture's
-    set_flag stub has an empty list). Its only grader (escalated, source
-    approval) would pass, so the failure comes from the unmatched
-    escalation (EVAL-043, EVAL-044 as amended 2026-11-02).
+    set_flag stub has an empty list). The result carries
+    `code: agentry.eval.unresolved_escalation`; its only grader
+    (escalated, source approval) still runs and passes, so the failure
+    comes from the unresolved escalation (EVAL-043, EVAL-044 and EVAL-050
+    as amended 2026-11-02).
 
 
   Scripted provider responses: scripted-a 3 (c-approved 2, c-unmatched
@@ -159,8 +161,14 @@ script:
         cells:
           - passRate: 0.5
             results:
-              - { caseId: c-approved, repeat: 1, passed: true, sessionId: $sA }
-              - { caseId: c-unmatched, repeat: 1, passed: false, sessionId: $sU }
+              - { caseId: c-approved, repeat: 1, passed: true, sessionId: $sA, code: { $absent: true } }
+              - caseId: c-unmatched
+                repeat: 1
+                passed: false
+                code: agentry.eval.unresolved_escalation
+                sessionId: $sU
+                graders:
+                  - { kind: escalation, passed: true }
 expect:
   sessions:
     $sA:

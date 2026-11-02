@@ -19,15 +19,14 @@ description: >-
     stub behaviour. The call receives a tool result error (`unavailable`,
     `agentry.eval.unstubbed_call`) and never reaches the endpoint: the
     fixture's own `rates/quote` stub has an empty behaviour list (any call
-    to it fails the test) and records no call. The case fails although
-    its only grader (the final text) would pass (EVAL-041 as amended
-    2026-11-02).
+    to it fails the test) and records no call. The case fails with
+    result `code: agentry.eval.unstubbed_call` although its only grader
+    still runs and passes on the final text (EVAL-041, EVAL-050 as
+    amended 2026-11-02).
 
 
-  Reading: the amendment says the unstubbed call "fails the case" with
-  that category and code but not whether the run goes on; like an
-  unrecorded call in replay (EVAL-062) it is delivered as a tool result
-  error and the run continues, so the model answers once more. Scripted
+  The unstubbed call is delivered as a tool result error and the run
+  continues (EVAL-044 reading), so the model answers once more. Scripted
   provider responses: scripted-a 4 (2 per case). Stubs: web_lookup 1 (in
   the case); rates/quote none.
 requirements: [EVAL-041]
@@ -166,8 +165,14 @@ script:
         cells:
           - passRate: 0.5
             results:
-              - { caseId: c-egress, repeat: 1, passed: true, sessionId: $sE }
-              - { caseId: c-unstubbed, repeat: 1, passed: false, sessionId: $sU }
+              - { caseId: c-egress, repeat: 1, passed: true, sessionId: $sE, code: { $absent: true } }
+              - caseId: c-unstubbed
+                repeat: 1
+                passed: false
+                code: agentry.eval.unstubbed_call
+                sessionId: $sU
+                graders:
+                  - { kind: schema, passed: true }
 expect:
   sessions:
     $sE:

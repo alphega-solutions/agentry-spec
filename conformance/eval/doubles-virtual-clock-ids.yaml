@@ -4,10 +4,12 @@ title: Event timestamps and the time component of every UUIDv7 come from the inj
 description: >-
   The virtual clock starts at 2026-03-14T15:09:26.535Z (epoch milliseconds
   1773500966535, 48-bit hex 019cece52687). Run $r1 (which creates the
-  session) runs there. The clock is then advanced by PT26H to
-  2026-03-15T17:09:26.535Z (1773594566535, 019cf2795f87) for run $r2, and
-  set to 2026-07-04T08:30:00.250Z (1783153800250, 019f2c3fb43a) for run
-  $r3. No timer is pending, so the clock does not move during a run.
+  session) runs there. The clock is then advanced by PT2H to
+  2026-03-14T17:09:26.535Z (1773508166535, 019ced530387) for run $r2, and
+  set to 2026-03-15T08:30:00.250Z (1773563400250, 019cf09dd03a) for run
+  $r3. No timer is pending, so the clock does not move during a run. Each
+  gap is shorter than the baseline profile's `idleTtl` (PT24H), so the
+  session stays open throughout; expiry is not tested here.
 
 
   Every event's timestamp equals the virtual clock time at its emission,
@@ -51,7 +53,7 @@ script:
       - event: { type: run.started }
         bind: { runId: $r1 }
     expect: { ok: true, endReason: responded }
-  - clock: { advance: PT26H }
+  - clock: { advance: PT2H }
   - action: run
     session: $s
     principal: p1
@@ -60,7 +62,7 @@ script:
       - event: { type: run.started }
         bind: { runId: $r2 }
     expect: { ok: true, endReason: responded }
-  - clock: { set: "2026-07-04T08:30:00.250Z" }
+  - clock: { set: "2026-03-15T08:30:00.250Z" }
   - action: run
     session: $s
     principal: p1
@@ -82,9 +84,9 @@ expect:
           - type: run.started
             runId: { $all: [$r1, { $regex: "^019cece5-2687-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" }] }
           - type: run.started
-            runId: { $all: [$r2, { $regex: "^019cf279-5f87-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" }] }
+            runId: { $all: [$r2, { $regex: "^019ced53-0387-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" }] }
           - type: run.started
-            runId: { $all: [$r3, { $regex: "^019f2c3f-b43a-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" }] }
+            runId: { $all: [$r3, { $regex: "^019cf09d-d03a-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" }] }
   ports:
     eventLog:
       t1:
@@ -105,36 +107,36 @@ expect:
                   runId: $r1
                   eventId: { $not: { $regex: "^019cece5-2687-7" } }
                 equals: 0
-            # run 2: clock 2026-03-15T17:09:26.535Z
+            # run 2: clock 2026-03-14T17:09:26.535Z
             - $count:
                 of:
                   runId: $r2
-                  timestamp: { $not: { $regex: "^2026-03-15T17:09:26\\.5350*Z$" } }
+                  timestamp: { $not: { $regex: "^2026-03-14T17:09:26\\.5350*Z$" } }
                 equals: 0
             - $count:
                 of:
                   runId: $r2
-                  eventId: { $not: { $regex: "^019cf279-5f87-7" } }
+                  eventId: { $not: { $regex: "^019ced53-0387-7" } }
                 equals: 0
-            # run 3: clock 2026-07-04T08:30:00.250Z
+            # run 3: clock 2026-03-15T08:30:00.250Z
             - $count:
                 of:
                   runId: $r3
-                  timestamp: { $not: { $regex: "^2026-07-04T08:30:00\\.250*Z$" } }
+                  timestamp: { $not: { $regex: "^2026-03-15T08:30:00\\.250*Z$" } }
                 equals: 0
             - $count:
                 of:
                   runId: $r3
-                  eventId: { $not: { $regex: "^019f2c3f-b43a-7" } }
+                  eventId: { $not: { $regex: "^019cf09d-d03a-7" } }
                 equals: 0
             # every persisted event carries one of the three clock times
             - $count:
                 of:
-                  timestamp: { $not: { $regex: "^(2026-03-14T15:09:26\\.535|2026-03-15T17:09:26\\.535|2026-07-04T08:30:00\\.25)0*Z$" } }
+                  timestamp: { $not: { $regex: "^(2026-03-14T15:09:26\\.535|2026-03-14T17:09:26\\.535|2026-03-15T08:30:00\\.25)0*Z$" } }
                 equals: 0
             - $count:
                 of:
-                  eventId: { $not: { $regex: "^(019cece5-2687|019cf279-5f87|019f2c3f-b43a)-7" } }
+                  eventId: { $not: { $regex: "^(019cece5-2687|019ced53-0387|019cf09d-d03a)-7" } }
                 equals: 0
             - $count:
                 of:
