@@ -2,7 +2,10 @@ schemaVersion: "0.1.0"
 id: hook.taint-sticky-escalation-resume
 title: Taint survives an escalation, its approval and resume, and later turns with only trusted content
 description: >-
-  The bundle trusts `lookup@1`; `fetch_external` is untrusted.
+  The bundle trusts `lookup@1` and `update_record@1`; `fetch_external` is
+  untrusted. `update_record` is trusted so that c2's own result (HOOK-126)
+  adds no provenance and turn 2 isolates the stickiness of the original
+  taint.
 
   Turn 1 ($r1): an untrusted fetch_external result taints the session; the
   mutating update_record call (c2) escalates at stage 5. The session is
@@ -29,7 +32,7 @@ setup:
         schemaVersion: "0.1.0"
         policyInstructions: "Follow organisational policy."
         defaultFallbackMessage: "I can't help with that request."
-        trustedTools: [lookup@1]
+        trustedTools: [lookup@1, update_record@1]
         sensitivityPolicies:
           pii:
             allowedProviders: [scripted-a, scripted-b]

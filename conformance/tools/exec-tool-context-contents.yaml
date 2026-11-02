@@ -19,6 +19,19 @@ setup:
   config:
     base: baseline
     artifacts:
+      # lookup and update_record are trusted so lookup's result does not
+      # taint the session; otherwise update_record at step 2 would escalate
+      # (HOOK-120, HOOK-122, HOOK-126) instead of being dispatched.
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        trustedTools: [lookup@1, update_record@1]
+        sensitivityPolicies:
+          pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+          phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
       - kind: Tool
         id: lookup
         version: 1

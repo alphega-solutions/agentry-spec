@@ -6,8 +6,9 @@ description: >-
   `approvalRules`. `update_record` has `approval: policy`, so every call to
   it escalates from source `approval` and is not dispatched. The control
   `note` (approval never) in the same configuration is dispatched, so the
-  escalation comes from the `policy` approval and not from the setup. The
-  session is never tainted.
+  escalation comes from the `policy` approval and not from the setup.
+  $sPolicy is never tainted: its call is the first step, before any tool
+  result has entered context (HOOK-120).
 requirements: [HOOK-131]
 contract: ">=0.1.0 <1.0.0"
 features: []
