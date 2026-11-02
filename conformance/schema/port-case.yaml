@@ -12,7 +12,8 @@ description: >-
   Arguments and results use the record shapes of
   `schemas/ports/v1/records.yaml`, the `Event` schema, and `blobRef`.
   Placeholders and matchers work as in conformance fixtures: a step's
-  `bind` binds placeholders from its result (dotted paths), and later
+  `bind` binds placeholders from its result (dotted paths; the empty
+  path `""` binds the whole result), and later
   steps may use them in `args` and `expect`. `$now` in `args` is the
   case's virtual clock.
 
@@ -42,25 +43,30 @@ description: >-
 
   - `blobStore`: `put {tenant, data, mediaType, labels}` (`data` UTF-8 text,
     or `{base64}`) → `{ref, labels}`; `get {tenant, ref}` → `{data,
-    labels}`; `delete {tenant, ref}`; test hook `corrupt {tenant, ref}`
-    alters the stored bytes.
+    labels}` (`data` in the form it was put); `delete {tenant, ref}`; test
+    hook `corrupt {tenant, ref}` alters the stored bytes.
 
-  - `auditLog`: `append {tenant, record}` → the stored record;
+  - `auditLog`: `append {tenant, record}` → the stored record (a
+    tamper-evident log adds `hash` and `prevHash`); `get {tenant, id}` →
+    record;
     `query {tenant, session?, from?, to?, type?}` → records in append
     order; `deleteBefore {tenant, before}`; `verify {tenant}` → `{valid}`
-    (tamper-evident logs only).
+    (tamper-evident logs only); test hook `tamper {tenant, id}` alters a
+    stored record's content.
 
   - `vectorStore`: test hook `seed {source, records}` (records as in the
     fixture format's vector store stubs: `{id, text, tenant, labels?,
     access?}`); `query {tenant, principal, source, text, limit}` →
     results `{id, text, labels}`.
 
-  - `secrets`: test hook `seed {reference, value, principal?}`; `resolve
+  - `secrets`: test hook `seed {tenant, reference, value, principal?}`;
+    `resolve
     {tenant, reference, principal?}` → value.
 
   - `configSource`: test hook `seed {artifacts}`; `beginLoad {}` → a load
-    handle; test hook `change {artifacts}` (changes the source); `list
-    {load}` → artifact references; `read {load, ref}` → artifact.
+    handle; test hook `change {artifacts}` replaces the source's whole
+    contents; `list {load}` → artifact references (`id@version`); `read
+    {load, ref}` → artifact.
 type: object
 additionalProperties: false
 required: [schemaVersion, id, title, requirements, port, steps]

@@ -1,0 +1,121 @@
+schemaVersion: "0.1.0"
+id: port.checkpoint.version-lease-conflict
+title: Checkpoint saves fail with conflict on a stale or future version or a stale fencing token; lease renewal is a versioned save
+description: >-
+  Session S (…0050) in tenant t1. Each saved checkpoint carries `version`
+  = `expectedVersion` + 1 (Area 10 amendment 2026-11-02: the version
+  increases by one on every save, including lease renewals); the lease
+  passed to `save` is the one recorded in the checkpoint.
+
+  - v1 is created with `expectedVersion` 0 under worker-a's lease (token
+    1). A second create (`expectedVersion` 0) fails `conflict`.
+  - worker-a renews its lease: a save with `expectedVersion` 1, the same
+    token and a later `expiresAt` succeeds and yields v2 (PORT-031:
+    renewal is itself a versioned save). Loading shows v2 and the renewed
+    expiry.
+  - A save with a stale `expectedVersion` (1) or a future one (3) fails
+    `conflict`, and the stored record is still v2 (`lastSeq` 4).
+  - worker-b takes a new lease (token 2) with a save at `expectedVersion`
+    2 → v3. worker-a then saves with the correct `expectedVersion` 3 but
+    its old token 1: `conflict` (stale fencing token), and v3 stays
+    worker-b's. worker-b's own save at `expectedVersion` 3 succeeds (v4).
+  - Control: fencing is per session. Session S2 (…0051) accepts a create
+    with token 1 after token 2 was accepted for S.
+requirements: [PORT-031, PORT-004]
+port: checkpointStore
+clock: "2026-03-01T09:00:00Z"
+steps:
+  - op: save
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000050
+      expectedVersion: 0
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T09:05:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-000000000050, version: 1, lastSeq: 2, state: active, principalRef: { subject: user-1, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:6666666666666666666666666666666666666666666666666666666666666666", taint: { tainted: false, provenances: [] }, budget: { tokens: 100000 }, counters: { sessionSize: 120 }, lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T09:05:00Z" } }
+    expect: { ok: true }
+  - op: save
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000050
+      expectedVersion: 0
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T09:05:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-000000000050, version: 1, lastSeq: 9, state: active, principalRef: { subject: user-1, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:6666666666666666666666666666666666666666666666666666666666666666", taint: { tainted: false, provenances: [] }, budget: { tokens: 100000 }, counters: { sessionSize: 120 }, lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T09:05:00Z" } }
+    expect: { error: { category: conflict } }
+  - clock: { advance: PT4M }
+  - op: save
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000050
+      expectedVersion: 1
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T09:09:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-000000000050, version: 2, lastSeq: 4, state: active, principalRef: { subject: user-1, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:6666666666666666666666666666666666666666666666666666666666666666", taint: { tainted: false, provenances: [] }, budget: { tokens: 99000 }, counters: { sessionSize: 480 }, lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T09:09:00Z" } }
+    expect: { ok: true }
+  - op: load
+    args: { tenant: t1, session: 01900000-0000-7000-8000-000000000050 }
+    expect:
+      result: { schemaVersion: "0.1.0", version: 2, lastSeq: 4, lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T09:09:00Z" } }
+  - op: save
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000050
+      expectedVersion: 1
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T09:09:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-000000000050, version: 2, lastSeq: 7, state: active, principalRef: { subject: user-1, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:6666666666666666666666666666666666666666666666666666666666666666", taint: { tainted: false, provenances: [] }, budget: { tokens: 98000 }, counters: { sessionSize: 900 }, lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T09:09:00Z" } }
+    expect: { error: { category: conflict } }
+  - op: save
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000050
+      expectedVersion: 3
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T09:09:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-000000000050, version: 4, lastSeq: 7, state: active, principalRef: { subject: user-1, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:6666666666666666666666666666666666666666666666666666666666666666", taint: { tainted: false, provenances: [] }, budget: { tokens: 98000 }, counters: { sessionSize: 900 }, lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T09:09:00Z" } }
+    expect: { error: { category: conflict } }
+  - op: load
+    args: { tenant: t1, session: 01900000-0000-7000-8000-000000000050 }
+    expect:
+      result: { version: 2, lastSeq: 4, budget: { tokens: 99000 }, counters: { sessionSize: 480 } }
+  - clock: { advance: PT6M }
+  - op: save
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000050
+      expectedVersion: 2
+      lease: { holder: worker-b, token: 2, expiresAt: "2026-03-01T09:15:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-000000000050, version: 3, lastSeq: 5, state: active, principalRef: { subject: user-1, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:6666666666666666666666666666666666666666666666666666666666666666", taint: { tainted: false, provenances: [] }, budget: { tokens: 99000 }, counters: { sessionSize: 480 }, lease: { holder: worker-b, token: 2, expiresAt: "2026-03-01T09:15:00Z" } }
+    expect: { ok: true }
+  - op: save
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000050
+      expectedVersion: 3
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T09:15:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-000000000050, version: 4, lastSeq: 8, state: idle, principalRef: { subject: user-1, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:6666666666666666666666666666666666666666666666666666666666666666", taint: { tainted: false, provenances: [] }, budget: { tokens: 97000 }, counters: { sessionSize: 990 }, lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T09:15:00Z" } }
+    expect: { error: { category: conflict } }
+  - op: load
+    args: { tenant: t1, session: 01900000-0000-7000-8000-000000000050 }
+    expect:
+      result: { version: 3, lastSeq: 5, state: active, lease: { holder: worker-b, token: 2, expiresAt: "2026-03-01T09:15:00Z" } }
+  - op: save
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000050
+      expectedVersion: 3
+      lease: { holder: worker-b, token: 2, expiresAt: "2026-03-01T09:15:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-000000000050, version: 4, lastSeq: 6, state: idle, principalRef: { subject: user-1, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:6666666666666666666666666666666666666666666666666666666666666666", taint: { tainted: false, provenances: [] }, budget: { tokens: 98500 }, counters: { sessionSize: 610 } }
+    expect: { ok: true }
+  - op: load
+    args: { tenant: t1, session: 01900000-0000-7000-8000-000000000050 }
+    expect:
+      result: { version: 4, lastSeq: 6, state: idle, lease: { $absent: true } }
+  - op: save
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000051
+      expectedVersion: 0
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T09:15:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-000000000051, version: 1, lastSeq: 1, state: active, principalRef: { subject: user-2, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:6666666666666666666666666666666666666666666666666666666666666666", taint: { tainted: false, provenances: [] }, budget: { tokens: 100000 }, counters: { sessionSize: 0 }, lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T09:15:00Z" } }
+    expect: { ok: true }
+  - op: load
+    args: { tenant: t1, session: 01900000-0000-7000-8000-000000000051 }
+    expect:
+      result: { sessionId: 01900000-0000-7000-8000-000000000051, version: 1 }

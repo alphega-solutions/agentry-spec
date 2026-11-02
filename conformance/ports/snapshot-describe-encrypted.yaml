@@ -1,0 +1,13 @@
+schemaVersion: "0.1.0"
+id: port.snapshot.describe-encrypted
+title: The snapshotStore reports encryption at rest
+description: >-
+  `describe` reports that data at rest is encrypted (PORT-006, as amended
+  2026-11-02). Whether keys are platform- or customer-managed follows the
+  deployment's binding, so `keyRef` is not asserted.
+requirements: [PORT-006]
+port: snapshotStore
+steps:
+  - op: describe
+    args: {}
+    expect: { ok: true, result: { encryptedAtRest: true } }

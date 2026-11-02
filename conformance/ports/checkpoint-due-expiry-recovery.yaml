@@ -1,0 +1,117 @@
+schemaVersion: "0.1.0"
+id: port.checkpoint.due-expiry-recovery
+title: The due query returns one tenant's sessions whose TTL has elapsed or whose run lease has lapsed, as of the current checkpoint
+description: >-
+  Checkpoints at 2026-03-01T10:00Z:
+
+  - t1 A1 (…0080): active, lease expiring 10:05; renewed at 10:04 to
+    10:09 by a versioned save (v2, PORT-031).
+  - t1 A2 (…0081): active, lease expiring 12:00.
+  - t1 S1 (…0082): suspended, escalation `expiresAt` (its
+    `suspendedTtl` expiry) 2026-03-02T10:00Z; no lease.
+  - t1 C1 (…0083): closed — never due.
+  - t2 B1 (…0085): active, lease expiring 10:05.
+
+  `due {tenant, now}` returns session IDs; their order is not specified,
+  so results are matched with `$len` plus `$contains`. A lease or TTL has
+  elapsed when `now` equals or passes its expiry (Area 6 amendment
+  2026-11-01).
+
+  - 10:00: t1 → none.
+  - 10:05: t1 → none (A1's renewal moved its expiry; the query reads the
+    current version); t2 → [B1].
+  - 10:09: t1 → [A1].
+  - 12:00: t1 → [A1, A2].
+  - 2026-03-02T10:00Z: t1 → [A1, A2, S1]; t2 → [B1] only.
+
+  Idle-TTL expiry is not exercised: the checkpoint record holds no
+  idle-expiry time, so a port cannot evaluate `idleTtl` from stored data
+  alone (reported as a format gap). Elapsed `suspendedTtl` is read from
+  the open escalation's `expiresAt`.
+requirements: [PORT-032, PORT-033]
+port: checkpointStore
+clock: "2026-03-01T10:00:00Z"
+steps:
+  - op: save
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000080
+      expectedVersion: 0
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-000000000080, version: 1, lastSeq: 3, state: active, principalRef: { subject: user-1, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:9999999999999999999999999999999999999999999999999999999999999999", taint: { tainted: false, provenances: [] }, budget: { tokens: 50000 }, counters: { sessionSize: 512 }, lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" } }
+    expect: { ok: true }
+  - op: save
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000081
+      expectedVersion: 0
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T12:00:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-000000000081, version: 1, lastSeq: 3, state: active, principalRef: { subject: user-2, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:9999999999999999999999999999999999999999999999999999999999999999", taint: { tainted: false, provenances: [] }, budget: { tokens: 50000 }, counters: { sessionSize: 512 }, lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T12:00:00Z" } }
+    expect: { ok: true }
+  - op: save
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000082
+      expectedVersion: 0
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-000000000082, version: 1, lastSeq: 7, state: suspended, principalRef: { subject: user-3, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:9999999999999999999999999999999999999999999999999999999999999999", taint: { tainted: false, provenances: [] }, budget: { tokens: 50000 }, counters: { sessionSize: 512 }, escalation: { id: 01900000-0000-7000-8000-000000000086, sessionId: 01900000-0000-7000-8000-000000000082, runId: 01900000-0000-7000-8000-000000000087, turn: 1, step: 1, tenant: t1, snapshotHash: "sha256:9999999999999999999999999999999999999999999999999999999999999999", sources: [approval], reasonCodes: [agentry.approval.always], pendingActions: [{ id: pa-1, kind: tool_call, source: approval, reasonCode: agentry.approval.always, callId: call_1, tool: update_record, arguments: { key: k1, value: v1 }, labels: [], allowedDecisions: [approve, reject, edit], reviewerRequirements: { requiredApprovals: 1, selfApprovalAllowed: false, rules: [] } }], createdAt: "2026-02-27T10:00:00Z", expiresAt: "2026-03-02T10:00:00Z", decisions: [] } }
+    expect: { ok: true }
+  - op: save
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000083
+      expectedVersion: 0
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-000000000083, version: 1, lastSeq: 9, state: closed, closeReason: completed, principalRef: { subject: user-4, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:9999999999999999999999999999999999999999999999999999999999999999", taint: { tainted: false, provenances: [] }, budget: { tokens: 50000 }, counters: { sessionSize: 512 } }
+    expect: { ok: true }
+  - op: save
+    args:
+      tenant: t2
+      session: 01900000-0000-7000-8000-000000000085
+      expectedVersion: 0
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t2, sessionId: 01900000-0000-7000-8000-000000000085, version: 1, lastSeq: 3, state: active, principalRef: { subject: user-9, tenant: t2 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:9999999999999999999999999999999999999999999999999999999999999999", taint: { tainted: false, provenances: [] }, budget: { tokens: 50000 }, counters: { sessionSize: 512 }, lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" } }
+    expect: { ok: true }
+  - op: due
+    args: { tenant: t1, now: $now }
+    expect: { result: [] }
+  - clock: { advance: PT4M }
+  - op: save
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000080
+      expectedVersion: 1
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:09:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-000000000080, version: 2, lastSeq: 5, state: active, principalRef: { subject: user-1, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:9999999999999999999999999999999999999999999999999999999999999999", taint: { tainted: false, provenances: [] }, budget: { tokens: 50000 }, counters: { sessionSize: 512 }, lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:09:00Z" } }
+    expect: { ok: true }
+
+  - clock: { advance: PT1M }
+  - op: due
+    args: { tenant: t1, now: $now }
+    expect: { result: [] }
+  - op: due
+    args: { tenant: t2, now: $now }
+    expect: { result: [01900000-0000-7000-8000-000000000085] }
+  - clock: { advance: PT4M }
+  - op: due
+    args: { tenant: t1, now: $now }
+    expect: { result: [01900000-0000-7000-8000-000000000080] }
+  - clock: { advance: PT1H51M }
+  - op: due
+    args: { tenant: t1, now: $now }
+    expect:
+      result:
+        $all:
+          - { $len: 2 }
+          - { $contains: [01900000-0000-7000-8000-000000000080, 01900000-0000-7000-8000-000000000081] }
+  - clock: { advance: PT22H }
+  - op: due
+    args: { tenant: t1, now: $now }
+    expect:
+      result:
+        $all:
+          - { $len: 3 }
+          - { $contains: [01900000-0000-7000-8000-000000000080, 01900000-0000-7000-8000-000000000081, 01900000-0000-7000-8000-000000000082] }
+  - op: due
+    args: { tenant: t2, now: $now }
+    expect: { result: [01900000-0000-7000-8000-000000000085] }

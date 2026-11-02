@@ -1,0 +1,107 @@
+schemaVersion: "0.1.0"
+id: storage.residency-ports
+title: A storage port or secrets provider bound outside `dataResidency` is a configuration error, also through an overlay; bindings inside it load
+description: >-
+  org@1 sets `dataResidency: [test-region, test-region-2]`. Each failing
+  load restates the deployment with exactly one binding moved to
+  `other-region`, outside `dataResidency` (PORT-005, CFG-070):
+
+  1. the event log;
+  2. the blob store;
+  3. the secrets provider;
+  4. the vector store (declared with one source, used by nothing);
+  5. a `prod` overlay that moves the audit log (CFG-112 as amended: an
+     overlay may change regions only subject to `dataResidency`).
+
+  Each is rejected with `configuration`, and a failed load leaves the
+  previous snapshot in force. Controls: a deployment whose checkpoint
+  store and secrets provider are in `test-region-2` and whose vector store
+  is in test-region (every binding inside `dataResidency`, not all in one
+  region) loads, and a session runs on it. The telemetry exporter is
+  covered by storage.residency-telemetry, which needs the optional
+  feature. Only the category is asserted: whether the error's `details`
+  name the binding or the bundle's `dataResidency` is not settled.
+requirements: [PORT-005]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        dataResidency: [test-region, test-region-2]
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Stored in region." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b: { responses: [] }
+script:
+  # 1. Event log outside dataResidency.
+  - load:
+      artifacts:
+        - { kind: Deployment, id: test, version: 1, schemaVersion: "0.1.0", environment: test, policyBundles: [org@1], attachmentSources: [upload, email], providers: [{ id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }, { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }], ports: { eventLog: { adapter: memory, region: other-region }, checkpointStore: { adapter: memory, region: test-region }, idempotencyStore: { adapter: memory, region: test-region }, snapshotStore: { adapter: memory, region: test-region }, blobStore: { adapter: memory, region: test-region }, auditLog: { adapter: memory, region: test-region }, secrets: { adapter: memory, region: test-region } }, retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D } }
+    expect: { ok: false, error: { category: configuration } }
+  # 2. Blob store outside dataResidency.
+  - load:
+      artifacts:
+        - { kind: Deployment, id: test, version: 1, schemaVersion: "0.1.0", environment: test, policyBundles: [org@1], attachmentSources: [upload, email], providers: [{ id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }, { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }], ports: { eventLog: { adapter: memory, region: test-region }, checkpointStore: { adapter: memory, region: test-region }, idempotencyStore: { adapter: memory, region: test-region }, snapshotStore: { adapter: memory, region: test-region }, blobStore: { adapter: memory, region: other-region }, auditLog: { adapter: memory, region: test-region }, secrets: { adapter: memory, region: test-region } }, retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D } }
+    expect: { ok: false, error: { category: configuration } }
+  # 3. Secrets provider outside dataResidency.
+  - load:
+      artifacts:
+        - { kind: Deployment, id: test, version: 1, schemaVersion: "0.1.0", environment: test, policyBundles: [org@1], attachmentSources: [upload, email], providers: [{ id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }, { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }], ports: { eventLog: { adapter: memory, region: test-region }, checkpointStore: { adapter: memory, region: test-region }, idempotencyStore: { adapter: memory, region: test-region }, snapshotStore: { adapter: memory, region: test-region }, blobStore: { adapter: memory, region: test-region }, auditLog: { adapter: memory, region: test-region }, secrets: { adapter: memory, region: other-region } }, retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D } }
+    expect: { ok: false, error: { category: configuration } }
+  # 4. Vector store outside dataResidency.
+  - load:
+      artifacts:
+        - { kind: Deployment, id: test, version: 1, schemaVersion: "0.1.0", environment: test, policyBundles: [org@1], attachmentSources: [upload, email], providers: [{ id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }, { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }], ports: { eventLog: { adapter: memory, region: test-region }, checkpointStore: { adapter: memory, region: test-region }, idempotencyStore: { adapter: memory, region: test-region }, snapshotStore: { adapter: memory, region: test-region }, blobStore: { adapter: memory, region: test-region }, auditLog: { adapter: memory, region: test-region }, secrets: { adapter: memory, region: test-region }, vectorStore: { adapter: memory, region: other-region, sources: [kb] } }, retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D } }
+    expect: { ok: false, error: { category: configuration } }
+  # 5. An overlay moving the audit log outside dataResidency.
+  - load:
+      overlay:
+        environment: prod
+        deployment:
+          ports: { eventLog: { adapter: memory, region: test-region }, checkpointStore: { adapter: memory, region: test-region }, idempotencyStore: { adapter: memory, region: test-region }, snapshotStore: { adapter: memory, region: test-region }, blobStore: { adapter: memory, region: test-region }, auditLog: { adapter: memory, region: other-region }, secrets: { adapter: memory, region: test-region } }
+    expect: { ok: false, error: { category: configuration } }
+  # Control: every binding inside dataResidency, across its two regions.
+  - load:
+      artifacts:
+        - { kind: Deployment, id: test, version: 1, schemaVersion: "0.1.0", environment: test, policyBundles: [org@1], attachmentSources: [upload, email], providers: [{ id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }, { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }], ports: { eventLog: { adapter: memory, region: test-region }, checkpointStore: { adapter: memory, region: test-region-2 }, idempotencyStore: { adapter: memory, region: test-region }, snapshotStore: { adapter: memory, region: test-region }, blobStore: { adapter: memory, region: test-region }, auditLog: { adapter: memory, region: test-region }, secrets: { adapter: memory, region: test-region-2 }, vectorStore: { adapter: memory, region: test-region, sources: [kb] } }, retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D } }
+    expect: { ok: true }
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created }
+          - { type: run.ended, payload: { reason: responded } }
+  providerRequests:
+    scripted-a: { count: 1 }
+    scripted-b: { count: 0 }

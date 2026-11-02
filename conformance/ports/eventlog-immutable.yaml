@@ -1,0 +1,82 @@
+schemaVersion: "0.1.0"
+id: port.eventlog.immutable
+title: Persisted events cannot be overwritten; a re-append at a used sequence number fails and reads return the originals
+description: >-
+  Session S (…0020) in tenant t1 holds events at seq 1–3, appended under
+  the current lease (token 1). Attempts to write different events at seq 1,
+  2 and 3 — each with `expectedSeq` set to the used number, under the same
+  current lease — fail `conflict`. A subsequent read of 1–3 returns the
+  original events unchanged (same eventIds, types, payloads, timestamps),
+  and none of the replacement eventIds appears. The next append, at seq 4,
+  succeeds, showing the log is still writable and that the rejected
+  attempts consumed no sequence numbers.
+
+  The event-log port has no operation that modifies or deletes individual
+  events; `deleteSession` is the only deletion (covered by
+  port.eventlog.delete-whole-session).
+requirements: [PORT-022, PORT-020, PORT-004]
+port: eventLog
+clock: "2026-03-01T09:00:00Z"
+steps:
+  - op: append
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000020
+      expectedSeq: 1
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T09:05:00Z" }
+      events:
+        - { schemaVersion: "0.1.0", eventId: 01900000-0000-7000-8000-000000000021, sessionId: 01900000-0000-7000-8000-000000000020, seq: 1, type: session.created, timestamp: "2026-03-01T09:00:00Z", tenantId: t1, principalRef: { subject: user-1, tenant: t1 }, snapshotHash: "sha256:2222222222222222222222222222222222222222222222222222222222222222", traceContext: { traceparent: "00-1bf7651916cd43dd8448eb211c80319c-c7ad6b7169203331-01" }, payload: { persona: assistant@1, profile: default@1 } }
+        - { schemaVersion: "0.1.0", eventId: 01900000-0000-7000-8000-000000000022, sessionId: 01900000-0000-7000-8000-000000000020, runId: 01900000-0000-7000-8000-00000000002f, seq: 2, type: run.started, timestamp: "2026-03-01T09:00:00Z", tenantId: t1, principalRef: { subject: user-1, tenant: t1 }, snapshotHash: "sha256:2222222222222222222222222222222222222222222222222222222222222222", traceContext: { traceparent: "00-1bf7651916cd43dd8448eb211c80319c-c7ad6b7169203331-01" }, payload: { kind: run } }
+        - { schemaVersion: "0.1.0", eventId: 01900000-0000-7000-8000-000000000023, sessionId: 01900000-0000-7000-8000-000000000020, runId: 01900000-0000-7000-8000-00000000002f, seq: 3, turn: 1, type: turn.started, timestamp: "2026-03-01T09:00:00Z", tenantId: t1, principalRef: { subject: user-1, tenant: t1 }, snapshotHash: "sha256:2222222222222222222222222222222222222222222222222222222222222222", traceContext: { traceparent: "00-1bf7651916cd43dd8448eb211c80319c-c7ad6b7169203331-01" }, payload: {} }
+    expect: { ok: true }
+  - op: append
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000020
+      expectedSeq: 1
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T09:05:00Z" }
+      events:
+        - { schemaVersion: "0.1.0", eventId: 01900000-0000-7000-8000-000000000024, sessionId: 01900000-0000-7000-8000-000000000020, seq: 1, type: session.created, timestamp: "2026-03-01T09:01:00Z", tenantId: t1, principalRef: { subject: user-1, tenant: t1 }, snapshotHash: "sha256:2222222222222222222222222222222222222222222222222222222222222222", traceContext: { traceparent: "00-1bf7651916cd43dd8448eb211c80319c-c7ad6b7169203331-01" }, payload: { persona: other@1, profile: default@1 } }
+    expect: { error: { category: conflict } }
+  - op: append
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000020
+      expectedSeq: 2
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T09:05:00Z" }
+      events:
+        - { schemaVersion: "0.1.0", eventId: 01900000-0000-7000-8000-000000000025, sessionId: 01900000-0000-7000-8000-000000000020, runId: 01900000-0000-7000-8000-00000000002f, seq: 2, type: run.started, timestamp: "2026-03-01T09:01:00Z", tenantId: t1, principalRef: { subject: user-1, tenant: t1 }, snapshotHash: "sha256:2222222222222222222222222222222222222222222222222222222222222222", traceContext: { traceparent: "00-1bf7651916cd43dd8448eb211c80319c-c7ad6b7169203331-01" }, payload: { kind: resume } }
+    expect: { error: { category: conflict } }
+  - op: append
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000020
+      expectedSeq: 3
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T09:05:00Z" }
+      events:
+        - { schemaVersion: "0.1.0", eventId: 01900000-0000-7000-8000-000000000026, sessionId: 01900000-0000-7000-8000-000000000020, runId: 01900000-0000-7000-8000-00000000002f, seq: 3, turn: 1, type: turn.completed, timestamp: "2026-03-01T09:01:00Z", tenantId: t1, principalRef: { subject: user-1, tenant: t1 }, snapshotHash: "sha256:2222222222222222222222222222222222222222222222222222222222222222", traceContext: { traceparent: "00-1bf7651916cd43dd8448eb211c80319c-c7ad6b7169203331-01" }, payload: {} }
+    expect: { error: { category: conflict } }
+  - op: read
+    args: { tenant: t1, session: 01900000-0000-7000-8000-000000000020, fromSeq: 1, toSeq: 3 }
+    expect:
+      result:
+        - { schemaVersion: "0.1.0", eventId: 01900000-0000-7000-8000-000000000021, sessionId: 01900000-0000-7000-8000-000000000020, seq: 1, type: session.created, timestamp: "2026-03-01T09:00:00Z", tenantId: t1, principalRef: { subject: user-1, tenant: t1 }, snapshotHash: "sha256:2222222222222222222222222222222222222222222222222222222222222222", traceContext: { traceparent: "00-1bf7651916cd43dd8448eb211c80319c-c7ad6b7169203331-01" }, payload: { persona: assistant@1, profile: default@1 } }
+        - { schemaVersion: "0.1.0", eventId: 01900000-0000-7000-8000-000000000022, sessionId: 01900000-0000-7000-8000-000000000020, runId: 01900000-0000-7000-8000-00000000002f, seq: 2, type: run.started, timestamp: "2026-03-01T09:00:00Z", tenantId: t1, principalRef: { subject: user-1, tenant: t1 }, snapshotHash: "sha256:2222222222222222222222222222222222222222222222222222222222222222", traceContext: { traceparent: "00-1bf7651916cd43dd8448eb211c80319c-c7ad6b7169203331-01" }, payload: { kind: run } }
+        - { schemaVersion: "0.1.0", eventId: 01900000-0000-7000-8000-000000000023, sessionId: 01900000-0000-7000-8000-000000000020, runId: 01900000-0000-7000-8000-00000000002f, seq: 3, turn: 1, type: turn.started, timestamp: "2026-03-01T09:00:00Z", tenantId: t1, principalRef: { subject: user-1, tenant: t1 }, snapshotHash: "sha256:2222222222222222222222222222222222222222222222222222222222222222", traceContext: { traceparent: "00-1bf7651916cd43dd8448eb211c80319c-c7ad6b7169203331-01" }, payload: {} }
+  - op: append
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000020
+      expectedSeq: 4
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T09:05:00Z" }
+      events:
+        - { schemaVersion: "0.1.0", eventId: 01900000-0000-7000-8000-000000000027, sessionId: 01900000-0000-7000-8000-000000000020, runId: 01900000-0000-7000-8000-00000000002f, seq: 4, turn: 1, type: turn.completed, timestamp: "2026-03-01T09:02:00Z", tenantId: t1, principalRef: { subject: user-1, tenant: t1 }, snapshotHash: "sha256:2222222222222222222222222222222222222222222222222222222222222222", traceContext: { traceparent: "00-1bf7651916cd43dd8448eb211c80319c-c7ad6b7169203331-01" }, payload: {} }
+    expect: { ok: true }
+  - op: read
+    args: { tenant: t1, session: 01900000-0000-7000-8000-000000000020, fromSeq: 1, toSeq: 4 }
+    expect:
+      result:
+        - { eventId: 01900000-0000-7000-8000-000000000021, seq: 1, payload: { persona: assistant@1 } }
+        - { eventId: 01900000-0000-7000-8000-000000000022, seq: 2, payload: { kind: run } }
+        - { eventId: 01900000-0000-7000-8000-000000000023, seq: 3, type: turn.started }
+        - { eventId: 01900000-0000-7000-8000-000000000027, seq: 4, type: turn.completed }

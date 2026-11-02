@@ -1,0 +1,254 @@
+schemaVersion: "0.1.0"
+id: port.checkpoint.round-trip
+title: Checkpoint contents round-trip exactly, every field included; a save replaces the whole record
+description: >-
+  Two checkpoints in tenant t1, each loaded back field for field:
+
+  - S1 (…0060), a suspended child session (parent …0062): tainted, with
+    both tainting provenances in order; remaining budget (tokens and cost)
+    and the session-size counter; a reasoning part; the open escalation,
+    unredacted, with two pending actions (arguments included, a `pii`
+    label, reviewer requirements) and one recorded decision — a partial
+    approval of an action that needs two (HITL-051); and two results held
+    while suspended, one `ok` and one `error`, in request order.
+  - S2 (…0061), an active root session with two children: its run lease
+    (holder, fencing token, expiry), an opaque reasoning part, and
+    adapter `extensions`.
+
+  Every value written is expected back unchanged, including
+  `schemaVersion` (PORT-007) and the order of arrays. Then S1 is saved
+  again as v2 after the escalation was resolved: no `escalation`, no
+  `heldResults`, state `active`, with a lease. Loading it shows those
+  fields absent — `save` replaces the stored record rather than merging
+  into it — and S2 is unaffected.
+requirements: [PORT-030, PORT-007]
+port: checkpointStore
+clock: "2026-03-01T09:00:00Z"
+steps:
+  - op: save
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000060
+      expectedVersion: 0
+      lease: { holder: worker-a, token: 4, expiresAt: "2026-03-01T09:05:00Z" }
+      checkpoint:
+        schemaVersion: "0.1.0"
+        tenant: t1
+        sessionId: 01900000-0000-7000-8000-000000000060
+        version: 1
+        lastSeq: 17
+        state: suspended
+        principalRef: { subject: user-1, tenant: t1 }
+        persona: researcher@2
+        profile: default@1
+        snapshotHash: "sha256:7777777777777777777777777777777777777777777777777777777777777777"
+        turn: 2
+        step: 3
+        taint: { tainted: true, provenances: ["tool:web_fetch", "retrieval:kb-docs"] }
+        budget: { tokens: 41250, cost: 0.0825 }
+        counters: { sessionSize: 18432 }
+        reasoning:
+          - { type: reasoning, provenance: model, labels: [], provider: scripted-a, data: "Look up the customer before updating the address.", opaque: false }
+        escalation:
+          id: 01900000-0000-7000-8000-000000000063
+          sessionId: 01900000-0000-7000-8000-000000000060
+          runId: 01900000-0000-7000-8000-000000000064
+          turn: 2
+          step: 3
+          tenant: t1
+          snapshotHash: "sha256:7777777777777777777777777777777777777777777777777777777777777777"
+          sources: [taint, approval]
+          reasonCodes: [agentry.taint.mutating, agentry.approval.rule]
+          taintProvenances: ["tool:web_fetch", "retrieval:kb-docs"]
+          pendingActions:
+            - id: pa-1
+              kind: tool_call
+              source: taint
+              reasonCode: agentry.taint.mutating
+              callId: call_1
+              tool: update_record
+              arguments: { key: customer-42, value: "12 Example Street" }
+              labels: [pii]
+              allowedDecisions: [approve, reject, edit]
+              reviewerRequirements: { requiredApprovals: 2, selfApprovalAllowed: false, rules: ["'reviewer' in reviewer.roles"] }
+            - id: pa-2
+              kind: tool_call
+              source: approval
+              reasonCode: agentry.approval.rule
+              callId: call_2
+              tool: send_email
+              arguments: { to: "customer-42@example.test", subject: "Address updated" }
+              labels: []
+              allowedDecisions: [approve, reject, edit]
+              reviewerRequirements: { requiredApprovals: 1, selfApprovalAllowed: true, rules: [] }
+          createdAt: "2026-03-01T08:55:00Z"
+          expiresAt: "2026-03-04T08:55:00Z"
+          decisions:
+            - { id: 01900000-0000-7000-8000-000000000065, escalationId: 01900000-0000-7000-8000-000000000063, pendingActionId: pa-1, type: approve, decidedBy: reviewer, reviewer: { subject: reviewer-1, tenant: t1 }, timestamp: "2026-03-01T08:58:00Z" }
+        heldResults:
+          - { type: tool_result, provenance: "tool:lookup", labels: [pii], callId: call_0, tool: lookup, result: { ok: { output: { name: "Ada Example", city: "Springfield" } } } }
+          - { type: tool_result, provenance: "tool:lookup", labels: [], callId: call_3, tool: lookup, result: { error: { code: crm.lookup.not_found, category: not_found, retryable: false, source: tool, message: "No such record." } } }
+        parentSessionId: 01900000-0000-7000-8000-000000000062
+    expect: { ok: true }
+  - op: save
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000061
+      expectedVersion: 0
+      lease: { holder: worker-a, token: 7, expiresAt: "2026-03-01T09:05:00Z" }
+      checkpoint:
+        schemaVersion: "0.1.0"
+        tenant: t1
+        sessionId: 01900000-0000-7000-8000-000000000061
+        version: 1
+        lastSeq: 5
+        state: active
+        principalRef: { subject: user-3, tenant: t1 }
+        persona: assistant@1
+        profile: streamed@1
+        snapshotHash: "sha256:8888888888888888888888888888888888888888888888888888888888888888"
+        turn: 1
+        step: 1
+        taint: { tainted: false, provenances: [] }
+        budget: { tokens: 5000 }
+        counters: { sessionSize: 2048 }
+        reasoning:
+          - { type: reasoning, provenance: model, labels: [], provider: scripted-b, data: "ZW5jcnlwdGVkLXJlYXNvbmluZy1ibG9i", opaque: true }
+        lease: { holder: worker-a, token: 7, expiresAt: "2026-03-01T09:05:00Z" }
+        childSessionIds: [01900000-0000-7000-8000-000000000066, 01900000-0000-7000-8000-000000000067]
+        extensions: { com.example.adapter: { shard: 3, note: "opaque to other implementations" } }
+    expect: { ok: true }
+  - op: load
+    args: { tenant: t1, session: 01900000-0000-7000-8000-000000000060 }
+    expect:
+      result:
+        schemaVersion: "0.1.0"
+        tenant: t1
+        sessionId: 01900000-0000-7000-8000-000000000060
+        version: 1
+        lastSeq: 17
+        state: suspended
+        closeReason: { $absent: true }
+        principalRef: { subject: user-1, tenant: t1 }
+        persona: researcher@2
+        profile: default@1
+        snapshotHash: "sha256:7777777777777777777777777777777777777777777777777777777777777777"
+        turn: 2
+        step: 3
+        taint: { tainted: true, provenances: ["tool:web_fetch", "retrieval:kb-docs"] }
+        budget: { tokens: 41250, cost: 0.0825 }
+        counters: { sessionSize: 18432 }
+        reasoning:
+          - { type: reasoning, provenance: model, labels: [], provider: scripted-a, data: "Look up the customer before updating the address.", opaque: false }
+        escalation:
+          id: 01900000-0000-7000-8000-000000000063
+          sessionId: 01900000-0000-7000-8000-000000000060
+          runId: 01900000-0000-7000-8000-000000000064
+          turn: 2
+          step: 3
+          tenant: t1
+          snapshotHash: "sha256:7777777777777777777777777777777777777777777777777777777777777777"
+          sources: [taint, approval]
+          reasonCodes: [agentry.taint.mutating, agentry.approval.rule]
+          taintProvenances: ["tool:web_fetch", "retrieval:kb-docs"]
+          pendingActions:
+            - id: pa-1
+              kind: tool_call
+              source: taint
+              reasonCode: agentry.taint.mutating
+              callId: call_1
+              tool: update_record
+              arguments: { key: customer-42, value: "12 Example Street" }
+              labels: [pii]
+              allowedDecisions: [approve, reject, edit]
+              reviewerRequirements: { requiredApprovals: 2, selfApprovalAllowed: false, rules: ["'reviewer' in reviewer.roles"] }
+            - id: pa-2
+              kind: tool_call
+              source: approval
+              reasonCode: agentry.approval.rule
+              callId: call_2
+              tool: send_email
+              arguments: { to: "customer-42@example.test", subject: "Address updated" }
+              labels: []
+              allowedDecisions: [approve, reject, edit]
+              reviewerRequirements: { requiredApprovals: 1, selfApprovalAllowed: true, rules: [] }
+          createdAt: "2026-03-01T08:55:00Z"
+          expiresAt: "2026-03-04T08:55:00Z"
+          decisions:
+            - { id: 01900000-0000-7000-8000-000000000065, escalationId: 01900000-0000-7000-8000-000000000063, pendingActionId: pa-1, type: approve, decidedBy: reviewer, reviewer: { subject: reviewer-1, tenant: t1 }, timestamp: "2026-03-01T08:58:00Z" }
+        heldResults:
+          - { type: tool_result, provenance: "tool:lookup", labels: [pii], callId: call_0, tool: lookup, result: { ok: { output: { name: "Ada Example", city: "Springfield" } } } }
+          - { type: tool_result, provenance: "tool:lookup", labels: [], callId: call_3, tool: lookup, result: { error: { code: crm.lookup.not_found, category: not_found, retryable: false, source: tool, message: "No such record." } } }
+        lease: { $absent: true }
+        parentSessionId: 01900000-0000-7000-8000-000000000062
+        childSessionIds: { $absent: true }
+  - op: load
+    args: { tenant: t1, session: 01900000-0000-7000-8000-000000000061 }
+    expect:
+      result:
+        schemaVersion: "0.1.0"
+        tenant: t1
+        sessionId: 01900000-0000-7000-8000-000000000061
+        version: 1
+        lastSeq: 5
+        state: active
+        principalRef: { subject: user-3, tenant: t1 }
+        persona: assistant@1
+        profile: streamed@1
+        snapshotHash: "sha256:8888888888888888888888888888888888888888888888888888888888888888"
+        turn: 1
+        step: 1
+        taint: { tainted: false, provenances: [] }
+        budget: { tokens: 5000, cost: { $absent: true } }
+        counters: { sessionSize: 2048 }
+        reasoning:
+          - { type: reasoning, provenance: model, labels: [], provider: scripted-b, data: "ZW5jcnlwdGVkLXJlYXNvbmluZy1ibG9i", opaque: true }
+        escalation: { $absent: true }
+        heldResults: { $absent: true }
+        lease: { holder: worker-a, token: 7, expiresAt: "2026-03-01T09:05:00Z" }
+        parentSessionId: { $absent: true }
+        childSessionIds: [01900000-0000-7000-8000-000000000066, 01900000-0000-7000-8000-000000000067]
+        extensions: { com.example.adapter: { shard: 3, note: "opaque to other implementations" } }
+  - op: save
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000060
+      expectedVersion: 1
+      lease: { holder: worker-a, token: 5, expiresAt: "2026-03-01T09:05:00Z" }
+      checkpoint:
+        schemaVersion: "0.1.0"
+        tenant: t1
+        sessionId: 01900000-0000-7000-8000-000000000060
+        version: 2
+        lastSeq: 21
+        state: active
+        principalRef: { subject: user-1, tenant: t1 }
+        persona: researcher@2
+        profile: default@1
+        snapshotHash: "sha256:7777777777777777777777777777777777777777777777777777777777777777"
+        turn: 2
+        step: 3
+        taint: { tainted: true, provenances: ["tool:web_fetch", "retrieval:kb-docs"] }
+        budget: { tokens: 41250, cost: 0.0825 }
+        counters: { sessionSize: 19110 }
+        reasoning:
+          - { type: reasoning, provenance: model, labels: [], provider: scripted-a, data: "Look up the customer before updating the address.", opaque: false }
+        lease: { holder: worker-a, token: 5, expiresAt: "2026-03-01T09:05:00Z" }
+        parentSessionId: 01900000-0000-7000-8000-000000000062
+    expect: { ok: true }
+  - op: load
+    args: { tenant: t1, session: 01900000-0000-7000-8000-000000000060 }
+    expect:
+      result:
+        version: 2
+        lastSeq: 21
+        state: active
+        counters: { sessionSize: 19110 }
+        escalation: { $absent: true }
+        heldResults: { $absent: true }
+        lease: { holder: worker-a, token: 5, expiresAt: "2026-03-01T09:05:00Z" }
+        parentSessionId: 01900000-0000-7000-8000-000000000062
+  - op: load
+    args: { tenant: t1, session: 01900000-0000-7000-8000-000000000061 }
+    expect:
+      result: { version: 1, lastSeq: 5, childSessionIds: [01900000-0000-7000-8000-000000000066, 01900000-0000-7000-8000-000000000067] }

@@ -1,0 +1,73 @@
+schemaVersion: "0.1.0"
+id: port.audit.append-only
+title: Appending a record with an existing ID fails with conflict and leaves the stored record unchanged
+description: >-
+  The audit log has no update operation (format); the only way to write
+  is `append`. After record 1 is stored, appending another record with
+  the same ID and altered details fails with `conflict` (PORT-004: the
+  write does not match what is stored), so a stored record can never be
+  overwritten (PORT-070). Reading: re-appending an existing ID is a
+  conflict, not a silent no-op or a replacement; PORT-070 does not name
+  the outcome. The log still holds the original record, once, and a
+  later append with a new ID succeeds (control).
+requirements: [PORT-070]
+port: auditLog
+steps:
+  - op: append
+    args:
+      tenant: t1
+      record:
+        schemaVersion: "0.1.0"
+        id: "01900000-0000-7000-8000-000000000121"
+        timestamp: "2026-01-01T01:00:00Z"
+        tenant: "t1"
+        sessionId: "01900000-0000-7000-8000-0000000000a1"
+        principalRef: { subject: "user-1", tenant: "t1" }
+        snapshotHash: "sha256:a988755824d7aa28b08a62583e86b7642aef4270ab5bad26c3c8a50f2e26e648"
+        type: "tool_call"
+        eventIds: ["01900000-0000-7000-8000-000000000221", "01900000-0000-7000-8000-000000000222"]
+        details: { callId: "c1", tool: "update_record", arguments: { key: "k1", status: "closed" }, outcome: { ok: { output: { updated: true } } } }
+    expect:
+      ok: true
+      result:
+        id: "01900000-0000-7000-8000-000000000121"
+  - op: append
+    args:
+      tenant: t1
+      record:
+        schemaVersion: "0.1.0"
+        id: "01900000-0000-7000-8000-000000000121"
+        timestamp: "2026-01-01T01:00:00Z"
+        tenant: "t1"
+        sessionId: "01900000-0000-7000-8000-0000000000a1"
+        principalRef: { subject: "user-1", tenant: "t1" }
+        snapshotHash: "sha256:a988755824d7aa28b08a62583e86b7642aef4270ab5bad26c3c8a50f2e26e648"
+        type: "tool_call"
+        eventIds: ["01900000-0000-7000-8000-000000000221", "01900000-0000-7000-8000-000000000222"]
+        details: { callId: "c1", tool: "update_record", arguments: { key: "k1", status: "open" }, outcome: { ok: { output: { updated: false } } } }
+    expect: { ok: false, error: { category: conflict } }
+  - op: append
+    args:
+      tenant: t1
+      record:
+        schemaVersion: "0.1.0"
+        id: "01900000-0000-7000-8000-000000000122"
+        timestamp: "2026-01-01T01:05:00Z"
+        tenant: "t1"
+        sessionId: "01900000-0000-7000-8000-0000000000a1"
+        principalRef: { subject: "user-1", tenant: "t1" }
+        snapshotHash: "sha256:a988755824d7aa28b08a62583e86b7642aef4270ab5bad26c3c8a50f2e26e648"
+        type: "tool_call"
+        eventIds: ["01900000-0000-7000-8000-000000000223", "01900000-0000-7000-8000-000000000224"]
+        details: { callId: "c2", tool: "update_record", arguments: { key: "k2", status: "closed" }, outcome: { ok: { output: { updated: true } } } }
+    expect:
+      ok: true
+      result:
+        id: "01900000-0000-7000-8000-000000000122"
+  - op: query
+    args: { tenant: t1 }
+    expect:
+      ok: true
+      result:
+        - { id: "01900000-0000-7000-8000-000000000121", details: { callId: "c1", tool: "update_record", arguments: { key: "k1", status: "closed" }, outcome: { ok: { output: { updated: true } } } } }
+        - { id: "01900000-0000-7000-8000-000000000122" }

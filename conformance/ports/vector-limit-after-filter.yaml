@@ -1,0 +1,47 @@
+schemaVersion: "0.1.0"
+id: port.vector.limit-after-filter
+title: The limit applies after filtering, so inaccessible records never use up result slots
+description: >-
+  Source `kb` is seeded with six records the principal may not read (four
+  of another tenant, two restricted to another subject) whose text is
+  exactly the query text, so any similarity ranking puts them first, and
+  three readable records whose text only partly matches. A query with
+  limit 2 returns exactly two readable records: the port filters by tenant
+  and access first and applies the limit to what remains (PORT-080,
+  CTX-041). Had it applied the limit first, the result would be empty.
+  Which two of the three readable records come back depends on the
+  backend's ranking and is not asserted. Control: limit 5 returns all
+  three readable records and nothing else.
+requirements: [PORT-080]
+port: vectorStore
+steps:
+  - op: seed
+    args:
+      source: kb
+      records:
+        - { id: x1, text: "quarterly plan notes", tenant: t2 }
+        - { id: x2, text: "quarterly plan notes", tenant: t2 }
+        - { id: x3, text: "quarterly plan notes", tenant: t2 }
+        - { id: x4, text: "quarterly plan notes", tenant: t2 }
+        - { id: n1, text: "quarterly plan notes", tenant: t1, access: { subjects: [user-9] } }
+        - { id: n2, text: "quarterly plan notes", tenant: t1, access: { subjects: [user-9] } }
+        - { id: r1, text: "SYN-READABLE-0091 quarterly plan", tenant: t1 }
+        - { id: r2, text: "SYN-READABLE-0092 quarterly plan", tenant: t1, access: { roles: [analyst] } }
+        - { id: r3, text: "SYN-READABLE-0093 quarterly plan", tenant: t1, access: { subjects: [user-1] } }
+    expect: { ok: true }
+  - op: query
+    args: { tenant: t1, principal: { subject: user-1, tenant: t1, roles: [analyst] }, source: kb, text: "quarterly plan notes", limit: 2 }
+    expect:
+      ok: true
+      result:
+        $all:
+          - $len: 2
+          - $every: { id: { $regex: "^r[123]$" } }
+  - op: query
+    args: { tenant: t1, principal: { subject: user-1, tenant: t1, roles: [analyst] }, source: kb, text: "quarterly plan notes", limit: 5 }
+    expect:
+      ok: true
+      result:
+        $all:
+          - $len: 3
+          - $contains: [{ id: r1 }, { id: r2 }, { id: r3 }]

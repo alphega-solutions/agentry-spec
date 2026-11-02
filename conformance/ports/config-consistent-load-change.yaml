@@ -1,0 +1,65 @@
+schemaVersion: "0.1.0"
+id: port.config.consistent-load-change
+title: A change to the source during a load does not mix old and new artifacts into that load
+description: >-
+  The source holds persona assistant@1 and tool lookup@1. A load begins,
+  lists both, and reads assistant@1. The test hook `change` then edits
+  both artifacts and adds assistant@2. Having already returned the old
+  assistant@1, the load must return the old set throughout (PORT-011): the
+  old lookup@1, the old assistant@1 again, the same two-artifact list, and
+  `not_found` for assistant@2, which is not part of it. Control: a load
+  begun after the change sees only the new set. Readings: `change` gives
+  the source's complete new contents; artifact references are `id@version`
+  (CFG-010), unique here across kinds; the handle is bound from the whole
+  result of `beginLoad` with the empty path.
+requirements: [PORT-011]
+port: configSource
+steps:
+  - op: seed
+    args:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", displayName: Test assistant, instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a } }
+        - { kind: Tool, id: lookup, version: 1, schemaVersion: "0.1.0", description: Look up a record by key., input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }, effect: read, binding: { kind: native, handler: test.lookup } }
+    expect: { ok: true }
+  - op: beginLoad
+    args: {}
+    bind: { "": $load }
+    expect: { ok: true }
+  - op: list
+    args: { load: $load }
+    expect: { ok: true, result: { $all: [{ $len: 2 }, { $contains: [assistant@1, lookup@1] }] } }
+  - op: read
+    args: { load: $load, ref: assistant@1 }
+    expect: { ok: true, result: { kind: Persona, id: assistant, version: 1, instructions: "You are a test assistant." } }
+  - op: change
+    args:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", displayName: Test assistant, instructions: "You are a test assistant. Answer briefly.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a } }
+        - { kind: Persona, id: assistant, version: 2, schemaVersion: "0.1.0", displayName: Test assistant, instructions: "You are a test assistant, version 2.", tools: [lookup@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a } }
+        - { kind: Tool, id: lookup, version: 1, schemaVersion: "0.1.0", description: Look up a record by its key., input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }, effect: read, binding: { kind: native, handler: test.lookup } }
+    expect: { ok: true }
+  - op: read
+    args: { load: $load, ref: lookup@1 }
+    expect: { ok: true, result: { kind: Tool, id: lookup, version: 1, description: Look up a record by key. } }
+  - op: read
+    args: { load: $load, ref: assistant@1 }
+    expect: { ok: true, result: { kind: Persona, id: assistant, version: 1, instructions: "You are a test assistant." } }
+  - op: list
+    args: { load: $load }
+    expect: { ok: true, result: { $all: [{ $len: 2 }, { $contains: [assistant@1, lookup@1] }] } }
+  - op: read
+    args: { load: $load, ref: assistant@2 }
+    expect: { ok: false, error: { category: not_found } }
+  - op: beginLoad
+    args: {}
+    bind: { "": $load2 }
+    expect: { ok: true }
+  - op: list
+    args: { load: $load2 }
+    expect: { ok: true, result: { $all: [{ $len: 3 }, { $contains: [assistant@1, assistant@2, lookup@1] }] } }
+  - op: read
+    args: { load: $load2, ref: lookup@1 }
+    expect: { ok: true, result: { id: lookup, description: Look up a record by its key. } }
+  - op: read
+    args: { load: $load2, ref: assistant@1 }
+    expect: { ok: true, result: { id: assistant, version: 1, instructions: "You are a test assistant. Answer briefly." } }

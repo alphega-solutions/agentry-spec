@@ -1,0 +1,139 @@
+schemaVersion: "0.1.0"
+id: port.audit.record-contents
+title: Audit records keep every required field, including the reviewer of a decision
+description: >-
+  Three records are appended: a reviewer's edit decision (with the
+  replacement and the original it replaces, HITL-044), an expiry
+  rejection (decidedBy expiry, so no reviewer, HITL-082), and a mutating
+  tool call with its arguments and outcome. `append` returns each record
+  as stored, and `query` returns all three with timestamp, tenant,
+  session ID, principal reference, snapshot hash, type, the reviewer for
+  the reviewer's decision, the linking event IDs and the details
+  (PORT-071), each with `schemaVersion` (PORT-007). The expiry rejection
+  has no reviewer.
+requirements: [PORT-071, PORT-007]
+port: auditLog
+steps:
+  - op: append
+    args:
+      tenant: t1
+      record:
+        schemaVersion: "0.1.0"
+        id: "01900000-0000-7000-8000-000000000111"
+        timestamp: "2026-01-01T01:00:00Z"
+        tenant: "t1"
+        sessionId: "01900000-0000-7000-8000-0000000000a1"
+        principalRef: { subject: "user-1", tenant: "t1" }
+        snapshotHash: "sha256:a988755824d7aa28b08a62583e86b7642aef4270ab5bad26c3c8a50f2e26e648"
+        type: "decision"
+        reviewer: { subject: "reviewer-1", tenant: "t1" }
+        eventIds: ["01900000-0000-7000-8000-000000000211"]
+        details: { id: "01900000-0000-7000-8000-000000000311", escalationId: "01900000-0000-7000-8000-000000000312", pendingActionId: "a1", type: "edit", decidedBy: "reviewer", reviewer: { subject: "reviewer-1", tenant: "t1" }, timestamp: "2026-01-01T01:00:00Z", replacement: { key: "k1", status: "on_hold" }, original: { key: "k1", status: "closed" } }
+    expect:
+      ok: true
+      result:
+        schemaVersion: "0.1.0"
+        id: "01900000-0000-7000-8000-000000000111"
+        timestamp: "2026-01-01T01:00:00Z"
+        tenant: "t1"
+        sessionId: "01900000-0000-7000-8000-0000000000a1"
+        principalRef: { subject: "user-1", tenant: "t1" }
+        snapshotHash: "sha256:a988755824d7aa28b08a62583e86b7642aef4270ab5bad26c3c8a50f2e26e648"
+        type: "decision"
+        reviewer: { subject: "reviewer-1", tenant: "t1" }
+        eventIds: ["01900000-0000-7000-8000-000000000211"]
+        details: { id: "01900000-0000-7000-8000-000000000311", escalationId: "01900000-0000-7000-8000-000000000312", pendingActionId: "a1", type: "edit", decidedBy: "reviewer", reviewer: { subject: "reviewer-1", tenant: "t1" }, timestamp: "2026-01-01T01:00:00Z", replacement: { key: "k1", status: "on_hold" }, original: { key: "k1", status: "closed" } }
+  - op: append
+    args:
+      tenant: t1
+      record:
+        schemaVersion: "0.1.0"
+        id: "01900000-0000-7000-8000-000000000112"
+        timestamp: "2026-01-01T01:10:00Z"
+        tenant: "t1"
+        sessionId: "01900000-0000-7000-8000-0000000000a1"
+        principalRef: { subject: "user-1", tenant: "t1" }
+        snapshotHash: "sha256:a988755824d7aa28b08a62583e86b7642aef4270ab5bad26c3c8a50f2e26e648"
+        type: "decision"
+        eventIds: ["01900000-0000-7000-8000-000000000212"]
+        details: { id: "01900000-0000-7000-8000-000000000313", escalationId: "01900000-0000-7000-8000-000000000314", pendingActionId: "a1", type: "reject", decidedBy: "expiry", timestamp: "2026-01-01T01:10:00Z" }
+    expect:
+      ok: true
+      result:
+        schemaVersion: "0.1.0"
+        id: "01900000-0000-7000-8000-000000000112"
+        timestamp: "2026-01-01T01:10:00Z"
+        tenant: "t1"
+        sessionId: "01900000-0000-7000-8000-0000000000a1"
+        principalRef: { subject: "user-1", tenant: "t1" }
+        snapshotHash: "sha256:a988755824d7aa28b08a62583e86b7642aef4270ab5bad26c3c8a50f2e26e648"
+        type: "decision"
+        eventIds: ["01900000-0000-7000-8000-000000000212"]
+        details: { id: "01900000-0000-7000-8000-000000000313", escalationId: "01900000-0000-7000-8000-000000000314", pendingActionId: "a1", type: "reject", decidedBy: "expiry", timestamp: "2026-01-01T01:10:00Z" }
+        reviewer: { $absent: true }
+  - op: append
+    args:
+      tenant: t1
+      record:
+        schemaVersion: "0.1.0"
+        id: "01900000-0000-7000-8000-000000000113"
+        timestamp: "2026-01-01T01:20:00Z"
+        tenant: "t1"
+        sessionId: "01900000-0000-7000-8000-0000000000a1"
+        principalRef: { subject: "user-1", tenant: "t1" }
+        snapshotHash: "sha256:a988755824d7aa28b08a62583e86b7642aef4270ab5bad26c3c8a50f2e26e648"
+        type: "tool_call"
+        eventIds: ["01900000-0000-7000-8000-000000000213", "01900000-0000-7000-8000-000000000214"]
+        details: { callId: "c1", tool: "update_record", arguments: { key: "k1", status: "closed" }, outcome: { ok: { output: { updated: true } } } }
+    expect:
+      ok: true
+      result:
+        schemaVersion: "0.1.0"
+        id: "01900000-0000-7000-8000-000000000113"
+        timestamp: "2026-01-01T01:20:00Z"
+        tenant: "t1"
+        sessionId: "01900000-0000-7000-8000-0000000000a1"
+        principalRef: { subject: "user-1", tenant: "t1" }
+        snapshotHash: "sha256:a988755824d7aa28b08a62583e86b7642aef4270ab5bad26c3c8a50f2e26e648"
+        type: "tool_call"
+        eventIds: ["01900000-0000-7000-8000-000000000213", "01900000-0000-7000-8000-000000000214"]
+        details: { callId: "c1", tool: "update_record", arguments: { key: "k1", status: "closed" }, outcome: { ok: { output: { updated: true } } } }
+        reviewer: { $absent: true }
+  - op: query
+    args: { tenant: t1 }
+    expect:
+      ok: true
+      result:
+        - schemaVersion: "0.1.0"
+          id: "01900000-0000-7000-8000-000000000111"
+          timestamp: "2026-01-01T01:00:00Z"
+          tenant: "t1"
+          sessionId: "01900000-0000-7000-8000-0000000000a1"
+          principalRef: { subject: "user-1", tenant: "t1" }
+          snapshotHash: "sha256:a988755824d7aa28b08a62583e86b7642aef4270ab5bad26c3c8a50f2e26e648"
+          type: "decision"
+          reviewer: { subject: "reviewer-1", tenant: "t1" }
+          eventIds: ["01900000-0000-7000-8000-000000000211"]
+          details: { id: "01900000-0000-7000-8000-000000000311", escalationId: "01900000-0000-7000-8000-000000000312", pendingActionId: "a1", type: "edit", decidedBy: "reviewer", reviewer: { subject: "reviewer-1", tenant: "t1" }, timestamp: "2026-01-01T01:00:00Z", replacement: { key: "k1", status: "on_hold" }, original: { key: "k1", status: "closed" } }
+        - schemaVersion: "0.1.0"
+          id: "01900000-0000-7000-8000-000000000112"
+          timestamp: "2026-01-01T01:10:00Z"
+          tenant: "t1"
+          sessionId: "01900000-0000-7000-8000-0000000000a1"
+          principalRef: { subject: "user-1", tenant: "t1" }
+          snapshotHash: "sha256:a988755824d7aa28b08a62583e86b7642aef4270ab5bad26c3c8a50f2e26e648"
+          type: "decision"
+          eventIds: ["01900000-0000-7000-8000-000000000212"]
+          details: { id: "01900000-0000-7000-8000-000000000313", escalationId: "01900000-0000-7000-8000-000000000314", pendingActionId: "a1", type: "reject", decidedBy: "expiry", timestamp: "2026-01-01T01:10:00Z" }
+          reviewer: { $absent: true }
+        - schemaVersion: "0.1.0"
+          id: "01900000-0000-7000-8000-000000000113"
+          timestamp: "2026-01-01T01:20:00Z"
+          tenant: "t1"
+          sessionId: "01900000-0000-7000-8000-0000000000a1"
+          principalRef: { subject: "user-1", tenant: "t1" }
+          snapshotHash: "sha256:a988755824d7aa28b08a62583e86b7642aef4270ab5bad26c3c8a50f2e26e648"
+          type: "tool_call"
+          eventIds: ["01900000-0000-7000-8000-000000000213", "01900000-0000-7000-8000-000000000214"]
+          details: { callId: "c1", tool: "update_record", arguments: { key: "k1", status: "closed" }, outcome: { ok: { output: { updated: true } } } }
+          reviewer: { $absent: true }

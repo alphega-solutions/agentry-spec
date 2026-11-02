@@ -1,0 +1,30 @@
+schemaVersion: "0.1.0"
+id: port.vector.labels-returned
+title: Each vector result carries its stored sensitivity labels
+description: >-
+  Source `kb` holds three readable t1 records: one labelled pii and a
+  custom label, one labelled phi, one with no labels. Each result carries
+  exactly its own stored labels, as a set (PORT-081, CTX-042); the
+  record stored with no labels has an empty label list. Order is not
+  asserted.
+requirements: [PORT-081]
+port: vectorStore
+steps:
+  - op: seed
+    args:
+      source: kb
+      records:
+        - { id: l1, text: "SYN-LABELLED-PII-0101 plan notes", tenant: t1, labels: [pii, "com.example:internal"] }
+        - { id: l2, text: "SYN-LABELLED-PHI-0102 plan notes", tenant: t1, labels: [phi] }
+        - { id: l3, text: "SYN-UNLABELLED-0103 plan notes", tenant: t1, labels: [] }
+    expect: { ok: true }
+  - op: query
+    args: { tenant: t1, principal: { subject: user-1, tenant: t1, roles: [] }, source: kb, text: "plan notes", limit: 10 }
+    expect:
+      ok: true
+      result:
+        $all:
+          - $len: 3
+          - $count: { of: { id: l1, labels: { $all: [{ $len: 2 }, { $contains: [pii, "com.example:internal"] }] } }, equals: 1 }
+          - $count: { of: { id: l2, labels: [phi] }, equals: 1 }
+          - $count: { of: { id: l3, labels: { $len: 0 } }, equals: 1 }

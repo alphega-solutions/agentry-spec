@@ -1,0 +1,34 @@
+schemaVersion: "0.1.0"
+id: port.blob.other-tenant-not-found
+title: Another tenant's blob behaves exactly as a missing one
+description: >-
+  t1 stores a blob. For t2, `get` with t1's reference fails with
+  `not_found`, exactly as `get` of a reference t1 has deleted (the
+  control), and never with `fatal` or any error that would confirm the
+  blob exists (PORT-002, CORE-193). A `delete` of it by t2 (result not
+  asserted) has no effect: t1 still gets its blob.
+requirements: [PORT-002]
+port: blobStore
+steps:
+  - op: put
+    args: { tenant: t1, data: "SYN-BLOB-CONTENT-0001", mediaType: text/plain, labels: [pii] }
+    bind: { ref: $kept }
+    expect: { ok: true }
+  - op: put
+    args: { tenant: t1, data: "SYN-BLOB-OTHER-0006", mediaType: text/plain, labels: [] }
+    bind: { ref: $gone }
+    expect: { ok: true }
+  - op: delete
+    args: { tenant: t1, ref: $gone }
+    expect: { ok: true }
+  - op: get
+    args: { tenant: t1, ref: $gone }
+    expect: { ok: false, error: { category: not_found } }
+  - op: get
+    args: { tenant: t2, ref: $kept }
+    expect: { ok: false, error: { category: not_found } }
+  - op: delete
+    args: { tenant: t2, ref: $kept }
+  - op: get
+    args: { tenant: t1, ref: $kept }
+    expect: { ok: true, result: { data: "SYN-BLOB-CONTENT-0001", labels: [pii] } }

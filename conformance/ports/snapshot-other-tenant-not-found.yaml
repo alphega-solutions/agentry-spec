@@ -1,0 +1,45 @@
+schemaVersion: "0.1.0"
+id: port.snapshot.other-tenant-not-found
+title: Another tenant's snapshot behaves exactly as a missing one
+description: >-
+  t1 stores a snapshot. For t2, `get` of that hash fails with `not_found`,
+  exactly as `get` of a hash no tenant stored (the control just before
+  it). A `delete` of it by t2 (its result is not asserted) has no effect:
+  t1 still gets its snapshot. Applies to the snapshot store like every
+  other storing port (PORT-002).
+requirements: [PORT-002]
+port: snapshotStore
+steps:
+  - op: put
+    args:
+      tenant: t1
+      snapshot:
+        schemaVersion: "0.1.0"
+        tenant: t1
+        hash: "sha256:81d672be2910c8230dafacee35a705837c8fe843c68f04832bedc7598e8860ab"
+        createdAt: "2026-01-01T00:00:00Z"
+        artifacts:
+          Persona:
+            - kind: Persona
+              id: assistant
+              version: 1
+              schemaVersion: "0.1.0"
+              displayName: Test assistant
+              instructions: "You are a test assistant."
+              tools: [lookup@1]
+              fallbackMessage: "This request was blocked."
+              defaultProfile: default@1
+              allowedProfiles: [default@1]
+              model: { provider: scripted-a, name: model-a }
+    expect: { ok: true }
+  - op: get
+    args: { tenant: t2, hash: "sha256:0000000000000000000000000000000000000000000000000000000000000001" }
+    expect: { ok: false, error: { category: not_found } }
+  - op: get
+    args: { tenant: t2, hash: "sha256:81d672be2910c8230dafacee35a705837c8fe843c68f04832bedc7598e8860ab" }
+    expect: { ok: false, error: { category: not_found } }
+  - op: delete
+    args: { tenant: t2, hash: "sha256:81d672be2910c8230dafacee35a705837c8fe843c68f04832bedc7598e8860ab" }
+  - op: get
+    args: { tenant: t1, hash: "sha256:81d672be2910c8230dafacee35a705837c8fe843c68f04832bedc7598e8860ab" }
+    expect: { ok: true, result: { tenant: t1, hash: "sha256:81d672be2910c8230dafacee35a705837c8fe843c68f04832bedc7598e8860ab" } }

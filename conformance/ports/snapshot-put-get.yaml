@@ -1,0 +1,127 @@
+schemaVersion: "0.1.0"
+id: port.snapshot.put-get
+title: A stored snapshot is returned as stored, keyed by tenant and hash
+description: >-
+  Tenant t1 stores two effective configuration snapshots (one holding a
+  deployment and a tool, one holding a persona) under their snapshot
+  hashes, each the hash of its artifacts (CFG-050 as amended); the store
+  does not recompute it. Each `get` returns the record exactly as stored,
+  including its `schemaVersion` (PORT-007), and the two keys do not
+  interfere: `get` of one hash never returns the other snapshot.
+requirements: [PORT-050, PORT-007]
+port: snapshotStore
+steps:
+  - op: put
+    args:
+      tenant: t1
+      snapshot:
+        schemaVersion: "0.1.0"
+        tenant: t1
+        hash: "sha256:a988755824d7aa28b08a62583e86b7642aef4270ab5bad26c3c8a50f2e26e648"
+        createdAt: "2026-01-01T00:00:00Z"
+        artifacts:
+          Deployment:
+            - kind: Deployment
+              id: test
+              version: 1
+              schemaVersion: "0.1.0"
+              environment: test
+              policyBundles: [org@1]
+              attachmentSources: [upload]
+              providers:
+                - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false, credentials: { apiKey: "secret://test/provider-a-key" } }
+              ports:
+                eventLog: { adapter: memory, region: test-region, credentials: { password: "secret://test/event-log-password" } }
+                checkpointStore: { adapter: memory, region: test-region }
+                idempotencyStore: { adapter: memory, region: test-region }
+                snapshotStore: { adapter: memory, region: test-region }
+                blobStore: { adapter: memory, region: test-region }
+                auditLog: { adapter: memory, region: test-region }
+                secrets: { adapter: memory, region: test-region }
+              retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+          Tool:
+            - kind: Tool
+              id: lookup
+              version: 1
+              schemaVersion: "0.1.0"
+              description: Look up a record by key.
+              input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }
+              effect: read
+              credentialMode: service
+              binding: { kind: native, handler: test.lookup, credentials: { apiKey: "secret://test/lookup-api-key" } }
+    expect: { ok: true }
+  - op: put
+    args:
+      tenant: t1
+      snapshot:
+        schemaVersion: "0.1.0"
+        tenant: t1
+        hash: "sha256:81d672be2910c8230dafacee35a705837c8fe843c68f04832bedc7598e8860ab"
+        createdAt: "2026-01-01T00:05:00Z"
+        artifacts:
+          Persona:
+            - kind: Persona
+              id: assistant
+              version: 1
+              schemaVersion: "0.1.0"
+              displayName: Test assistant
+              instructions: "You are a test assistant."
+              tools: [lookup@1]
+              fallbackMessage: "This request was blocked."
+              defaultProfile: default@1
+              allowedProfiles: [default@1]
+              model: { provider: scripted-a, name: model-a }
+    expect: { ok: true }
+  - op: get
+    args: { tenant: t1, hash: "sha256:a988755824d7aa28b08a62583e86b7642aef4270ab5bad26c3c8a50f2e26e648" }
+    expect:
+      ok: true
+      result:
+        schemaVersion: "0.1.0"
+        tenant: t1
+        hash: "sha256:a988755824d7aa28b08a62583e86b7642aef4270ab5bad26c3c8a50f2e26e648"
+        createdAt: "2026-01-01T00:00:00Z"
+        artifacts:
+          Deployment:
+            - kind: Deployment
+              id: test
+              version: 1
+              schemaVersion: "0.1.0"
+              environment: test
+              policyBundles: [org@1]
+              attachmentSources: [upload]
+              providers:
+                - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false, credentials: { apiKey: "secret://test/provider-a-key" } }
+              ports:
+                eventLog: { adapter: memory, region: test-region, credentials: { password: "secret://test/event-log-password" } }
+                checkpointStore: { adapter: memory, region: test-region }
+                idempotencyStore: { adapter: memory, region: test-region }
+                snapshotStore: { adapter: memory, region: test-region }
+                blobStore: { adapter: memory, region: test-region }
+                auditLog: { adapter: memory, region: test-region }
+                secrets: { adapter: memory, region: test-region }
+              retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+          Tool:
+            - kind: Tool
+              id: lookup
+              version: 1
+              schemaVersion: "0.1.0"
+              description: Look up a record by key.
+              input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }
+              effect: read
+              credentialMode: service
+              binding: { kind: native, handler: test.lookup, credentials: { apiKey: "secret://test/lookup-api-key" } }
+  - op: get
+    args: { tenant: t1, hash: "sha256:81d672be2910c8230dafacee35a705837c8fe843c68f04832bedc7598e8860ab" }
+    expect:
+      ok: true
+      result:
+        schemaVersion: "0.1.0"
+        tenant: t1
+        hash: "sha256:81d672be2910c8230dafacee35a705837c8fe843c68f04832bedc7598e8860ab"
+        createdAt: "2026-01-01T00:05:00Z"
+        artifacts:
+          Persona:
+            - { kind: Persona, id: assistant, version: 1, instructions: "You are a test assistant." }
+          Deployment: { $absent: true }
+          Tool: { $absent: true }

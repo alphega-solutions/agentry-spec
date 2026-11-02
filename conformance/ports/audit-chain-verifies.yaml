@@ -1,0 +1,113 @@
+schemaVersion: "0.1.0"
+id: port.audit.chain-verifies
+title: A tamper-evident audit log chains each tenant's records by hash, and the chain verifies
+description: >-
+  For tamper-evident adapters only. t1 appends three records; t2 appends
+  one in between. Each stored record carries `hash`, the SHA-256 of the
+  RFC 8785 canonical JSON of the record without `hash`, and every record
+  after a tenant's first carries `prevHash`, the previous record's hash
+  in that tenant's log (PORT-073 as amended); the expected values are
+  computed from the records as given. t2's record does not enter t1's
+  chain: t1's second record links to t1's first. `verify` reports both
+  tenants' logs valid. (The format has no hook to alter a stored audit
+  record, so detection of tampering, verify returning valid false, is
+  not checked here.)
+requirements: [PORT-073]
+port: auditLog
+tamperEvident: true
+steps:
+  - op: append
+    args:
+      tenant: t1
+      record:
+        schemaVersion: "0.1.0"
+        id: "01900000-0000-7000-8000-000000000151"
+        timestamp: "2026-01-01T01:00:00Z"
+        tenant: "t1"
+        sessionId: "01900000-0000-7000-8000-0000000000a1"
+        principalRef: { subject: "user-1", tenant: "t1" }
+        snapshotHash: "sha256:a988755824d7aa28b08a62583e86b7642aef4270ab5bad26c3c8a50f2e26e648"
+        type: "tool_call"
+        eventIds: ["01900000-0000-7000-8000-000000000251", "01900000-0000-7000-8000-000000000252"]
+        details: { callId: "c1", tool: "update_record", arguments: { key: "k1", status: "closed" }, outcome: { ok: { output: { updated: true } } } }
+    expect:
+      ok: true
+      result:
+        id: "01900000-0000-7000-8000-000000000151"
+        hash: "sha256:afa57f8495c22348ee2a6b8496c38daa2d1dfd2e09c1d4c0c1137472fbfca3be"
+        prevHash: { $absent: true }
+  - op: append
+    args:
+      tenant: t2
+      record:
+        schemaVersion: "0.1.0"
+        id: "01900000-0000-7000-8000-00000000015f"
+        timestamp: "2026-01-01T01:05:00Z"
+        tenant: "t2"
+        sessionId: "01900000-0000-7000-8000-0000000000c1"
+        principalRef: { subject: "user-3", tenant: "t2" }
+        snapshotHash: "sha256:a988755824d7aa28b08a62583e86b7642aef4270ab5bad26c3c8a50f2e26e648"
+        type: "tool_call"
+        eventIds: ["01900000-0000-7000-8000-00000000025f", "01900000-0000-7000-8000-000000000260"]
+        details: { callId: "c1", tool: "update_record", arguments: { key: "k1", status: "closed" }, outcome: { ok: { output: { updated: true } } } }
+    expect:
+      ok: true
+      result:
+        id: "01900000-0000-7000-8000-00000000015f"
+        hash: "sha256:170e477a9ae86802ac14e3fcf5b7c3c3d05f2c8bafa61ee77851a46c2c4f182d"
+        prevHash: { $absent: true }
+  - op: append
+    args:
+      tenant: t1
+      record:
+        schemaVersion: "0.1.0"
+        id: "01900000-0000-7000-8000-000000000152"
+        timestamp: "2026-01-01T01:10:00Z"
+        tenant: "t1"
+        sessionId: "01900000-0000-7000-8000-0000000000a1"
+        principalRef: { subject: "user-1", tenant: "t1" }
+        snapshotHash: "sha256:a988755824d7aa28b08a62583e86b7642aef4270ab5bad26c3c8a50f2e26e648"
+        type: "decision"
+        reviewer: { subject: "reviewer-1", tenant: "t1" }
+        eventIds: ["01900000-0000-7000-8000-000000000253"]
+        details: { id: "01900000-0000-7000-8000-000000000351", escalationId: "01900000-0000-7000-8000-000000000352", pendingActionId: "a1", type: "approve", decidedBy: "reviewer", reviewer: { subject: "reviewer-1", tenant: "t1" }, timestamp: "2026-01-01T01:10:00Z" }
+    expect:
+      ok: true
+      result:
+        id: "01900000-0000-7000-8000-000000000152"
+        hash: "sha256:743ac12a7191f5874a239781b989361d350762b19cf8c61e3cc0509fc46642f6"
+        prevHash: "sha256:afa57f8495c22348ee2a6b8496c38daa2d1dfd2e09c1d4c0c1137472fbfca3be"
+  - op: append
+    args:
+      tenant: t1
+      record:
+        schemaVersion: "0.1.0"
+        id: "01900000-0000-7000-8000-000000000153"
+        timestamp: "2026-01-01T01:20:00Z"
+        tenant: "t1"
+        sessionId: "01900000-0000-7000-8000-0000000000a1"
+        principalRef: { subject: "user-1", tenant: "t1" }
+        snapshotHash: "sha256:a988755824d7aa28b08a62583e86b7642aef4270ab5bad26c3c8a50f2e26e648"
+        type: "tool_call"
+        eventIds: ["01900000-0000-7000-8000-000000000254", "01900000-0000-7000-8000-000000000255"]
+        details: { callId: "c2", tool: "update_record", arguments: { key: "k2", status: "closed" }, outcome: { ok: { output: { updated: true } } } }
+    expect:
+      ok: true
+      result:
+        id: "01900000-0000-7000-8000-000000000153"
+        hash: "sha256:83ce62ad781f48750b70da24b219f59df2a5e2d186f3b29caf86a0f4576cd63c"
+        prevHash: "sha256:743ac12a7191f5874a239781b989361d350762b19cf8c61e3cc0509fc46642f6"
+  - op: verify
+    args: { tenant: t1 }
+    expect: { ok: true, result: { valid: true } }
+  - op: verify
+    args: { tenant: t2 }
+    expect: { ok: true, result: { valid: true } }
+  - op: query
+    args: { tenant: t1 }
+    expect:
+      ok: true
+      result:
+        - { id: "01900000-0000-7000-8000-000000000151", hash: "sha256:afa57f8495c22348ee2a6b8496c38daa2d1dfd2e09c1d4c0c1137472fbfca3be", prevHash: { $absent: true } }
+        - { id: "01900000-0000-7000-8000-000000000152", hash: "sha256:743ac12a7191f5874a239781b989361d350762b19cf8c61e3cc0509fc46642f6", prevHash: "sha256:afa57f8495c22348ee2a6b8496c38daa2d1dfd2e09c1d4c0c1137472fbfca3be" }
+        - { id: "01900000-0000-7000-8000-000000000153", hash: "sha256:83ce62ad781f48750b70da24b219f59df2a5e2d186f3b29caf86a0f4576cd63c", prevHash: "sha256:743ac12a7191f5874a239781b989361d350762b19cf8c61e3cc0509fc46642f6" }
