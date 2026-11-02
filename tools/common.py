@@ -109,7 +109,7 @@ def fixture_files() -> list[pathlib.Path]:
     out = []
     for p in sorted(base.rglob("*.yaml")):
         rel = p.relative_to(base).parts
-        if rel[0] in ("schema", "shared") or p.name == "coverage.yaml":
+        if rel[0] in ("schema", "shared") or p.name == "coverage.yaml" or rel[:2] == ("adapters", "transcripts"):
             continue
         out.append(p)
     return out

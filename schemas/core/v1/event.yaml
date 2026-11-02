@@ -208,6 +208,7 @@ $defs:
           - $ref: "https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/message"
           - properties: { role: { const: assistant } }
       usage: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/usage" }
+      cost: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/cost" }
 
   modelDelta:
     type: object
@@ -253,6 +254,7 @@ $defs:
         items: { $ref: "https://alphega.io/agentry/schemas/core/hook/v1.json#/$defs/annotation" }
       inputHash: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/sha256" }
       usage: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/usage" }
+      cost: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/cost" }
     allOf:
       - if: { properties: { result: { enum: [block, escalate] } } }
         then: { required: [reasonCode] }
@@ -319,6 +321,16 @@ $defs:
     required: [error]
     properties:
       error: { $ref: "https://alphega.io/agentry/schemas/core/error/v1.json" }
+      provider:
+        description: For a failed model call, the provider and model called (PROV-065).
+        type: string
+        minLength: 1
+      model: { type: string, minLength: 1 }
+      usage:
+        description: Usage of a failed model call that reported it (PROV-006, PROV-070).
+        $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/usage"
+      cost: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/cost" }
+    dependentRequired: { model: [provider], provider: [model] }
 
   contextRetrieved:
     description: >-
@@ -380,6 +392,7 @@ $defs:
       labels: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/labels" }
       usage: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/usage" }
       fallback: { enum: [summarizer_failed, policy_denied] }
+      cost: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/cost" }
     allOf:
       - if: { properties: { mode: { const: summarize } } }
         then: { required: [summary, usage], not: { required: [fallback] } }

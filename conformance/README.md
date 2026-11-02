@@ -16,6 +16,8 @@ Data-only test cases every agentry implementation must pass (Area 11). An implem
 | `hitl/` | Area 6 fixtures |
 | `context/` | Area 7 fixtures |
 | `orchestration/` | Area 8 fixtures |
+| `providers/` | Area 9 fixtures (harness-level, on scripted providers) |
+| `adapters/` | Area 9 provider adapter cases (format `schema/adapter-case.yaml`) and recorded vendor transcripts |
 | `cel/` | CEL rule fixtures (EVAL-005, HOOK-110–115) |
 | `coverage.yaml` | Which areas have complete fixtures, and therefore enforced coverage |
 

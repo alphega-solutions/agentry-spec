@@ -14,6 +14,7 @@ from common import ROOT, fixture_files, load_schemas, load_yaml, registry, spec_
 
 FIXTURE_ID = "https://alphega.io/agentry/schemas/conformance/fixture/v1.json"
 CEL_ID = "https://alphega.io/agentry/schemas/conformance/cel-fixture/v1.json"
+ADAPTER_ID = "https://alphega.io/agentry/schemas/conformance/adapter-case/v1.json"
 
 
 PLACEHOLDER = re.compile(r"^\$[A-Za-z_][A-Za-z0-9_]*$")
@@ -828,7 +829,9 @@ def main() -> int:
     ids: set[str] = set()
     for fx in fixture_files():
         doc = load_yaml(fx)
-        target = CEL_ID if str(doc.get("id", "")).startswith("cel.") else FIXTURE_ID
+        fid_str = str(doc.get("id", ""))
+        target = (CEL_ID if fid_str.startswith("cel.")
+                  else ADAPTER_ID if fid_str.startswith("adapter.") else FIXTURE_ID)
         for err in validator(target).iter_errors(doc):
             errors.append(f"{fx.relative_to(ROOT)}: {describe(err)}")
         fid = doc.get("id")
