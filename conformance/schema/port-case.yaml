@@ -18,13 +18,20 @@ description: >-
   case's virtual clock.
 
 
-  Operations, by port (`→` result). Every storing port also has
-  `describe {}` → `{encryptedAtRest, keyRef?}` (PORT-006).
+  Operations, by port (`→` result). Every port also has these test
+  hooks: `describe {}` → `{encryptedAtRest, keyRef?}` (storing ports,
+  PORT-006); `records {tenant}` → the raw records the port stores for the
+  tenant, each a record of `schemas/ports/v1/records.yaml` (or an event),
+  so `storedRecords` can be checked (PORT-007); `failNext {op}` makes the
+  next call of `op` fail transiently with `unavailable`, `retryable: true`
+  (PORT-004). An operation on a missing record, or on another tenant's,
+  fails with `not_found`.
 
-  Operations, by port (`→` result):
 
   - `eventLog`: `append {tenant, session, events, expectedSeq, lease}`;
-    `read {tenant, session, fromSeq, toSeq}` → events;
+    `read {tenant, session, fromSeq, toSeq}` → events (bounds inclusive);
+    `fence {tenant, session, lease}` registers a new lease's token before
+    its holder writes (Area 10 amendment);
     `deleteSession {tenant, session}`.
 
   - `checkpointStore`: `save {tenant, session, checkpoint, expectedVersion,
@@ -34,7 +41,8 @@ description: >-
     `children {tenant, session}` → session IDs; `delete {tenant,
     session}`.
 
-  - `idempotencyStore`: `start {tenant, key, record, lease}` → the stored
+  - `idempotencyStore`: `fence {tenant, session, lease}` as for the event
+    log; `start {tenant, key, record, lease}` → the stored
     record (the existing one if any); `complete {tenant, key, outcome,
     lease}`; `get {tenant, key}` → record; `delete {tenant, key}`.
 
@@ -50,7 +58,9 @@ description: >-
     tamper-evident log adds `hash` and `prevHash`); `get {tenant, id}` →
     record;
     `query {tenant, session?, from?, to?, type?}` → records in append
-    order; `deleteBefore {tenant, before}`; `verify {tenant}` → `{valid}`
+    order; `deleteBefore {tenant, before}` deletes the longest prefix, in
+    append order, of records whose timestamp is before `before` (so a
+    tamper-evident chain stays whole); `verify {tenant}` → `{valid}`
     (tamper-evident logs only); test hook `tamper {tenant, id}` alters a
     stored record's content.
 
@@ -82,9 +92,13 @@ properties:
     items: { type: string, pattern: "^[A-Z]+-[0-9]{3}$" }
   port: { enum: [eventLog, checkpointStore, idempotencyStore, snapshotStore, blobStore, auditLog, vectorStore, secrets, configSource] }
   clock: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/timestamp" }
-  tamperEvident:
-    description: For `auditLog` cases that apply only to tamper-evident adapters (PORT-073).
-    type: boolean
+  features:
+    description: >-
+      Optional features the case needs (EVAL-022); an adapter that does not
+      offer one skips the case. `audit.tamper-evident`: tamper-evident audit
+      logs (PORT-073).
+    type: array
+    items: { enum: [audit.tamper-evident] }
   steps:
     type: array
     minItems: 1

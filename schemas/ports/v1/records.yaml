@@ -107,6 +107,14 @@ $defs:
         uniqueItems: true
         items: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
       extensions: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/extensions" }
+    allOf:
+      - if: { properties: { state: { enum: [idle, suspended] } } }
+        then: { required: [expiresAt] }
+      - if: { properties: { state: { const: closed } } }
+        then: { required: [closeReason] }
+        else: { not: { required: [closeReason] } }
+      - if: { properties: { state: { const: active } } }
+        then: { required: [lease] }
 
   idempotencyRecord:
     title: IdempotencyRecord

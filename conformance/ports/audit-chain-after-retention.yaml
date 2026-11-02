@@ -13,7 +13,7 @@ description: >-
   verifies. Expected hashes are computed from the records as given.
 requirements: [PORT-073]
 port: auditLog
-tamperEvident: true
+features: [audit.tamper-evident]
 steps:
   - op: append
     args:

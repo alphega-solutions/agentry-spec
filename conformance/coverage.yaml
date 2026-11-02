@@ -8,10 +8,12 @@ enforced:
   - CTX
   - ORCH
   - PROV
+  - PORT
 
 # Normative requirements no fixture can verify, each with how it is verified
 # instead. Coverage counts them as covered and prints the reason.
 verifiedElsewhere:
   PORT-001: "Suite-level: the whole suite is run with each conforming adapter of every port, and results must be identical (Area 10 amendment 2026-11-02)."
+  PORT-006: "Attestation: the adapter reports its encryption setting (describe) and the deployment attests it; storage encryption is not observable by fixtures (Area 10 amendment 2026-11-02)."
   PORT-009: "Suite-level: every adapter runs the port cases in conformance/ports/ for its port (PORT-130)."
   PORT-121: "Release-level: applies when a new major contract version ships its checkpoint migration; 0.x has no earlier major version."

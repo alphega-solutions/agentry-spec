@@ -713,7 +713,8 @@ $defs:
       Runs the implementation's retention processing at the current virtual
       time (PORT-110–115): everything due for deletion under the
       deployment's retention periods and legal holds is deleted, in an order
-      that keeps dependent data (PORT-112). Implementations may also delete
+      that keeps dependent data (PORT-112); processing repeats until nothing
+      more is due, so deletions cascade within the step. Implementations may also delete
       on their own schedule; fixtures assert only the state after this step.
     type: object
     additionalProperties: false
@@ -941,9 +942,28 @@ $defs:
               description: Ephemeral deltas received, in order.
             fallback: { type: boolean, description: The response was the fixed fallback message. }
       noPersistedContent:
-        description: Strings that must not appear anywhere in any port's stored records — events, checkpoints, idempotency records, audit records, blobs, configuration snapshots.
+        description: >-
+          Strings that must not appear anywhere — in any field, at any depth,
+          as a substring — in any port's stored records: events, checkpoints,
+          idempotency records, audit records, blobs, configuration snapshots.
+          An item `{ports, strings}` limits the check to the named ports.
         type: array
-        items: { type: string }
+        items:
+          oneOf:
+            - type: string
+            - type: object
+              additionalProperties: false
+              required: [ports, strings]
+              properties:
+                ports:
+                  type: array
+                  items: { enum: [eventLog, checkpointStore, idempotencyStore, snapshotStore, blobStore, auditLog] }
+                strings: { type: array, items: { type: string } }
+      telemetrySpanCount:
+        description: >-
+          Number of spans the in-memory exporter captured, or a matcher over
+          it (e.g. `{"$gte": 1}`), so `noTelemetryContent` cannot pass
+          vacuously.
       noTelemetryContent:
         description: >-
           Strings that must not appear in any span exported through the

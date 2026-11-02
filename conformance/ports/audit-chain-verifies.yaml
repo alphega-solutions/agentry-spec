@@ -14,7 +14,7 @@ description: >-
   not checked here.)
 requirements: [PORT-073]
 port: auditLog
-tamperEvident: true
+features: [audit.tamper-evident]
 steps:
   - op: append
     args:
