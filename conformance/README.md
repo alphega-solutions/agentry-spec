@@ -15,6 +15,7 @@ Data-only test cases every agentry implementation must pass (Area 11). An implem
 | `hooks/` | Area 5 fixtures |
 | `hitl/` | Area 6 fixtures |
 | `context/` | Area 7 fixtures |
+| `orchestration/` | Area 8 fixtures |
 | `cel/` | CEL rule fixtures (EVAL-005, HOOK-110–115) |
 | `coverage.yaml` | Which areas have complete fixtures, and therefore enforced coverage |
 
