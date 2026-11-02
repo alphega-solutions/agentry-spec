@@ -1,0 +1,84 @@
+schemaVersion: "0.1.0"
+id: eval.replay-roundtrip-export
+title: A bundle the implementation exports replays in the same implementation with the same outcome and no divergence
+description: >-
+  Round trip (EVAL-026: implementations export bundles that replay). $s is
+  recorded live: the model calls lookup (c1, {key: k1}), the stub answers
+  {value: SYN-VALUE-0007}, the model responds "Record k1 holds
+  SYN-VALUE-0007." and the run ends `responded`. `exportBundle` binds the
+  whole bundle as $b (`bindResult`); `replay` of $b with `snapshot:
+  recorded` creates $rp, which carries $s's snapshot hash and reproduces
+  the call (same arguments), the recorded result, the final text and the
+  end reason, with no divergence. Nothing is sent during the replay: the
+  provider's script has exactly the two live responses and lookup exactly
+  one behaviour (any further request or call fails the fixture); the one
+  lookup call recorded is $s's.
+requirements: [EVAL-026]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-04-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Record k1 holds SYN-VALUE-0007." }]
+          usage: { inputTokens: 30, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b: { responses: [] }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: SYN-VALUE-0007 } }
+      update_record: []
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up record k1." }]
+    expect: { ok: true, endReason: responded }
+  - action: exportBundle
+    session: $s
+    tenant: t1
+    bindResult: $b
+    expect: { ok: true, bundle: { sessionId: $s } }
+  - action: replay
+    bind: $rp
+    tenant: t1
+    bundle: $b
+    snapshot: recorded
+    hookMode: reEvaluate
+    expect: { ok: true, divergences: [] }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, snapshotHash: $snap }
+          - { type: run.ended, payload: { reason: responded } }
+    $rp:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, sessionId: { $all: [$rp, { $not: $s }] }, snapshotHash: $snap }
+          - { type: run.started, runId: $r }
+          - { type: tool.call, runId: $r, payload: { callId: c1, tool: lookup, arguments: { key: k1 } } }
+          - { type: tool.result, runId: $r, payload: { callId: c1, tool: lookup, result: { ok: { output: { value: SYN-VALUE-0007 } } } } }
+          - type: model.response
+            runId: $r
+            payload: { message: { parts: [{ type: text, text: "Record k1 holds SYN-VALUE-0007." }] } }
+          - { type: run.ended, runId: $r, payload: { reason: responded } }
+  stubCalls:
+    lookup: [{ arguments: { key: k1 }, context: { sessionId: $s } }]
+  providerRequests:
+    scripted-a: { count: 2 }
+    scripted-b: { count: 0 }

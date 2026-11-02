@@ -1,0 +1,177 @@
+schemaVersion: "0.1.0"
+id: eval.replay-canonical-arguments
+title: Replay matches calls on their canonical post-hook arguments, in order for repeated identical calls; a call whose arguments genuinely differ gets agentry.eval.unrecorded_call and the run continues
+description: >-
+  `golden/rewrite-canonical.yaml` records, under a snapshot in which the
+  native beforeToolCall hook clamp@1 (results [rewrite]) is required by
+  assistant@1: in steps 1 and 2 the model asks count_records {prefix: a,
+  limit: 50} (c1, then c2, identical); clamp rewrote both to {prefix: a,
+  limit: 10}, the dispatched arguments recorded on `tool.call`; the two
+  identical calls answered {count: 3} then {count: 4}; step 3 responds
+  "First count 3, then count 4." Both replays use `snapshot: recorded` and
+  `hookMode: reEvaluate`, so clamp runs again on the replayed content
+  (EVAL-063); its stub answers are the only thing that differs.
+
+
+  - $rMatch: clamp answers `rewrite` with arguments `{limit: 10.0, prefix:
+    a}` — the recorded arguments with the keys in another order and the
+    number written as 10.0 instead of 10. After RFC 8785 canonicalization
+    (EVAL-000) these equal the recorded `{prefix: a, limit: 10}`, so both
+    calls match (no divergence). They match on the post-hook arguments
+    (EVAL-062): the model's pre-hook arguments (limit 50) were never
+    recorded as a dispatched call. The two identical calls match the
+    recorded occurrences in order: c1 gets {count: 3} and c2 {count: 4}.
+    The recorded outcomes are reproduced (EVAL-026): one run ending
+    `responded` with the recorded final text.
+  - $rDiff (control): clamp answers `continue`, so the dispatched arguments
+    are the model's {prefix: a, limit: 50}, which genuinely differ from
+    every recorded call. Each call gets a tool result error with code
+    agentry.eval.unrecorded_call, category `unavailable`, `retryable:
+    false`, source `harness`, and is reported as a divergence `{kind:
+    unrecorded_call, callId, tool}`, in call order. An unmatched call does
+    not end the run (EVAL-062): the recorded model responses continue, the
+    final text is the recorded one and the run ends `responded`.
+
+
+  clamp's four invocations are asserted in order: two per replay, each on
+  the model's pre-hook arguments. count_records is never dispatched (its
+  stub has no behaviours) and no provider is called. The fixture's own
+  configuration adds count_records@1 and clamp@1 (identical to the
+  recorded snapshot's) only so that their native handlers are registered;
+  the replayed sessions run under the recorded snapshot, whose hash their
+  `session.created` carries.
+requirements: [EVAL-000, EVAL-026, EVAL-062]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-04-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: count_records
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Count records whose key starts with a prefix.
+        input:
+          type: object
+          additionalProperties: false
+          required: [prefix, limit]
+          properties: { prefix: { type: string }, limit: { type: integer } }
+        effect: read
+        binding: { kind: native, handler: test.count_records }
+      - kind: Hook
+        id: clamp
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [rewrite]
+        timeoutMs: 1000
+        purpose: guardrail
+        failureMode: failClosed
+        source: { kind: native, handler: test.hook.clamp }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a: { responses: [] }
+    scripted-b: { responses: [] }
+  stubs:
+    tools:
+      count_records: []
+      lookup: []
+      update_record: []
+    nativeHooks:
+      clamp:
+        # $rMatch: key order and number form differ from the recording
+        - result: rewrite
+          parts: [{ type: tool_call, callId: c1, tool: count_records, arguments: { limit: 10.0, prefix: a } }]
+        - result: rewrite
+          parts: [{ type: tool_call, callId: c2, tool: count_records, arguments: { limit: 10.0, prefix: a } }]
+        # $rDiff: arguments left as the model asked (limit 50)
+        - result: continue
+        - result: continue
+script:
+  - action: replay
+    bind: $rMatch
+    tenant: t1
+    bundle: golden/rewrite-canonical.yaml
+    snapshot: recorded
+    hookMode: reEvaluate
+    expect: { ok: true, divergences: [] }
+  - action: replay
+    bind: $rDiff
+    tenant: t1
+    bundle: golden/rewrite-canonical.yaml
+    snapshot: recorded
+    hookMode: reEvaluate
+    expect:
+      ok: true
+      divergences:
+        - { kind: unrecorded_call, callId: c1, tool: count_records }
+        - { kind: unrecorded_call, callId: c2, tool: count_records }
+expect:
+  sessions:
+    $rMatch:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, snapshotHash: "sha256:6f44c0cfcd5855090f5f55a2888fa8164796a4da0d92a0d29f3270ede616437a" }
+          - { type: run.started, runId: $m1 }
+          - { type: tool.result, runId: $m1, step: 1, payload: { callId: c1, tool: count_records, result: { ok: { output: { count: 3 } } } } }
+          - { type: tool.result, runId: $m1, step: 2, payload: { callId: c2, tool: count_records, result: { ok: { output: { count: 4 } } } } }
+          - type: model.response
+            runId: $m1
+            step: 3
+            payload: { message: { parts: [{ type: text, text: "First count 3, then count 4." }] } }
+          - { type: run.ended, runId: $m1, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.result, payload: { result: { error: { $any: true } } } }
+    $rDiff:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, snapshotHash: "sha256:6f44c0cfcd5855090f5f55a2888fa8164796a4da0d92a0d29f3270ede616437a" }
+          - { type: run.started, runId: $d1 }
+          - type: tool.result
+            runId: $d1
+            step: 1
+            payload:
+              callId: c1
+              tool: count_records
+              result: { error: { code: agentry.eval.unrecorded_call, category: unavailable, retryable: false, source: harness } }
+          - type: tool.result
+            runId: $d1
+            step: 2
+            payload:
+              callId: c2
+              tool: count_records
+              result: { error: { code: agentry.eval.unrecorded_call, category: unavailable, retryable: false, source: harness } }
+          - type: model.response
+            runId: $d1
+            step: 3
+            payload: { message: { parts: [{ type: text, text: "First count 3, then count 4." }] } }
+          - { type: run.ended, runId: $d1, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.result, payload: { result: { ok: { $any: true } } } }
+        - { type: run.ended, payload: { reason: { $not: responded } } }
+  ports:
+    eventLog:
+      t1:
+        $rMatch:
+          $count: { of: { type: run.ended }, equals: 1 }
+        $rDiff:
+          $count: { of: { type: run.ended }, equals: 1 }
+  stubCalls:
+    clamp:
+      - { arguments: { sessionId: $rMatch, point: beforeToolCall, call: { arguments: { prefix: a, limit: 50 } } } }
+      - { arguments: { sessionId: $rMatch, point: beforeToolCall, call: { arguments: { prefix: a, limit: 50 } } } }
+      - { arguments: { sessionId: $rDiff, point: beforeToolCall, call: { arguments: { prefix: a, limit: 50 } } } }
+      - { arguments: { sessionId: $rDiff, point: beforeToolCall, call: { arguments: { prefix: a, limit: 50 } } } }
+    count_records: { count: 0 }
+  providerRequests:
+    scripted-a: { count: 0 }
+    scripted-b: { count: 0 }

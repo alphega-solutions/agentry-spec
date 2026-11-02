@@ -86,7 +86,7 @@ allOf:
   - if: { properties: { type: { const: context.compacted } } }
     then: { required: [turn, step] }
   # events that carry content carry its provenance and labels (CORE-151)
-  - if: { properties: { type: { enum: [model.response, tool.call, tool.result, escalation.raised, context.retrieved, context.compacted] } } }
+  - if: { properties: { type: { enum: [turn.started, model.response, tool.call, tool.result, escalation.raised, context.retrieved, context.compacted] } } }
     then: { required: [provenances, labels] }
 
   - if: { properties: { type: { const: session.created } } }
@@ -97,7 +97,9 @@ allOf:
     then: { properties: { payload: { $ref: "#/$defs/runStarted" } } }
   - if: { properties: { type: { const: run.ended } } }
     then: { properties: { payload: { $ref: "#/$defs/runEnded" } } }
-  - if: { properties: { type: { enum: [turn.started, turn.completed] } } }
+  - if: { properties: { type: { const: turn.started } } }
+    then: { properties: { payload: { $ref: "#/$defs/turnStarted" } } }
+  - if: { properties: { type: { const: turn.completed } } }
     then: { properties: { payload: { $ref: "#/$defs/empty" } } }
   - if: { properties: { type: { const: model.request } } }
     then: { properties: { payload: { $ref: "#/$defs/modelRequest" } } }
@@ -157,6 +159,21 @@ $defs:
     required: [reason]
     properties:
       reason: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/closeReason" }
+
+  turnStarted:
+    description: >-
+      The principal's message as received (CORE-080), so context can be
+      rebuilt from events (CTX-001, Area 11 amendment 2026-11-02).
+      Attachments appear by blob reference; the inline view may be redacted,
+      with the full message behind the event's `contentRef` (CORE-154).
+    type: object
+    additionalProperties: false
+    required: [message]
+    properties:
+      message:
+        allOf:
+          - $ref: "https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/message"
+          - properties: { role: { const: principal } }
 
   runStarted:
     type: object
@@ -251,6 +268,12 @@ $defs:
       result: { enum: [annotate, rewrite, block, escalate] }
       reasonCode: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/errorCode" }
       labelsAdded: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/labels" }
+      replacementRef:
+        description: >-
+          For `rewrite`, the replacement content (the rewritten parts, as JSON)
+          in the BlobStore, so context and replay can reproduce it (CTX-001,
+          EVAL-063; Area 11 amendment 2026-11-02).
+        $ref: "https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/blobRef"
       annotations:
         description: For `annotate`, the labels added per part index into the content the hook saw, from which later context assembly reapplies them (CTX-001, Area 7 amendment 2026-11-01).
         type: array
@@ -262,6 +285,8 @@ $defs:
     allOf:
       - if: { properties: { result: { enum: [block, escalate] } } }
         then: { required: [reasonCode] }
+      - if: { properties: { result: { const: rewrite } } }
+        then: { required: [replacementRef] }
       - if: { properties: { point: { enum: [onError, sessionEnd] } } }
         then: { properties: { result: { const: annotate } } }
 

@@ -1,0 +1,167 @@
+schemaVersion: "0.1.0"
+id: eval.replay-hook-decisions
+title: Replay-decisions mode reuses a recorded non-continue decision whose input hash matches, re-evaluates hooks with no recorded decision and reports a new non-continue result as divergence; re-evaluate mode calls the hook every time
+description: >-
+  `golden/hook-decisions.yaml` records, under a snapshot in which the
+  native beforeToolCall hook guard@1 (results [block, annotate]) is
+  required by assistant@1: step 1 — update_record (c1) blocked by guard
+  (`hook.decision` block, test.guard.blocked, with the inputHash of
+  guard's view of c1, HOOK-062); the model receives agentry.hook.blocked;
+  step 2 — lookup (c2), guard answered `continue` (not recorded, so no
+  decision exists for c2); step 3 — the final response. All three replays
+  use `snapshot: recorded` in t1 with the recorded principal (user-1,
+  multi_factor, no roles or attributes), so guard's view of c1 is the
+  recorded one.
+
+
+  - $rA, `replayDecisions`: guard's input hash for c1 matches the recorded
+    decision, which is reused — guard is not invoked for c1, c1 is again
+    blocked with agentry.hook.blocked, and the replayed `hook.decision`
+    carries the recorded input hash. c2 has no recorded decision, so guard
+    is re-evaluated for it (its one invocation in $rA); it answers
+    `continue`, and no divergence is reported.
+  - $rB, `replayDecisions`: as $rA, but guard answers `annotate` for c2 —
+    a non-`continue` result from a hook re-evaluated for want of a recorded
+    decision — so the replay reports exactly one divergence `{kind:
+    hook_decision, hook: guard@1, eventId}`, where `eventId` is the
+    replayed session's `hook.decision` for that annotate. The call itself
+    still matches the recording (annotate does not change arguments).
+  - $rC, `reEvaluate`: guard runs again on every call — twice, for c1
+    (answering block) and c2 (continue) — reproducing the recording with no
+    divergence.
+
+
+  guard's four invocations are asserted in order across the fixture: one
+  per replay-decisions replay (c2, lookup) and two in $rC. update_record and
+  lookup are never dispatched; no provider is called. Readings: a reused
+  decision takes effect as the hook's result, so the replayed session
+  records it as a `hook.decision` (HOOK-060) with the matching input hash;
+  the divergence's `hook` is the hook's id@version, as on `hook.decision`;
+  its `eventId` is the replayed session's event. The fixture's configuration
+  adds guard@1 (as recorded) so that its native handler is registered.
+requirements: [EVAL-063]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-04-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Hook
+        id: guard
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [block, annotate]
+        timeoutMs: 1000
+        purpose: guardrail
+        failureMode: failClosed
+        source: { kind: native, handler: test.hook.guard }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a: { responses: [] }
+    scripted-b: { responses: [] }
+  stubs:
+    tools:
+      lookup: []
+      update_record: []
+    nativeHooks:
+      guard:
+        # $rA: c2 only
+        - result: continue
+        # $rB: c2 only
+        - result: annotate
+          labels: [{ part: 0, labels: [pii] }]
+        # $rC: c1, then c2
+        - result: block
+          reasonCode: test.guard.blocked
+        - result: continue
+script:
+  - action: replay
+    bind: $rA
+    tenant: t1
+    bundle: golden/hook-decisions.yaml
+    snapshot: recorded
+    hookMode: replayDecisions
+    expect: { ok: true, divergences: [] }
+  - action: replay
+    bind: $rB
+    tenant: t1
+    bundle: golden/hook-decisions.yaml
+    snapshot: recorded
+    hookMode: replayDecisions
+    expect:
+      ok: true
+      divergences: [{ kind: hook_decision, hook: guard@1, eventId: $hdB }]
+  - action: replay
+    bind: $rC
+    tenant: t1
+    bundle: golden/hook-decisions.yaml
+    snapshot: recorded
+    hookMode: reEvaluate
+    expect: { ok: true, divergences: [] }
+expect:
+  sessions:
+    $rA:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, snapshotHash: "sha256:0d6de43c172c9f36e746b8146518a2444b590a232234c95c52791aa9f42cf7a3" }
+          - type: hook.decision
+            payload:
+              hook: guard@1
+              point: beforeToolCall
+              result: block
+              reasonCode: test.guard.blocked
+              inputHash: "sha256:df98e4ee26967f3ec03b86d010581a56d52bbac12a2fe4ad2b6f397659ec1cb4"
+          - type: tool.result
+            payload:
+              callId: c1
+              tool: update_record
+              result: { error: { code: agentry.hook.blocked, category: policy, retryable: false, source: hook } }
+          - { type: tool.result, payload: { callId: c2, tool: lookup, result: { ok: { output: { key: k1, value: SYN-VALUE-0005 } } } } }
+          - type: model.response
+            payload: { message: { parts: [{ type: text, text: "Record k1 was not updated; it holds SYN-VALUE-0005." }] } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call, payload: { callId: c1 } }
+    $rB:
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: guard@1, result: block, inputHash: "sha256:df98e4ee26967f3ec03b86d010581a56d52bbac12a2fe4ad2b6f397659ec1cb4" } }
+          - { type: tool.result, payload: { callId: c1, result: { error: { code: agentry.hook.blocked } } } }
+          - { type: hook.decision, eventId: $hdB, payload: { hook: guard@1, point: beforeToolCall, result: annotate } }
+          - { type: tool.result, payload: { callId: c2, tool: lookup, result: { ok: { output: { key: k1, value: SYN-VALUE-0005 } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+    $rC:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: guard@1, result: block, reasonCode: test.guard.blocked } }
+          - { type: tool.result, payload: { callId: c1, result: { error: { code: agentry.hook.blocked } } } }
+          - { type: tool.result, payload: { callId: c2, tool: lookup, result: { ok: { output: { key: k1, value: SYN-VALUE-0005 } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+  ports:
+    eventLog:
+      t1:
+        $rA:
+          $count: { of: { type: hook.decision }, equals: 1 }
+        $rC:
+          $count: { of: { type: hook.decision }, equals: 1 }
+  stubCalls:
+    guard:
+      - { arguments: { sessionId: $rA, point: beforeToolCall, tool: { id: lookup }, call: { arguments: { key: k1 } } } }
+      - { arguments: { sessionId: $rB, point: beforeToolCall, tool: { id: lookup }, call: { arguments: { key: k1 } } } }
+      - { arguments: { sessionId: $rC, point: beforeToolCall, tool: { id: update_record }, call: { arguments: { key: k1, value: SYN-VALUE-0006 } } } }
+      - { arguments: { sessionId: $rC, point: beforeToolCall, tool: { id: lookup }, call: { arguments: { key: k1 } } } }
+    lookup: { count: 0 }
+    update_record: { count: 0 }
+  providerRequests:
+    scripted-a: { count: 0 }
+    scripted-b: { count: 0 }

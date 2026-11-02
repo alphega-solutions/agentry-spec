@@ -19,6 +19,9 @@ properties:
   contract:
     description: The contract version of the exporting implementation.
     $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/contractVersion"
+  description:
+    description: Informative — what the bundle records (golden bundles explain themselves here).
+    type: string
   exporter:
     description: Informative — the exporting implementation and its version.
     type: string

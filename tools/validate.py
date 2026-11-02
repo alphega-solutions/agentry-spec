@@ -48,13 +48,15 @@ def check_placeholders(doc: dict) -> list[str]:
             return
         used = set()
         for key, val in step.items():
-            if key in ("bind", "capture", "expect"):
+            if key in ("bind", "bindResult", "capture", "expect"):
                 continue
             used |= _placeholders(val)
         for ph in sorted(used - bound):
             problems.append(f"script[{idx}] uses {ph} before it is bound")
         if isinstance(step.get("bind"), str):
             bound.add(step["bind"])
+        if isinstance(step.get("bindResult"), str):
+            bound.add(step["bindResult"])
         for cap in step.get("capture", []) or []:
             bound.update(cap.get("bind", {}).values())
 
@@ -706,6 +708,8 @@ def check_placeholder_keys(doc: dict) -> list[str]:
                 step_binds(sub)
         if isinstance(step.get("bind"), str):
             bound.add(step["bind"])
+        if isinstance(step.get("bindResult"), str):
+            bound.add(step["bindResult"])
         for cap in step.get("capture") or []:
             bound.update((cap.get("bind") or {}).values())
 
