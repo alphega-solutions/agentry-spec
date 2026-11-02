@@ -1,0 +1,119 @@
+schemaVersion: "0.1.0"
+id: providers.failover-auth-immediate
+title: An authentication failure is eligible for failover at once; a rate limit uses the profile's retries first
+description: >-
+  Persona `dual@1` runs on scripted-a/model-a with fallbacks
+  [scripted-a/model-a2, scripted-b/model-b]; the profile's
+  `retry.unavailable` is 2. Both failovers below go to model-a2, a model of
+  the same provider, which is allowed at any point (PROV-061), so the
+  sessions isolate the retry-versus-failover rule of PROV-060.
+
+
+  - $sAuth: model-a fails with an authentication error (`unavailable`,
+    not retryable, agentry.provider.auth). Although the profile allows two
+    retries, model-a is called exactly once: the harness fails over to
+    model-a2 at once, and the run responds.
+  - $sRate: model-a fails with a rate limit (`unavailable`, retryable,
+    agentry.provider.unavailable) three times: the first call and the two
+    retries the profile allows. Only then does the harness fail over to
+    model-a2, and the run responds.
+
+
+  The exact order of calls is asserted through the scripted provider's
+  request log (model per request). Reading chosen: PROV-060's "MAY fail
+  over" is read, as in core.error-vendor-mapped, as failover taking place
+  whenever an allowed and capable next fallback exists.
+requirements: [PROV-060]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Persona
+        id: dual
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant with two fallbacks
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-a, name: model-a2 }
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # $sAuth: model-a, not retried
+        - error: { category: unavailable, code: agentry.provider.auth, retryable: false }
+        # $sAuth: model-a2
+        - parts: [{ type: text, text: "SYN-AUTH-FALLBACK reply." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sRate: model-a, first call and two retries
+        - error: { category: unavailable, code: agentry.provider.unavailable, retryable: true }
+        - error: { category: unavailable, code: agentry.provider.unavailable, retryable: true }
+        - error: { category: unavailable, code: agentry.provider.unavailable, retryable: true }
+        # $sRate: model-a2
+        - parts: [{ type: text, text: "SYN-RATE-FALLBACK reply." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b: { responses: [] }
+script:
+  - action: run
+    bind: $sAuth
+    tenant: t1
+    principal: p1
+    persona: dual@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sRate
+    tenant: t1
+    principal: p1
+    persona: dual@1
+    input: [{ type: text, text: "Hi again" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sAuth:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-a, model: model-a, role: primary } }
+          - { type: error, payload: { error: { category: unavailable, code: agentry.provider.auth, retryable: false } } }
+          - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-a, model: model-a2, role: fallback, fallbackReason: failover } }
+          - { type: run.ended, payload: { reason: responded } }
+    $sRate:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-a, model: model-a, role: primary } }
+          - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-a, model: model-a, role: primary } }
+          - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-a, model: model-a, role: primary } }
+          - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-a, model: model-a2, role: fallback, fallbackReason: failover } }
+          - { type: run.ended, payload: { reason: responded } }
+  providerRequests:
+    scripted-a:
+      # $sAuth: one call to model-a, then the fallback
+      - { model: model-a }
+      - { model: model-a2 }
+      # $sRate: three calls to model-a (two retries), then the fallback
+      - { model: model-a }
+      - { model: model-a }
+      - { model: model-a }
+      - { model: model-a2 }
+    scripted-b: { count: 0 }
+  delivered:
+    $sAuth: { text: "SYN-AUTH-FALLBACK reply.", fallback: false }
+    $sRate: { text: "SYN-RATE-FALLBACK reply.", fallback: false }
