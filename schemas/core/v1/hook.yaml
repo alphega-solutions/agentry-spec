@@ -1,0 +1,254 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://alphega.io/agentry/schemas/core/hook/v1.json
+title: Hook request and result
+description: >-
+  The `HookRequest` a remote hook receives and the `HookResult` every
+  non-rule hook returns (HOOK-091, HOOK-101; Area 5 §2). The hook decision
+  recorded for a non-`continue` result is the `hookDecision` event payload in
+  `core/v1/event.yaml`.
+
+
+  A request carries the same view of the session as the CEL variables at its
+  point (Area 5 §9.1), so rule, native, remote and model hooks judge the same
+  data. Neither carries secret values, credentials, or binary content
+  (HOOK-115): image and file parts appear by blob reference only (CORE-112).
+$defs:
+  resultType:
+    description: Hook results (Area 5 §5).
+    enum: [continue, annotate, rewrite, block, escalate]
+
+  principal:
+    description: The principal as hooks see it (Area 5 §9.1). Never credentials or tokens (HOOK-115).
+    type: object
+    additionalProperties: false
+    required: [subject, tenant, roles, attributes, assurance]
+    properties:
+      subject: { type: string, minLength: 1 }
+      tenant: { type: string, minLength: 1 }
+      roles: { type: array, items: { type: string } }
+      attributes: { type: object }
+      assurance: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/assuranceLevel" }
+
+  session:
+    type: object
+    additionalProperties: false
+    required: [persona, tainted, turn, step]
+    properties:
+      persona: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/artifactRef" }
+      tainted: { type: boolean }
+      turn: { type: integer, minimum: 0 }
+      step: { type: integer, minimum: 0 }
+
+  tool:
+    description: The called tool's governance fields (Area 5 §9.1).
+    type: object
+    additionalProperties: false
+    required: [id, effect, egress, idempotent, sensitivity]
+    properties:
+      id: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/toolId" }
+      effect: { enum: [read, mutating] }
+      egress: { type: boolean }
+      idempotent: { type: boolean }
+      sensitivity: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/labels" }
+
+  call:
+    type: object
+    additionalProperties: false
+    required: [arguments]
+    properties:
+      arguments: { type: object }
+
+  result:
+    description: The tool result at `afterToolCall`, as `ok` with `output`, or not `ok` with `error`.
+    type: object
+    additionalProperties: false
+    required: [ok]
+    properties:
+      ok: { type: boolean }
+      output: {}
+      error: { $ref: "https://alphega.io/agentry/schemas/core/error/v1.json" }
+    if: { properties: { ok: { const: true } } }
+    then: { not: { required: [error] } }
+    else: { required: [error], not: { required: [output] } }
+
+  error:
+    description: The error at `onError` (Area 5 §9.1).
+    type: object
+    additionalProperties: false
+    required: [code, category, source]
+    properties:
+      code: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/errorCode" }
+      category: { $ref: "https://alphega.io/agentry/schemas/core/error/v1.json#/properties/category" }
+      source: { $ref: "https://alphega.io/agentry/schemas/core/error/v1.json#/properties/source" }
+
+  summary:
+    description: Session summary data at `sessionEnd` (Area 5 §4).
+    type: object
+    additionalProperties: false
+    required: [closeReason, turns, usage]
+    properties:
+      closeReason: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/closeReason" }
+      turns: { type: integer, minimum: 0 }
+      usage: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/usage" }
+
+  variables:
+    description: >-
+      The hook's view at a point: the CEL variables of Area 5 §9.1, plus
+      `summary` at `sessionEnd`. Which variables are present depends on the
+      point: `content` everywhere except `onError` and `sessionEnd`; `tool`
+      and `call` at `beforeToolCall`; `tool` and `result` at `afterToolCall`;
+      `error` at `onError`; `summary` at `sessionEnd`. In CEL, `content` is
+      seen as parts with `type`, `text` (text parts), `labels` and
+      `provenance` (Area 5 §9.1).
+    type: object
+    properties:
+      principal: { $ref: "#/$defs/principal" }
+      session: { $ref: "#/$defs/session" }
+      content:
+        type: array
+        items: { $ref: "https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/part" }
+      tool: { $ref: "#/$defs/tool" }
+      call: { $ref: "#/$defs/call" }
+      result: { $ref: "#/$defs/result" }
+      error: { $ref: "#/$defs/error" }
+      summary: { $ref: "#/$defs/summary" }
+
+  request:
+    title: HookRequest
+    description: >-
+      What a remote hook receives (HOOK-091): the point, tenant, principal,
+      session and run IDs, and the content the point sees. `runId` is absent
+      at `sessionEnd` when the session closes outside a run.
+    type: object
+    unevaluatedProperties: false
+    required: [schemaVersion, hook, point, tenant, sessionId, principal, session]
+    allOf:
+      - $ref: "#/$defs/variables"
+      - if: { properties: { point: { enum: [sessionStart, beforeModelCall, afterModelCall, beforeToolCall, afterToolCall, beforeResponse] } } }
+        then: { required: [content], not: { anyOf: [{ required: [error] }, { required: [summary] }] } }
+      - if: { properties: { point: { const: beforeToolCall } } }
+        then: { required: [tool, call], not: { required: [result] } }
+      - if: { properties: { point: { const: afterToolCall } } }
+        then: { required: [tool, result], not: { required: [call] } }
+      - if: { properties: { point: { enum: [sessionStart, beforeModelCall, afterModelCall, beforeResponse] } } }
+        then: { not: { anyOf: [{ required: [tool] }, { required: [call] }, { required: [result] }] } }
+      - if: { properties: { point: { const: onError } } }
+        then: { required: [error], not: { anyOf: [{ required: [content] }, { required: [tool] }, { required: [call] }, { required: [result] }, { required: [summary] }] } }
+      - if: { properties: { point: { const: sessionEnd } } }
+        then: { required: [summary], not: { anyOf: [{ required: [content] }, { required: [tool] }, { required: [call] }, { required: [result] }, { required: [error] }] } }
+    properties:
+      schemaVersion: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/contractVersion" }
+      hook: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/artifactRef" }
+      point: { $ref: "https://alphega.io/agentry/schemas/config/hook/v1.json#/$defs/point" }
+      tenant: { type: string, minLength: 1 }
+      sessionId: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+      runId: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+      traceContext: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/traceContext" }
+
+  rewritePart:
+    description: >-
+      A replacement part. It carries no `provenance` or `labels`: the harness
+      assigns them (HOOK-021): a part that replaces one keeps its provenance
+      and at least its labels; an inserted part takes the least-trusted
+      provenance and the union of labels of the content being rewritten.
+      Binary parts follow CORE-126.
+    type: object
+    required: [type]
+    not: { anyOf: [{ required: [provenance] }, { required: [labels] }] }
+    properties:
+      type: { enum: [text, image, file, structured, tool_call, tool_result] }
+    allOf:
+      - if: { properties: { type: { const: text } } }
+        then:
+          additionalProperties: false
+          required: [text]
+          properties: { type: true, text: { type: string } }
+      - if: { properties: { type: { enum: [image, file] } } }
+        then:
+          additionalProperties: false
+          required: [mediaType, blob]
+          properties:
+            type: true
+            mediaType: { type: string, pattern: "^[a-z]+/[A-Za-z0-9.+-]+$" }
+            blob: { $ref: "https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/blobRef" }
+            name: { type: string }
+      - if: { properties: { type: { const: structured } } }
+        then:
+          additionalProperties: false
+          required: [value]
+          properties: { type: true, value: {} }
+      - if: { properties: { type: { const: tool_call } } }
+        then:
+          additionalProperties: false
+          required: [callId, tool, arguments]
+          properties:
+            type: true
+            callId: { type: string, minLength: 1 }
+            tool: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/toolId" }
+            arguments: { type: object }
+      - if: { properties: { type: { const: tool_result } } }
+        then:
+          additionalProperties: false
+          required: [callId, result]
+          properties:
+            type: true
+            callId: { type: string, minLength: 1 }
+            tool: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/toolId" }
+            result: { $ref: "https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/toolResult" }
+
+  annotation:
+    description: Labels to add to one part, by its index in the content the hook saw (HOOK-022).
+    type: object
+    additionalProperties: false
+    required: [part, labels]
+    properties:
+      part: { type: integer, minimum: 0 }
+      labels:
+        $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/labels"
+        minItems: 1
+
+  result:
+    title: HookResult
+    description: >-
+      A hook's answer (Area 5 §5). Anything that does not validate, and any
+      result the hook did not declare, is a failure (HOOK-020, HOOK-050,
+      HOOK-101). `annotate` adds labels and never removes them (HOOK-022);
+      `rewrite` replaces the content the point sees (HOOK-021, HOOK-032);
+      `block` and `escalate` carry a reason code that is recorded but never
+      shown to the model or the principal (HOOK-023).
+    type: object
+    required: [result]
+    properties:
+      result: { $ref: "#/$defs/resultType" }
+    allOf:
+      - if: { properties: { result: { const: continue } } }
+        then:
+          additionalProperties: false
+          properties: { result: true }
+      - if: { properties: { result: { const: annotate } } }
+        then:
+          additionalProperties: false
+          required: [labels]
+          properties:
+            result: true
+            labels:
+              type: array
+              minItems: 1
+              items: { $ref: "#/$defs/annotation" }
+      - if: { properties: { result: { const: rewrite } } }
+        then:
+          additionalProperties: false
+          required: [parts]
+          properties:
+            result: true
+            parts:
+              type: array
+              minItems: 1
+              items: { $ref: "#/$defs/rewritePart" }
+      - if: { properties: { result: { enum: [block, escalate] } } }
+        then:
+          additionalProperties: false
+          required: [reasonCode]
+          properties:
+            result: true
+            reasonCode: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/errorCode" }

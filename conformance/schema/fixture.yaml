@@ -195,7 +195,26 @@ $defs:
                 type: array
                 items: { $ref: "#/$defs/toolBehaviour" }
           remoteHooks:
-            description: Scripted remote hook results, keyed by the remote hook ID declared in the deployment, consumed in order (HOOK-091).
+            description: >-
+              Scripted remote hook endpoints, keyed by the remote hook ID
+              declared in the deployment: behaviours consumed in order, one
+              per request (HOOK-091). Each request is recorded under
+              `expect.stubCalls.<remote hook ID>` as `{ arguments }`, where
+              `arguments` is the `HookRequest`.
+            type: object
+            additionalProperties:
+              type: array
+              items: { $ref: "#/$defs/hookBehaviour" }
+          nativeHooks:
+            description: >-
+              Native hook stubs, keyed by the `Hook` artifact ID whose source
+              is `native`: the behaviours of its registered handler
+              (`handlers`), consumed in order, one per invocation. A
+              registered native hook with no entry gets the default hook
+              stub, which records its invocations and answers `continue`
+              every time. Invocations are recorded under
+              `expect.stubCalls.<hook ID>` as `{ arguments }`, where
+              `arguments` is the `HookRequest` the handler was given.
             type: object
             additionalProperties:
               type: array
@@ -332,32 +351,52 @@ $defs:
         default: false
 
   hookBehaviour:
+    description: >-
+      One invocation's scripted behaviour for a remote or native hook stub:
+      exactly one of `answer` (return this `HookResult`, validated against
+      `schemas/core/v1/hook.yaml#/$defs/result`; it may still be a result the
+      hook did not declare, HOOK-020), `raw` (return this value verbatim as
+      the response body, which need not be a valid `HookResult`, to test
+      HOOK-050), `error` (the hook errors), or `hang` (never answers; the
+      hook's `timeoutMs` then applies). `delayMs` delays `answer`, `raw` or
+      `error` on the virtual clock. For brevity, the `HookResult` fields may
+      instead be given directly (`result` with `reasonCode`, `labels` or
+      `parts`), meaning the same as `answer`.
     type: object
     additionalProperties: false
     oneOf:
+      - required: [answer]
       - required: [result]
+      - required: [raw]
       - required: [error]
+      - required: [hang]
     properties:
-      result: { enum: [continue, annotate, rewrite, block, escalate] }
+      answer: { $ref: "https://alphega.io/agentry/schemas/core/hook/v1.json#/$defs/result" }
+      result: { $ref: "https://alphega.io/agentry/schemas/core/hook/v1.json#/$defs/resultType" }
       reasonCode: { type: string }
       labels:
         description: For annotate — labels to add, per part index.
         type: array
-        items:
-          type: object
-          additionalProperties: false
-          required: [part, labels]
-          properties:
-            part: { type: integer, minimum: 0 }
-            labels: { type: array, items: { type: string } }
+        items: { $ref: "https://alphega.io/agentry/schemas/core/hook/v1.json#/$defs/annotation" }
       parts:
         description: For rewrite — replacement parts.
         type: array
-        items: { type: object, required: [type] }
+        items: { $ref: "https://alphega.io/agentry/schemas/core/hook/v1.json#/$defs/rewritePart" }
+      raw:
+        description: A response body returned verbatim (any JSON value, or a string for non-JSON output).
       error:
         description: The hook fails instead of answering.
         type: object
+        properties:
+          category: { type: string }
+          code: { type: string }
+          message: { type: string }
+      hang: { const: true, description: Never answers. }
       delayMs: { type: integer, minimum: 0 }
+    dependentSchemas:
+      result:
+        description: The shorthand must itself be a valid `HookResult`.
+        $ref: "https://alphega.io/agentry/schemas/core/hook/v1.json#/$defs/result"
 
   capture:
     description: >-

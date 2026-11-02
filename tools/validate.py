@@ -99,13 +99,11 @@ KIND_SCHEMAS = {
     "HarnessProfile": f"{CONFIG}/harness-profile/v1.json",
     "Deployment": f"{CONFIG}/deployment/v1.json",
     "Tool": f"{CONFIG}/tool/v1.json",
+    "Hook": f"{CONFIG}/hook/v1.json",
 }
-# Kinds whose schemas arrive with Area 5; their artifacts are checked only
-# against the interim names in conformance/shared/NAMES.md.
-PENDING_KINDS = {"Hook"}
 BEHAVIOURAL = ("PolicyBundle", "Persona", "HarnessProfile")
-# Kinds that are not behavioural layers and carry no merge annotations (CFG-021, TOOL-001).
-UNLAYERED = ("Deployment", "Tool")
+# Kinds that are not behavioural layers and carry no merge annotations (CFG-021, TOOL-001, HOOK-071).
+UNLAYERED = ("Deployment", "Tool", "Hook")
 MERGE_RULES = {"union", "intersect", "min", "stricter", "locked", "override"}
 # Envelope fields are not merged; extensions are vendor data.
 UNMERGED = {"kind", "id", "version", "schemaVersion", "extensions"}
@@ -134,11 +132,11 @@ SECRET_PATTERN = re.compile(r"^secret://[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9_.-
 # with `*` for a map key. Every `stricter` field in a configuration schema must
 # be listed here with exactly this order, and every listed path in a schema'd
 # behavioural kind must exist. Tool fields with these values (approval,
-# onTainted, onTaintedEgress) are not merged, so they are not listed; the
-# Hook failure mode lists its paths when the Area 5 schema lands.
+# onTainted, onTaintedEgress) and the Hook failure mode are not merged (a
+# versioned artifact cannot be weakened by a lower layer, HOOK-071), so they
+# are not listed.
 STRICTNESS_ORDERS = [
     # (family, order, paths)
-    ("Hook failure mode", ["failClosed", "failOpen"], []),  # Hook schema (Area 5)
     ("Delivery mode", ["buffered", "streamed"], ["HarnessProfile.deliveryMode"]),
     ("Taint outcome", ["block", "escalate", "allow"], ["PolicyBundle.toolTaintDefaults.*"]),
     ("Approval policy", ["always", "policy", "never"], ["PolicyBundle.sensitivityPolicies.*.approval"]),
@@ -155,70 +153,12 @@ STRICTNESS_ORDERS = [
 ]
 CANONICAL_ORDER = {path: order for _, order, paths in STRICTNESS_ORDERS for path in paths}
 
-# Interim Hook names (conformance/shared/NAMES.md) until the Area 5 schema exists.
-# Tool names are normative in schemas/config/v1/tool.yaml.
-HOOK_SOURCES = {
-    "rule": ["when", "then"],
-    "native": ["handler"],
-    "remote": ["endpoint"],
-    "model": ["model", "instructions", "maxTokens"],
-}
-# Fields whose value is an ID declared elsewhere (deployment or registry), not a URI.
-ID_FIELDS = {"handler", "endpoint"}
-
-
-def _check_pending(art: dict) -> list[str]:
-    """Minimal check of a Hook artifact against NAMES.md."""
-    key, table = "source", HOOK_SOURCES
-    block = art.get(key)
-    if not isinstance(block, dict):
-        return [f"{key}: missing or not an object (NAMES.md)"]
-    bkind = block.get("kind")
-    if bkind not in table:
-        return [f"{key}.kind: unknown {bkind!r}; expected one of {sorted(table)} (NAMES.md)"]
-    problems: list[str] = []
-    fields = table[bkind]
-    for f in fields:
-        if f not in block:
-            problems.append(f"{key}: kind {bkind} requires `{f}` (NAMES.md)")
-    for f in block:
-        if f not in fields and f not in ("kind", "credentials"):
-            problems.append(f"{key}: unknown field `{f}` for kind {bkind} (NAMES.md)")
-    for f in ID_FIELDS & set(fields):
-        v = block.get(f)
-        if v is not None and not (isinstance(v, str) and ID_PATTERN.match(v)):
-            problems.append(f"{key}.{f}: {v!r} is not an ID (NAMES.md)")
-    creds = block.get("credentials")
-    if creds is not None:
-        if not isinstance(creds, dict):
-            problems.append(f"{key}.credentials: must be a map of names to secret references")
-        else:
-            if not all(isinstance(ref, str) and SECRET_PATTERN.match(ref) for ref in creds.values()):
-                problems.append(f"{key}.credentials: every entry must be a secret reference (CFG-061)")
-    if bkind == "rule" and isinstance(block.get("then"), dict):
-        then = block["then"]
-        result = then.get("result")
-        need = {"annotate": "labels", "block": "reasonCode", "escalate": "reasonCode"}.get(result)
-        if need is None:
-            problems.append(f"source.then.result: unknown {result!r} (HOOK-090)")
-        elif need not in then:
-            problems.append(f"source.then: result {result} requires `{need}` (HOOK-090)")
-    if bkind == "model" and isinstance(block.get("model"), dict):
-        for f in ("provider", "name"):
-            if f not in block["model"]:
-                problems.append(f"source.model: requires `{f}`")
-    return problems
-
-
 def check_shared_config(schemas: dict, reg) -> list[str]:
     errors: list[str] = []
     for path in sorted((ROOT / "conformance" / "shared").rglob("*.yaml")):
         rel = path.relative_to(ROOT)
         doc = load_yaml(path)
         kind = doc.get("kind") if isinstance(doc, dict) else None
-        if kind in PENDING_KINDS:
-            errors += [f"{rel}: {e}" for e in _check_pending(doc)]
-            continue
         if kind not in KIND_SCHEMAS:
             errors.append(f"{rel}: unknown configuration kind {kind!r}")
             continue
@@ -377,12 +317,16 @@ def check_merge_annotations(schemas: dict) -> list[str]:
             errors.append(f"merge: STRICTNESS_ORDERS lists {path}, which no schema declares")
 
     def no_merge(kind: str, base: str, node, where: str, seen: set) -> None:
+        # Only the kind's own document is checked. Shared blocks it references
+        # (e.g. `modelSelection` in config/defs) are also used by behavioural
+        # kinds, where their annotations apply; in an unmerged artifact they
+        # are inert.
         if isinstance(node, dict):
             if "x-agentry-merge" in node or "x-agentry-order" in node:
                 errors.append(f"merge: {where} carries a merge annotation; {kind} is not a behavioural layer (CFG-021)")
             if isinstance(node.get("$ref"), str):
                 uri, rbase, target = _deref(schemas, base, node["$ref"])
-                if uri not in seen:
+                if uri not in seen and rbase == KIND_SCHEMAS[kind]:
                     no_merge(kind, rbase, target, f"{where}->{uri}", seen | {uri})
             for k, v in node.items():
                 no_merge(kind, base, v, f"{where}/{k}", seen)
@@ -461,8 +405,7 @@ def check_inline_config(doc: dict, schemas: dict, reg) -> list[str]:
     """Inline configuration that is expected to load must be schema-valid.
 
     Artifacts in setup.config.artifacts, and in `load` steps expected to
-    succeed, are validated against their kind's schema (Hook against the
-    interim names in NAMES.md). Artifacts in steps expected to fail are
+    succeed, are validated against their kind's schema. Artifacts in steps expected to fail are
     not, since they may be invalid on purpose. Run-request `overrides` must use
     harness profile field paths, and `remove` must name artifacts present in
     the base or previous set when that set is known.
@@ -471,9 +414,6 @@ def check_inline_config(doc: dict, schemas: dict, reg) -> list[str]:
 
     def check(art: dict, where: str) -> None:
         kind = art.get("kind")
-        if kind in PENDING_KINDS:
-            problems.extend(f"{where} {kind} {art.get('id')}@{art.get('version')}: {e}" for e in _check_pending(art))
-            return
         if kind not in KIND_SCHEMAS:
             problems.append(f"{where}: unknown configuration kind {kind!r}")
             return
@@ -552,7 +492,7 @@ def _apply(arts: dict, add, remove) -> dict:
 
 def _native(arts: dict, hooks: bool = False) -> list[tuple[str, str]]:
     """(artifact ID, handler) of native-bound Tools, and with `hooks` also of
-    Hooks whose `source` is native (NAMES.md)."""
+    Hooks whose `source` is native."""
     found = []
     for a in arts.values():
         if a.get("kind") == "Tool":
@@ -752,8 +692,11 @@ def check_placeholder_keys(doc: dict) -> list[str]:
 
 def check_stub_call_keys(doc: dict) -> list[str]:
     """`expect.stubCalls` keys name a stub: a native tool ID, `<server>/<tool>`,
-    `<endpoint>/<operation>`, or a remote hook ID. Every `stubs.tools` key is
-    the ID of a native-bound tool in some configuration the fixture loads."""
+    `<endpoint>/<operation>`, a remote hook ID, or a native-source hook ID.
+    Every `stubs.tools` key is the ID of a native-bound tool, every
+    `stubs.nativeHooks` key the ID of a native-source Hook, and every
+    `stubs.remoteHooks` key a deployment remote hook ID, in some configuration
+    the fixture loads."""
     problems: list[str] = []
     setup = doc.get("setup") or {}
     stubs = setup.get("stubs") or {}
@@ -767,10 +710,26 @@ def check_stub_call_keys(doc: dict) -> list[str]:
             elif k not in native_ids:
                 problems.append(f"setup.stubs.tools: {k} is not native-bound in any configuration the fixture loads "
                                 f"(use stubs.mcpServers or stubs.httpEndpoints)")
+    if configs is not None and stubs.get("nativeHooks"):
+        native_hooks = {
+            str(a.get("id")) for _, arts, _ in configs for a in arts.values()
+            if a.get("kind") == "Hook" and isinstance(a.get("source"), dict) and a["source"].get("kind") == "native"}
+        for k in stubs["nativeHooks"]:
+            if k not in native_hooks:
+                problems.append(f"setup.stubs.nativeHooks: {k} is not the ID of a native-source Hook "
+                                f"in any configuration the fixture loads")
+    if configs is not None and stubs.get("remoteHooks"):
+        remote_ids = {str(r.get("id")) for _, arts, _ in configs for a in arts.values()
+                      if a.get("kind") == "Deployment" for r in (a.get("remoteHooks") or []) if isinstance(r, dict)}
+        for k in stubs["remoteHooks"]:
+            if k not in remote_ids:
+                problems.append(f"setup.stubs.remoteHooks: {k} is not a remote hook ID declared in any "
+                                f"deployment the fixture loads (HOOK-092)")
     calls = (doc.get("expect") or {}).get("stubCalls") or {}
     if not calls:
         return problems
-    valid = set(stubs.get("tools") or {}) | set(stubs.get("remoteHooks") or {})
+    valid = (set(stubs.get("tools") or {}) | set(stubs.get("remoteHooks") or {})
+             | set(stubs.get("nativeHooks") or {}))
     for srv, server in (stubs.get("mcpServers") or {}).items():
         names = set((server or {}).get("tools") or {})
         for change in (server or {}).get("changes") or []:
@@ -785,10 +744,10 @@ def check_stub_call_keys(doc: dict) -> list[str]:
         if "load" in step:
             arts = _apply(arts, _load_artifacts(step["load"] or {}), (step["load"] or {}).get("remove"))
     explicit = set(setup["handlers"]) if "handlers" in setup else None
-    valid |= {tid for tid, h in _native(arts)
+    valid |= {tid for tid, h in _native(arts, hooks=True)
               if not h.startswith("unregistered.") and (explicit is None or h in explicit)}
     return problems + [f"expect.stubCalls: {k} names no stub (tool ID, <server>/<tool>, <endpoint>/<operation> "
-                       f"or remote hook ID)" for k in calls if k not in valid]
+                       f"remote hook ID, or native hook ID)" for k in calls if k not in valid]
 
 
 def check_crashes(doc: dict) -> list[str]:

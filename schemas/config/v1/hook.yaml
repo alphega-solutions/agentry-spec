@@ -1,0 +1,242 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://alphega.io/agentry/schemas/config/hook/v1.json
+title: Hook
+description: >-
+  One hook definition (HOOK-001, the `HookDefinition` of Area 5 §2). A `Hook`
+  artifact is not a behavioural layer: it is referenced by `id@version` from
+  `requiredHooks` in policy bundles, personas and harness profiles (HOOK-070)
+  and is never merged, so its fields carry no merge annotations. Its failure
+  mode and declared results are part of the versioned artifact, so a lower
+  layer cannot weaken them (HOOK-071).
+
+
+  Defaults: `purpose` is `guardrail`; `failureMode` is `failClosed` for a
+  guardrail and `failOpen` for a telemetry hook (HOOK-001); `match` absent
+  means always. `continue` is always implied, whether or not `results` lists
+  it.
+
+
+  Schema-checked here: required fields; the closed set of points (HOOK-010);
+  telemetry hooks declare only `continue` and `annotate` (HOOK-002); hooks at
+  `onError` or `sessionEnd` declare only `continue` and `annotate` (HOOK-003,
+  §5); the source fields per kind (HOOK-080, Area 5 §8); a rule hook never
+  declares `rewrite` and declares the result its `then` returns (HOOK-090);
+  a model hook that declares `block` or `escalate` is never `failOpen`
+  (HOOK-101); credentials only on a `native` source, and only as secret
+  references (CFG-061).
+
+
+  Checked at load time, not here: that each source resolves — a rule
+  compiles and type-checks against its points' variables, a `native`
+  handler is registered, a `remote` endpoint is declared in the deployment,
+  a `model` hook's provider is allowed (HOOK-080, HOOK-100, HOOK-112); that
+  a rule's labels have sensitivity policies (HOOK-022, CFG-042); and the
+  profile-level checks of HOOK-040 (streamed delivery) and HOOK-104
+  (`requireDeterministic`).
+allOf:
+  - $ref: "https://alphega.io/agentry/schemas/config/artifact/v1.json"
+  - description: A telemetry hook declares only `continue` and `annotate` (HOOK-002).
+    if:
+      required: [purpose]
+      properties: { purpose: { const: telemetry } }
+    then:
+      properties: { results: { items: { enum: [continue, annotate] } } }
+  - description: >-
+      `onError` and `sessionEnd` permit only `annotate` (Area 5 §5); a hook
+      declaring a result some point does not permit is a configuration
+      error (HOOK-003).
+    if:
+      required: [points]
+      properties: { points: { contains: { enum: [onError, sessionEnd] } } }
+    then:
+      properties: { results: { items: { enum: [continue, annotate] } } }
+  - description: A rule hook cannot rewrite (HOOK-090).
+    if:
+      required: [source]
+      properties: { source: { required: [kind], properties: { kind: { const: rule } } } }
+    then:
+      properties: { results: { not: { contains: { const: rewrite } } } }
+  - description: >-
+      A rule hook declares the result its `then` returns; otherwise every
+      true `when` would be an undeclared result and a failure (HOOK-020).
+    if:
+      required: [source]
+      properties: { source: { required: [kind, then], properties: { kind: { const: rule }, then: { required: [result], properties: { result: { const: annotate } } } } } }
+    then:
+      properties: { results: { contains: { const: annotate } } }
+  - if:
+      required: [source]
+      properties: { source: { required: [kind, then], properties: { kind: { const: rule }, then: { required: [result], properties: { result: { const: block } } } } } }
+    then:
+      properties: { results: { contains: { const: block } } }
+  - if:
+      required: [source]
+      properties: { source: { required: [kind, then], properties: { kind: { const: rule }, then: { required: [result], properties: { result: { const: escalate } } } } } }
+    then:
+      properties: { results: { contains: { const: escalate } } }
+  - description: >-
+      A model hook that declares `block` or `escalate` **MUST** be
+      `failClosed` (HOOK-101). Its default is `failClosed` (it is a
+      guardrail, HOOK-002), so only an explicit `failOpen` is rejected.
+    if:
+      required: [source, results]
+      properties:
+        source: { required: [kind], properties: { kind: { const: model } } }
+        results: { contains: { enum: [block, escalate] } }
+    then:
+      properties: { failureMode: { const: failClosed } }
+unevaluatedProperties: false
+required: [points, results, timeoutMs, source]
+properties:
+  kind: { const: Hook }
+  points:
+    description: Where the hook runs (Area 5 §4). Evaluated separately at each (HOOK-004). The set is closed (HOOK-010).
+    type: array
+    minItems: 1
+    uniqueItems: true
+    items: { $ref: "#/$defs/point" }
+  results:
+    description: >-
+      Results the hook may return (Area 5 §5). `continue` is always implied.
+      Returning a result not listed is a failure (HOOK-020).
+    type: array
+    minItems: 1
+    uniqueItems: true
+    items: { $ref: "https://alphega.io/agentry/schemas/core/hook/v1.json#/$defs/resultType" }
+  purpose:
+    description: Governance or observation (HOOK-001). Default `guardrail`.
+    enum: [guardrail, telemetry]
+    default: guardrail
+  failureMode:
+    description: >-
+      What an error, timeout, or undeclared or malformed result means
+      (HOOK-050, HOOK-051). Default `failClosed` for a guardrail and
+      `failOpen` for a telemetry hook. `failClosed` takes effect only for a
+      hook that declares `block` or `escalate` (HOOK-053); at `onError` and
+      `sessionEnd` a failure is always `continue` (HOOK-052).
+    enum: [failClosed, failOpen]
+  timeoutMs:
+    description: Per-invocation limit in milliseconds (HOOK-001). Exceeding it is a failure (HOOK-050).
+    type: integer
+    minimum: 1
+  match:
+    description: >-
+      CEL condition (agentry subset, HOOK-110) under which the hook runs,
+      over the variables of each of its points (Area 5 §9.1). Absent:
+      always. Evaluated per invocation; false means the hook does not run and
+      records nothing (HOOK-031).
+    $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/celExpression"
+  source: { $ref: "#/$defs/source" }
+
+$defs:
+  point:
+    description: A hook point (Area 5 §4). Closed (HOOK-010).
+    enum: [sessionStart, beforeModelCall, afterModelCall, beforeToolCall, afterToolCall, beforeResponse, onError, sessionEnd]
+
+  source:
+    description: How the hook is evaluated (Area 5 §8). Implementations support all four kinds (HOOK-081).
+    type: object
+    required: [kind]
+    properties:
+      kind: { enum: [rule, native, remote, model] }
+    allOf:
+      - if: { properties: { kind: { const: rule } } }
+        then: { $ref: "#/$defs/ruleSource" }
+      - if: { properties: { kind: { const: native } } }
+        then: { $ref: "#/$defs/nativeSource" }
+      - if: { properties: { kind: { const: remote } } }
+        then: { $ref: "#/$defs/remoteSource" }
+      - if: { properties: { kind: { const: model } } }
+        then: { $ref: "#/$defs/modelSource" }
+
+  ruleSource:
+    description: >-
+      A declarative rule (HOOK-090). `when` false → `continue`; true → the
+      `then` result. An `annotate` adds its labels to every part the point
+      sees.
+    type: object
+    additionalProperties: false
+    required: [kind, when, then]
+    properties:
+      kind: { const: rule }
+      when:
+        description: CEL expression returning a boolean (HOOK-090, HOOK-110–113).
+        $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/celExpression"
+      then:
+        type: object
+        required: [result]
+        properties:
+          result: { enum: [annotate, block, escalate] }
+        allOf:
+          - if: { properties: { result: { const: annotate } } }
+            then:
+              additionalProperties: false
+              required: [labels]
+              properties:
+                result: true
+                labels:
+                  $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/labels"
+                  minItems: 1
+          - if: { properties: { result: { enum: [block, escalate] } } }
+            then:
+              additionalProperties: false
+              required: [reasonCode]
+              properties:
+                result: true
+                reasonCode: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/errorCode" }
+
+  nativeSource:
+    description: A handler registered in the implementation's language (Area 5 §8).
+    type: object
+    additionalProperties: false
+    required: [kind, handler]
+    properties:
+      kind: { const: native }
+      handler:
+        description: Registered handler name; unregistered is a configuration error (HOOK-080).
+        type: string
+        pattern: "^[A-Za-z0-9_.-]{1,128}$"
+      credentials:
+        description: Credentials the handler needs, as secret references only (CFG-060, CFG-061).
+        type: object
+        propertyNames: { pattern: "^[A-Za-z][A-Za-z0-9_.-]{0,63}$" }
+        additionalProperties:
+          x-agentry-secret: true
+          $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/secretRef"
+
+  remoteSource:
+    description: >-
+      An external service (HOOK-091). It receives a `HookRequest` and returns
+      a `HookResult` (schemas/core/v1/hook.yaml). Credentials, protocol and
+      region are those of the deployment's remote hook endpoint (HOOK-092).
+    type: object
+    additionalProperties: false
+    required: [kind, endpoint]
+    properties:
+      kind: { const: remote }
+      endpoint:
+        description: A remote hook ID from the deployment's `remoteHooks` (HOOK-092).
+        type: string
+        pattern: "^[A-Za-z0-9_.-]{1,128}$"
+
+  modelSource:
+    description: >-
+      A model acting as a classifier (HOOK-100–103). It runs with no tools,
+      its calls pass through no hooks and emit no model events, and its
+      output is parsed as a `HookResult` (HOOK-101, HOOK-102).
+    type: object
+    additionalProperties: false
+    required: [kind, model, instructions, maxTokens]
+    properties:
+      kind: { const: model }
+      model:
+        description: Provider and model; the provider must be allowed (HOOK-100, CFG-070, CFG-080).
+        $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/modelSelection"
+      instructions:
+        description: The classifier's instructions.
+        type: string
+        minLength: 1
+      maxTokens:
+        description: The hook's own token limit per invocation; not counted against the turn budget (HOOK-103).
+        type: integer
+        minimum: 1

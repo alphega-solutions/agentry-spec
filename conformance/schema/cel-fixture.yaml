@@ -16,7 +16,13 @@ properties:
     description: Hook point whose variables are in scope (HOOK §9.1).
     enum: [sessionStart, beforeModelCall, afterModelCall, beforeToolCall, afterToolCall, beforeResponse, onError, sessionEnd]
   expression: { type: string, minLength: 1 }
-  variables: { type: object }
+  variables:
+    description: >-
+      Values of the point's variables (Area 5 §9.1), in the shape a
+      `HookRequest` carries them. Variables not given are absent at the
+      point. Only `principal`, `session`, `content`, `tool`, `call`, `result`
+      and `error` are CEL variables; `summary` is not.
+    $ref: "https://alphega.io/agentry/schemas/core/hook/v1.json#/$defs/variables"
   expect:
     type: object
     additionalProperties: false

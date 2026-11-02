@@ -19,8 +19,10 @@ schemas/<area>/v<major>/<name>.yaml
 | `config/v1/policy-bundle.yaml`, `persona.yaml`, `harness-profile.yaml` | Behavioural kinds (CFG-070, 080, 090, as amended) |
 | `config/v1/deployment.yaml` | Deployment (CFG-110, as amended); no merge annotations |
 | `config/v1/tool.yaml` | Tool (TOOL-001–004, bindings per Area 4 §4 as amended by Area 7); not a behavioural layer, so no merge annotations |
+| `config/v1/hook.yaml` | Hook (HOOK-001–004, sources per Area 5 §8); not a behavioural layer, so no merge annotations |
+| `core/v1/hook.yaml` | `HookRequest`, `HookResult`, and the per-point view of the session that hooks and CEL rules see (Area 5 §5, §8, §9.1) |
 
-The `Hook` artifact schema arrives with Area 5 (until then, fixtures use the interim names in `conformance/shared/NAMES.md`); Areas 6–11 add theirs in later Phase 4 pull requests.
+Areas 6–11 add theirs in later Phase 4 pull requests.
 
 ## Conventions
 
@@ -28,7 +30,7 @@ The `Hook` artifact schema arrives with Area 5 (until then, fixtures use the int
 - **Unions** use a constant `type` field with `if`/`then` per variant, so validators report the specific variant that failed.
 - **Closed objects**: core objects use `additionalProperties: false` (or `unevaluatedProperties: false` with composition). Vendor or adapter data goes only in `extensions`.
 - **Versioning**: every top-level document carries `schemaVersion`. The schema path's major version changes only with a major contract release (ADR-0002).
-- **Merge annotations**: configuration schemas (Areas 2–3) annotate each field with `x-agentry-merge`, each `stricter` field with `x-agentry-order` (strictest first), and secret fields with `x-agentry-secret: true` (CFG-030, CFG-031, CFG-061). `tools/validate.py` checks this, that `override` appears only on the allowlisted display and generation-parameter fields (CFG-033), and that the non-layered kinds (`Deployment`, `Tool`) carry no merge annotations.
+- **Merge annotations**: configuration schemas (Areas 2–3) annotate each field with `x-agentry-merge`, each `stricter` field with `x-agentry-order` (strictest first), and secret fields with `x-agentry-secret: true` (CFG-030, CFG-031, CFG-061). `tools/validate.py` checks this, that `override` appears only on the allowlisted display and generation-parameter fields (CFG-033), and that the non-layered kinds (`Deployment`, `Tool`, `Hook`) carry no merge annotations in their own documents.
 
 ## Validating
 
