@@ -1,0 +1,155 @@
+schemaVersion: "0.1.0"
+id: orchestration.child-first-message-arguments
+title: A child's first message is one structured part holding the call's arguments, with the parent's least-trusted provenance and label union, and no parent history
+description: >-
+  The parent `coordinator` reads lookup (untrusted, sensitivity [pii]) in
+  step 1 and chart (untrusted, [phi]) in step 2, then calls ask_helper in
+  step 3 with arguments {task, key}. At the call, the parent's context
+  holds system content, the principal's text, model output, tool:lookup
+  and tool:chart, in that order of entry. Both tool provenances rank
+  lowest (untrusted, Area 7 trust order); the tie goes to the one that
+  entered first, tool:lookup. The label union is pii and phi.
+
+
+  The child's request to its model is asserted exactly: one `system`
+  message (bundle policy, then the helper's instructions) and one
+  `principal` message holding exactly one `structured` part whose `value`
+  is the validated arguments, with provenance tool:lookup — not
+  `principal` (ORCH-011, amending CORE-120) — and labels exactly pii and
+  phi (ORCH-010 as amended 2026-11-02). Nothing of the parent's history —
+  its principal text, model output or tool results — is sent.
+
+
+  Control: the parent's own first request carries the principal's text
+  with provenance `principal`.
+requirements: [ORCH-010, ORCH-011]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: lookup
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Look up a record by key.
+        input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }
+        effect: read
+        sensitivity: [pii]
+        binding: { kind: native, handler: test.lookup }
+      - kind: Tool
+        id: chart
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Read a chart entry.
+        input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }
+        effect: read
+        sensitivity: [phi]
+        binding: { kind: native, handler: test.chart }
+      - kind: Persona
+        id: helper
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You summarise records."
+        tools: [lookup@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: ask_helper
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the helper persona to summarise a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [task, key]
+          properties: { task: { type: string }, key: { type: string } }
+        effect: read
+        binding: { kind: agent, persona: helper@1 }
+      - kind: Persona
+        id: coordinator
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You coordinate helpers."
+        tools: [lookup@1, chart@1, ask_helper@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # parent, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: a } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # parent, step 2
+        - parts: [{ type: tool_call, callId: c2, tool: chart, arguments: { key: a } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # parent, step 3
+        - parts: [{ type: tool_call, callId: c3, tool: ask_helper, arguments: { task: "Summarise", key: a } }]
+          usage: { inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # child, step 1
+        - parts: [{ type: text, text: "Synthetic summary of a." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # parent, step 4
+        - parts: [{ type: text, text: "Done." }]
+          usage: { inputTokens: 50, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "SYN-LOOKUP-0001" } }
+      chart:
+        - ok: { output: { entry: "SYN-CHART-0001" } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: coordinator@1
+    input: [{ type: text, text: "SYN-PARENT-REQUEST summarise record a" }]
+    capture:
+      - event: { type: tool.call, payload: { callId: c3, tool: ask_helper } }
+        bind: { payload.childSessionId: $child }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $child:
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, payload: { persona: helper@1, parent: { sessionId: $s, callId: c3 } } }
+          - { type: run.ended, payload: { reason: responded } }
+  stubCalls:
+    lookup: { count: 1 }
+    chart: { count: 1 }
+  providerRequests:
+    scripted-a:
+      # parent, step 1
+      - messages:
+          $contains:
+            - role: principal
+              parts: [{ type: text, text: "SYN-PARENT-REQUEST summarise record a", provenance: principal }]
+      # parent, step 2
+      - {}
+      # parent, step 3
+      - {}
+      # child, step 1: the whole context
+      - messages:
+          - role: system
+            parts:
+              - { type: text, text: "Follow organisational policy.", provenance: system }
+              - { type: text, text: "You summarise records.", provenance: system }
+          - role: principal
+            parts:
+              - type: structured
+                value: { task: "Summarise", key: a }
+                provenance: "tool:lookup"
+                labels: { $all: [{ $len: 2 }, { $contains: [pii, phi] }] }
+      # parent, step 4
+      - {}

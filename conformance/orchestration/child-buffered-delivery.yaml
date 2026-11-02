@@ -1,0 +1,141 @@
+schemaVersion: "0.1.0"
+id: orchestration.child-buffered-delivery
+title: A child is always buffered, even when its default profile is streamed
+description: >-
+  helper@1's default (and only allowed) profile is streamed@1; the parent
+  `coordinator` also runs under streamed@1. The child's delivery is
+  nevertheless `buffered` (ORCH-016), which is observable two ways:
+
+
+  - Failure handling. The child's first model call is scripted to emit a
+    delta and then fail `unavailable` (retryable). In streamed delivery a
+    call that has emitted deltas is never retried and its failure is
+    `fatal` (PROV-064); buffered, nothing was delivered, so the call is
+    retried (streamed@1 has `retry.unavailable: 2`) and the child responds
+    with the retry's text, which the parent receives as ask_helper's `ok`
+    output.
+  - Delivery. The host receives exactly the parent's own deltas, never the
+    child's.
+
+
+  Control: a root session of helper@1 under the same streamed@1 profile,
+  given the same failing response, emits the delta to the host, is not
+  retried, and its run ends `failed`.
+requirements: [ORCH-016]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Persona
+        id: helper
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You look things up."
+        tools: [lookup@1]
+        defaultProfile: streamed@1
+        allowedProfiles: [streamed@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: ask_helper
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the helper persona to look something up.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: read
+        binding: { kind: agent, persona: helper@1 }
+      - kind: Persona
+        id: coordinator
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You coordinate helpers."
+        tools: [ask_helper@1]
+        defaultProfile: streamed@1
+        allowedProfiles: [streamed@1]
+        model: { provider: scripted-a, name: model-a }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { streaming: true }
+      responses:
+        # parent, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_helper, arguments: { task: "Find record a" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # child, step 1, first attempt: fails (after a delta, were it streamed)
+        - deltas: ["SYN-CHILD-PARTIAL "]
+          failAfterDeltas: true
+          error: { category: unavailable, code: test.provider.down, retryable: true }
+        # child, step 1, retry
+        - deltas: ["SYN-CHILD-ANSWER ", "holds A."]
+          parts: [{ type: text, text: "SYN-CHILD-ANSWER holds A." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # parent, step 2
+        - deltas: ["Parent ", "done."]
+          parts: [{ type: text, text: "Parent done." }]
+          usage: { inputTokens: 40, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # control root helper session: fails after a streamed delta
+        - deltas: ["SYN-ROOT-PARTIAL "]
+          failAfterDeltas: true
+          error: { category: unavailable, code: test.provider.down, retryable: true }
+  stubs:
+    tools:
+      lookup: []
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: coordinator@1
+    input: [{ type: text, text: "Ask the helper to find record a" }]
+    capture:
+      - event: { type: tool.call, payload: { callId: c1, tool: ask_helper } }
+        bind: { payload.childSessionId: $child }
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $ctl
+    tenant: t1
+    principal: p1
+    persona: helper@1
+    input: [{ type: text, text: "Find record a" }]
+    expect: { ok: true, endReason: failed }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: c1, tool: ask_helper, result: { ok: { output: { text: "SYN-CHILD-ANSWER holds A." } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+    $child:
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, payload: { persona: helper@1, profile: streamed@1, parent: { sessionId: $s, callId: c1 } } }
+          - { type: model.response, payload: { message: { parts: [{ type: text, text: "SYN-CHILD-ANSWER holds A." }] } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: run.ended, payload: { reason: failed } }
+    $ctl:
+      state: closed
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, payload: { persona: helper@1, profile: streamed@1 } }
+          - { type: run.ended, payload: { reason: failed } }
+  delivered:
+    $s:
+      text: "Parent done."
+      deltas:
+        - { type: model.delta, sessionId: $s, payload: { text: "Parent " } }
+        - { type: model.delta, sessionId: $s, payload: { text: "done." } }
+    $ctl:
+      deltas:
+        - { type: model.delta, sessionId: $ctl, payload: { text: "SYN-ROOT-PARTIAL " } }
+  providerRequests:
+    scripted-a: { count: 5 }

@@ -1,0 +1,137 @@
+schemaVersion: "0.1.0"
+id: orchestration.child-new-per-call
+title: Each dispatched agent call creates a new child session with its own UUIDv7 ID
+description: >-
+  The parent persona `coordinator` calls the agent tool ask_helper (bound to
+  persona helper@1) twice, in two steps, with identical arguments. Each
+  call creates its own child: the two `tool.call` events carry distinct
+  `childSessionId`s, both UUIDv7, and each child session has exactly one
+  `session.created` linking it to its own call (c1, c2). The second call
+  does not reuse the first child, even though the first has finished and
+  the arguments are the same. Each child is closed after returning; the
+  parent run responds.
+requirements: [ORCH-001]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Persona
+        id: helper
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You look things up."
+        tools: [lookup@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: ask_helper
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the helper persona to look something up.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: read
+        binding: { kind: agent, persona: helper@1 }
+      - kind: Persona
+        id: coordinator
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You coordinate helpers."
+        tools: [ask_helper@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # parent, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_helper, arguments: { task: "Find record a" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # child 1, step 1
+        - parts: [{ type: text, text: "Record a holds A." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # parent, step 2
+        - parts: [{ type: tool_call, callId: c2, tool: ask_helper, arguments: { task: "Find record a" } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # child 2, step 1
+        - parts: [{ type: text, text: "Record a holds A." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # parent, step 3
+        - parts: [{ type: text, text: "Both helpers say record a holds A." }]
+          usage: { inputTokens: 40, outputTokens: 8, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup: []
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: coordinator@1
+    input: [{ type: text, text: "Ask the helper twice to find record a" }]
+    capture:
+      - event: { type: tool.call, payload: { callId: c1, tool: ask_helper } }
+        bind: { payload.childSessionId: $child1 }
+      - event: { type: tool.call, payload: { callId: c2, tool: ask_helper } }
+        bind: { payload.childSessionId: $child2 }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: tool.call
+            step: 1
+            payload:
+              callId: c1
+              tool: ask_helper
+              childSessionId: { $all: [$child1, { $regex: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" }] }
+          - { type: tool.result, step: 1, payload: { callId: c1, tool: ask_helper, result: { ok: { $any: true } } } }
+          - type: tool.call
+            step: 2
+            payload:
+              callId: c2
+              tool: ask_helper
+              childSessionId: { $all: [$child2, { $not: $child1 }, { $not: $s }, { $regex: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" }] }
+          - { type: tool.result, step: 2, payload: { callId: c2, tool: ask_helper, result: { ok: { $any: true } } } }
+          - { type: run.ended, payload: { reason: responded } }
+    $child1:
+      state: closed
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, sessionId: $child1, payload: { persona: helper@1, parent: { sessionId: $s, callId: c1, tool: ask_helper } } }
+          - { type: run.ended, payload: { reason: responded } }
+    $child2:
+      state: closed
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, sessionId: $child2, payload: { persona: helper@1, parent: { sessionId: $s, callId: c2, tool: ask_helper } } }
+          - { type: run.ended, payload: { reason: responded } }
+  ports:
+    eventLog:
+      t1:
+        $child1:
+          $all:
+            - { $count: { of: { type: session.created }, equals: 1 } }
+            - { $count: { of: { type: run.started }, equals: 1 } }
+            - { $every: { sessionId: $child1 } }
+        $child2:
+          $all:
+            - { $count: { of: { type: session.created }, equals: 1 } }
+            - { $count: { of: { type: run.started }, equals: 1 } }
+            - { $every: { sessionId: $child2 } }
+  stubCalls:
+    lookup: { count: 0 }
+  providerRequests:
+    scripted-a: { count: 5 }

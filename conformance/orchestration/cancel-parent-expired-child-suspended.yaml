@@ -1,0 +1,217 @@
+schemaVersion: "0.1.0"
+id: orchestration.cancel-parent-expired-child-suspended
+title: When a root expires while its child is suspended, the child is cancelled and closed `cancelled` before the root closes `expired`
+description: >-
+  Root and child both use profile rej@1 (idleTtl PT24H, suspendedTtl
+  PT72H, onExpiry reject), so the chain's earliest expiry is
+  2026-01-04T00:00:00Z and its strictest onExpiry is `reject` (ORCH-065).
+  The child's update_record is `approval: always`: the child escalates and
+  the root suspends with the mirrored action (ORCH-060).
+
+
+  At the expiry the undecided action receives an expiry rejection and the
+  chain stays `suspended`, now fully decided (HITL-082); the reviewer view
+  on the root is still served one second before the further idleTtl.
+  No resume() arrives, so at exactly 2026-01-05T00:00:00Z (expiry +
+  idleTtl, measured from the suspendedTtl expiry) the root expires and
+  closes `expired`.
+
+
+  Reading: this is the "parent ... expires for any reason" case of
+  ORCH-070, not ORCH-066 (which covers expiry of the chain's escalation
+  with `close`): the root's own expiry closes it `expired`, and its child,
+  which never closes independently of its parent except by returning
+  (ORCH-070), is first cancelled and closed `cancelled`. All TTLs are equal
+  so no level could expire on its own schedule first. The order — child,
+  then root — is observed through a telemetry `sessionEnd` hook, on-end,
+  required by the policy bundle and so run by both sessions (ORCH-015),
+  whose native stub records invocations in call order; both closes are
+  stamped with the root's expiry time (expiry processing is timestamped
+  with the expiry time, Area 6 amendment 2026-11-01). A resume() at that
+  time fails with `conflict` (closed). No `tool.result` is appended in
+  either session and update_record is never dispatched.
+requirements: [ORCH-070]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Hook
+        id: on-end
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [sessionEnd]
+        results: [annotate]
+        purpose: telemetry
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.on_end }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        requiredHooks: [on-end@1]
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.update_record }
+      - kind: HarnessProfile
+        id: rej
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        onExpiry: reject
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+      - kind: Persona
+        id: helper
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You update records."
+        tools: [update_record@1]
+        defaultProfile: rej@1
+        allowedProfiles: [rej@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: ask_helper
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the helper persona to update a record.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: mutating
+        binding: { kind: agent, persona: helper@1 }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, ask_helper@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1, rej@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        # root, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_helper, arguments: { task: "Set k1 to v1" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # child, step 1: escalates (approval always)
+        - parts: [{ type: tool_call, callId: h1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record: []
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    profile: rej@1
+    input: [{ type: text, text: "Ask the helper to set k1 to v1" }]
+    capture:
+      - event: { type: tool.call, payload: { tool: ask_helper } }
+        bind: { payload.childSessionId: $child }
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $esc, payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  # The chain's escalation expires: rejected, still suspended.
+  - clock: { set: "2026-01-04T00:00:00Z" }
+  - action: getReviewerView
+    session: $s
+    tenant: t1
+    reviewer: r1
+    expect:
+      ok: true
+      view:
+        escalation: { id: $esc }
+        actions: [{ pendingActionId: $act, decided: true, decisions: [{ type: reject, decidedBy: expiry }] }]
+  # One second before expiry + idleTtl: still suspended.
+  - clock: { set: "2026-01-04T23:59:59Z" }
+  - action: getReviewerView
+    session: $s
+    tenant: t1
+    reviewer: r1
+    expect: { ok: true, view: { escalation: { id: $esc } } }
+  # Exactly expiry + idleTtl: the root expires.
+  - clock: { set: "2026-01-05T00:00:00Z" }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions: []
+    expect: { ok: false, error: { category: conflict } }
+expect:
+  sessions:
+    $s:
+      state: closed
+      closeReason: expired
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: ask_helper, childSessionId: $child } }
+          - { type: run.ended, payload: { reason: escalated } }
+          - { type: session.closed, runId: { $absent: true }, timestamp: { $regex: "^2026-01-05T00:00:00" }, payload: { reason: expired } }
+      absentEvents:
+        - { type: tool.result }
+        - { type: escalation.resolved }
+        - { type: run.started, payload: { kind: resume } }
+    $child:
+      state: closed
+      closeReason: cancelled
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, payload: { parent: { sessionId: $s, callId: c1, depth: 1 } } }
+          - { type: run.ended, payload: { reason: escalated } }
+          - { type: session.closed, runId: { $absent: true }, timestamp: { $regex: "^2026-01-05T00:00:00" }, payload: { reason: cancelled } }
+      absentEvents:
+        - { type: tool.call }
+        - { type: tool.result }
+        - { type: escalation.resolved }
+        - { type: session.closed, payload: { reason: expired } }
+  stubCalls:
+    on-end:
+      - { arguments: { point: sessionEnd, sessionId: $child, summary: { closeReason: cancelled } } }
+      - { arguments: { point: sessionEnd, sessionId: $s, summary: { closeReason: expired } } }
+    update_record: { count: 0 }
+  providerRequests:
+    scripted-a: { count: 2 }

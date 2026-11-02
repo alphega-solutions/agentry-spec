@@ -1,0 +1,343 @@
+schemaVersion: "0.1.0"
+id: orchestration.expire-earliest-ttl-strictest-onexpiry
+title: A delegation chain's escalation expires at the earliest suspendedTtl in the chain and applies the strictest onExpiry (close over reject), on every level's record
+description: >-
+  Two chains, each a root calling one agent tool whose child escalates
+  (update_record is `approval: always`), so the root suspends with a
+  mirrored action (ORCH-060). The root's profile is chosen by the run
+  request; the child's is its persona's defaultProfile (ORCH-005).
+
+
+  Chain A (created 2026-01-01T00:00:00Z): root profile root-reject-72
+  (suspendedTtl PT72H, onExpiry reject); child helper-a, profile
+  child-close-24 (PT24H, close). The earliest expiry is the child's, and
+  the strictest onExpiry is the child's `close`. Chain B (created one
+  second later): root profile root-reject-24 (PT24H, reject); child
+  helper-b, profile child-close-72 (PT72H, close). Here the earliest
+  expiry is the ROOT's while the strictest onExpiry is the CHILD's, so an
+  implementation that takes onExpiry from the session whose TTL is
+  earliest (rather than the strictest in the chain) rejects instead of
+  closing.
+
+
+  Every level's escalation record carries `expiresAt` equal to the chain's
+  earliest expiry (Area 8 amendment 2026-11-02): A at 2026-01-02T00:00:00
+  on both levels (not the root's 2026-01-04), B at 2026-01-02T00:00:01 on
+  both levels (not the child's 2026-01-04T00:00:01). One second before A's
+  expiry, both roots are listed as pending. At exactly A's expiry (a TTL
+  has elapsed when the current time equals it): only B's root is listed;
+  resume() on A's root fails with `conflict` because the session is closed
+  (CORE-022) — had the root's `reject` applied, A would be suspended and
+  fully decided and the resume accepted; resume() on B fails with
+  `conflict` `agentry.hitl.pending`, B being still suspended and undecided.
+  One second later B has expired too and resume() on it fails with
+  `conflict`. All four sessions close `expired` with `session.closed`
+  stamped at their chain's expiry; no expiry rejection is recorded, no
+  escalation is resolved, and neither update_record is dispatched.
+requirements: [ORCH-065]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.update_record }
+      - kind: HarnessProfile
+        id: root-reject-72
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        onExpiry: reject
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+      - kind: HarnessProfile
+        id: root-reject-24
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT24H
+        onExpiry: reject
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+      - kind: HarnessProfile
+        id: child-close-24
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT24H
+        onExpiry: close
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+      - kind: HarnessProfile
+        id: child-close-72
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        onExpiry: close
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+      - kind: Persona
+        id: helper-a
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You update records."
+        tools: [update_record@1]
+        defaultProfile: child-close-24@1
+        allowedProfiles: [child-close-24@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Persona
+        id: helper-b
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You update records."
+        tools: [update_record@1]
+        defaultProfile: child-close-72@1
+        allowedProfiles: [child-close-72@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: ask_a
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask helper A to update a record.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: mutating
+        binding: { kind: agent, persona: helper-a@1 }
+      - kind: Tool
+        id: ask_b
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask helper B to update a record.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: mutating
+        binding: { kind: agent, persona: helper-b@1 }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, ask_a@1, ask_b@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1, root-reject-72@1, root-reject-24@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        # chain A root, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_a, arguments: { task: "Set k1 to v1" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # chain A child (helper-a), step 1: escalates (approval always)
+        - parts: [{ type: tool_call, callId: h1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # chain B root, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_b, arguments: { task: "Set k2 to v2" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # chain B child (helper-b), step 1: escalates (approval always)
+        - parts: [{ type: tool_call, callId: h1, tool: update_record, arguments: { key: k2, value: v2 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record: []
+script:
+  - action: run
+    bind: $a
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    profile: root-reject-72@1
+    input: [{ type: text, text: "Ask helper A to set k1 to v1" }]
+    capture:
+      - event: { type: tool.call, payload: { tool: ask_a } }
+        bind: { payload.childSessionId: $ca }
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $escA, payload.escalation.pendingActions.0.id: $actA }
+    expect: { ok: true, endReason: escalated }
+  - clock: { advance: PT1S }
+  - action: run
+    bind: $b
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    profile: root-reject-24@1
+    input: [{ type: text, text: "Ask helper B to set k2 to v2" }]
+    capture:
+      - event: { type: tool.call, payload: { tool: ask_b } }
+        bind: { payload.childSessionId: $cb }
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $escB, payload.escalation.pendingActions.0.id: $actB }
+    expect: { ok: true, endReason: escalated }
+  # One second before chain A's earliest expiry: both roots pending.
+  - clock: { set: "2026-01-01T23:59:59Z" }
+  - action: listPendingEscalations
+    tenant: t1
+    expect:
+      ok: true
+      escalations:
+        - { id: $escA, sessionId: $a, expiresAt: { $regex: "^2026-01-02T00:00:00" } }
+        - { id: $escB, sessionId: $b, expiresAt: { $regex: "^2026-01-02T00:00:01" } }
+  # Exactly chain A's earliest expiry (the child's suspendedTtl).
+  - clock: { set: "2026-01-02T00:00:00Z" }
+  - action: listPendingEscalations
+    tenant: t1
+    expect:
+      ok: true
+      escalations:
+        - { id: $escB, sessionId: $b }
+  - action: resume
+    session: $a
+    reviewer: r1
+    decisions: []
+    expect: { ok: false, error: { category: conflict } }
+  - action: resume
+    session: $b
+    reviewer: r1
+    decisions: []
+    expect: { ok: false, error: { category: conflict, code: agentry.hitl.pending } }
+  # Exactly chain B's earliest expiry (the root's suspendedTtl).
+  - clock: { advance: PT1S }
+  - action: resume
+    session: $b
+    reviewer: r1
+    decisions: []
+    expect: { ok: false, error: { category: conflict } }
+expect:
+  sessions:
+    $a:
+      state: closed
+      closeReason: expired
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: ask_a, childSessionId: $ca } }
+          - type: escalation.raised
+            payload:
+              escalation:
+                id: $escA
+                sessionId: $a
+                createdAt: { $regex: "^2026-01-01T00:00:00" }
+                expiresAt: { $regex: "^2026-01-02T00:00:00" }
+                pendingActions: [{ id: $actA, delegated: true, chain: [$ca], tool: update_record }]
+          - { type: run.ended, payload: { reason: escalated } }
+          - { type: session.closed, runId: { $absent: true }, timestamp: { $regex: "^2026-01-02T00:00:00" }, payload: { reason: expired } }
+      absentEvents:
+        - { type: tool.result }
+        - { type: escalation.resolved }
+        - { type: run.started, payload: { kind: resume } }
+    $ca:
+      state: closed
+      closeReason: expired
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, payload: { persona: helper-a@1, profile: child-close-24@1, parent: { sessionId: $a, callId: c1, depth: 1 } } }
+          - type: escalation.raised
+            payload:
+              escalation:
+                sessionId: $ca
+                createdAt: { $regex: "^2026-01-01T00:00:00" }
+                expiresAt: { $regex: "^2026-01-02T00:00:00" }
+                pendingActions: [{ id: $actA, delegated: { $absent: true }, callId: h1, tool: update_record }]
+          - { type: run.ended, payload: { reason: escalated } }
+          - { type: session.closed, runId: { $absent: true }, timestamp: { $regex: "^2026-01-02T00:00:00" }, payload: { reason: expired } }
+      absentEvents:
+        - { type: tool.call }
+        - { type: tool.result }
+        - { type: escalation.resolved }
+    $b:
+      state: closed
+      closeReason: expired
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: ask_b, childSessionId: $cb } }
+          - type: escalation.raised
+            payload:
+              escalation:
+                id: $escB
+                createdAt: { $regex: "^2026-01-01T00:00:01" }
+                expiresAt: { $regex: "^2026-01-02T00:00:01" }
+                pendingActions: [{ id: $actB, delegated: true, chain: [$cb] }]
+          - { type: run.ended, payload: { reason: escalated } }
+          - { type: session.closed, runId: { $absent: true }, timestamp: { $regex: "^2026-01-02T00:00:01" }, payload: { reason: expired } }
+      absentEvents:
+        - { type: tool.result }
+        - { type: escalation.resolved }
+        - { type: run.started, payload: { kind: resume } }
+    $cb:
+      state: closed
+      closeReason: expired
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, payload: { persona: helper-b@1, profile: child-close-72@1, parent: { sessionId: $b, callId: c1, depth: 1 } } }
+          - type: escalation.raised
+            payload:
+              escalation:
+                sessionId: $cb
+                expiresAt: { $regex: "^2026-01-02T00:00:01" }
+                pendingActions: [{ id: $actB, delegated: { $absent: true }, callId: h1 }]
+          - { type: run.ended, payload: { reason: escalated } }
+          - { type: session.closed, runId: { $absent: true }, timestamp: { $regex: "^2026-01-02T00:00:01" }, payload: { reason: expired } }
+      absentEvents:
+        - { type: tool.call }
+        - { type: tool.result }
+        - { type: escalation.resolved }
+  ports:
+    auditLog:
+      t1:
+        $count: { of: { type: decision }, equals: 0 }
+  stubCalls:
+    update_record: { count: 0 }
+  providerRequests:
+    scripted-a: { count: 4 }

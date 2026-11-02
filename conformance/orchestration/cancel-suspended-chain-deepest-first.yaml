@@ -1,0 +1,269 @@
+schemaVersion: "0.1.0"
+id: orchestration.cancel-suspended-chain-deepest-first
+title: cancel() or close() on a root suspended by a descendant's escalation cancels and closes every descendant `cancelled` first, deepest first, then the root
+description: >-
+  Two three-level chains, each root (assistant) → mid (ask_mid) → leaf
+  (ask_leaf), where leaf's update_record is `approval: always`, so leaf
+  escalates and mid and the root suspend with the mirrored action
+  (ORCH-060). Child tools are the child allowlist intersected with the
+  parent's visible tools (ORCH-013), so the root's and mid's allowlists
+  include their descendants' tools.
+
+
+  Chain A's root is cancelled with cancel(); chain B's root is closed with
+  close(), which on a suspended session closes it `cancelled` (CORE-020).
+  In both, every descendant is closed `cancelled` before its parent:
+  leaf, then mid, then the root (ORCH-070). Cross-session order is observed
+  through a telemetry `sessionEnd` hook, on-end, required by the policy
+  bundle and so run by every session (ORCH-015); its native stub records
+  invocations in call order with the session ID and
+  `summary.closeReason`. The two chains are operated on one after the
+  other, so the six invocations are totally ordered.
+
+
+  No `tool.result` is appended in any session (the pending update_record
+  and the agent calls waiting on children; TOOL-034 exception as amended),
+  no escalation is resolved, update_record is never dispatched, and
+  afterwards no escalation is listed.
+requirements: [ORCH-070]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Hook
+        id: on-end
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [sessionEnd]
+        results: [annotate]
+        purpose: telemetry
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.on_end }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        requiredHooks: [on-end@1]
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.update_record }
+      - kind: Persona
+        id: leaf
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You update records."
+        tools: [update_record@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: ask_leaf
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the leaf persona to update a record.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: mutating
+        binding: { kind: agent, persona: leaf@1 }
+      - kind: Persona
+        id: mid
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You delegate record updates."
+        tools: [update_record@1, ask_leaf@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: ask_mid
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the mid persona to get a record updated.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: mutating
+        binding: { kind: agent, persona: mid@1 }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, ask_mid@1, ask_leaf@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+  providers:
+    scripted-a:
+      responses:
+        # chain A root, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_mid, arguments: { task: "Set k1 to v1" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # chain A mid, step 1
+        - parts: [{ type: tool_call, callId: m1, tool: ask_leaf, arguments: { task: "Set k1 to v1" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # chain A leaf, step 1: escalates
+        - parts: [{ type: tool_call, callId: l1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # chain B root, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_mid, arguments: { task: "Set k2 to v2" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # chain B mid, step 1
+        - parts: [{ type: tool_call, callId: m1, tool: ask_leaf, arguments: { task: "Set k2 to v2" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # chain B leaf, step 1: escalates
+        - parts: [{ type: tool_call, callId: l1, tool: update_record, arguments: { key: k2, value: v2 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record: []
+script:
+  - action: run
+    bind: $a
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Get k1 set to v1" }]
+    capture:
+      - event: { type: tool.call, payload: { tool: ask_mid } }
+        bind: { payload.childSessionId: $midA }
+    expect: { ok: true, endReason: escalated }
+  - action: run
+    bind: $b
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Get k2 set to v2" }]
+    capture:
+      - event: { type: tool.call, payload: { tool: ask_mid } }
+        bind: { payload.childSessionId: $midB }
+    expect: { ok: true, endReason: escalated }
+  - action: cancel
+    session: $a
+    expect: { ok: true }
+  - action: close
+    session: $b
+    expect: { ok: true }
+  - action: listPendingEscalations
+    tenant: t1
+    expect: { ok: true, escalations: [] }
+expect:
+  sessions:
+    $a:
+      state: closed
+      closeReason: cancelled
+      events:
+        mode: subsequence
+        items:
+          - { type: escalation.raised, payload: { escalation: { pendingActions: [{ delegated: true, chain: [$midA, $leafA] }] } } }
+          - { type: run.ended, payload: { reason: escalated } }
+          - { type: session.closed, runId: { $absent: true }, payload: { reason: cancelled } }
+      absentEvents:
+        - { type: tool.result }
+        - { type: escalation.resolved }
+    $midA:
+      state: closed
+      closeReason: cancelled
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, payload: { parent: { sessionId: $a, depth: 1 } } }
+          - { type: tool.call, payload: { callId: m1, tool: ask_leaf, childSessionId: $leafA } }
+          - { type: run.ended, payload: { reason: escalated } }
+          - { type: session.closed, payload: { reason: cancelled } }
+      absentEvents:
+        - { type: tool.result }
+        - { type: escalation.resolved }
+    $leafA:
+      state: closed
+      closeReason: cancelled
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, payload: { parent: { sessionId: $midA, depth: 2 } } }
+          - { type: run.ended, payload: { reason: escalated } }
+          - { type: session.closed, payload: { reason: cancelled } }
+      absentEvents:
+        - { type: tool.call }
+        - { type: tool.result }
+        - { type: escalation.resolved }
+    $b:
+      state: closed
+      closeReason: cancelled
+      events:
+        mode: subsequence
+        items:
+          - { type: escalation.raised, payload: { escalation: { pendingActions: [{ delegated: true, chain: [$midB, $leafB] }] } } }
+          - { type: run.ended, payload: { reason: escalated } }
+          - { type: session.closed, runId: { $absent: true }, payload: { reason: cancelled } }
+      absentEvents:
+        - { type: tool.result }
+        - { type: escalation.resolved }
+    $midB:
+      state: closed
+      closeReason: cancelled
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, payload: { parent: { sessionId: $b, depth: 1 } } }
+          - { type: tool.call, payload: { callId: m1, tool: ask_leaf, childSessionId: $leafB } }
+          - { type: run.ended, payload: { reason: escalated } }
+          - { type: session.closed, payload: { reason: cancelled } }
+      absentEvents:
+        - { type: tool.result }
+        - { type: escalation.resolved }
+    $leafB:
+      state: closed
+      closeReason: cancelled
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, payload: { parent: { sessionId: $midB, depth: 2 } } }
+          - { type: run.ended, payload: { reason: escalated } }
+          - { type: session.closed, payload: { reason: cancelled } }
+      absentEvents:
+        - { type: tool.call }
+        - { type: tool.result }
+        - { type: escalation.resolved }
+  stubCalls:
+    on-end:
+      - { arguments: { point: sessionEnd, sessionId: $leafA, summary: { closeReason: cancelled } } }
+      - { arguments: { point: sessionEnd, sessionId: $midA, summary: { closeReason: cancelled } } }
+      - { arguments: { point: sessionEnd, sessionId: $a, summary: { closeReason: cancelled } } }
+      - { arguments: { point: sessionEnd, sessionId: $leafB, summary: { closeReason: cancelled } } }
+      - { arguments: { point: sessionEnd, sessionId: $midB, summary: { closeReason: cancelled } } }
+      - { arguments: { point: sessionEnd, sessionId: $b, summary: { closeReason: cancelled } } }
+    update_record: { count: 0 }
+  providerRequests:
+    scripted-a: { count: 6 }

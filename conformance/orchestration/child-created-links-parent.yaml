@@ -1,0 +1,171 @@
+schemaVersion: "0.1.0"
+id: orchestration.child-created-links-parent
+title: A child's session.created links it to the parent call, its events form their own sequence, and the delegation is navigable both ways
+description: >-
+  Root `coordinator` calls ask_helper (c1) → child `helper`, which calls
+  ask_sub (d1) → grandchild `sub` (default maxDepth 2 allows depth 2).
+
+
+  - Parent → child: the parent records the delegation as ask_helper's
+    `tool.call` with `childSessionId` and its `tool.result`; the parent's
+    log holds only its own events (ORCH-080).
+  - Child → parent: the child's `session.created` records the parent
+    session ID, the parent run ID (the run of the `tool.call`), the call ID,
+    the tool ID and depth 1; the grandchild's records the child session,
+    the child's run, d1, ask_sub and depth 2 (ORCH-004).
+  - Each child's events are its own sequence: its log starts with
+    `session.created` at `seq` 1 and every event in it carries its own
+    session ID (ORCH-080, CORE-160).
+  - Trace context: each child's `session.created` carries a well-formed
+    W3C traceparent. That its trace-id equals the parent call's (a child
+    span) cannot be asserted: placeholders bind whole values, so a part of
+    one string cannot be compared with another (format gap, reported).
+requirements: [ORCH-004, ORCH-080, ORCH-081]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Persona
+        id: sub
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You look things up."
+        tools: [lookup@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: ask_sub
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the sub persona to look something up.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: read
+        binding: { kind: agent, persona: sub@1 }
+      - kind: Persona
+        id: helper
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You pass lookups on."
+        tools: [ask_sub@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: ask_helper
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the helper persona to look something up.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: read
+        binding: { kind: agent, persona: helper@1 }
+      - kind: Persona
+        id: coordinator
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You coordinate helpers."
+        tools: [ask_helper@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # parent, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_helper, arguments: { task: "Find record a" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # child, step 1
+        - parts: [{ type: tool_call, callId: d1, tool: ask_sub, arguments: { task: "Find record a" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # grandchild, step 1
+        - parts: [{ type: text, text: "Record a holds A." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # child, step 2
+        - parts: [{ type: text, text: "Sub says record a holds A." }]
+          usage: { inputTokens: 30, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+        # parent, step 2
+        - parts: [{ type: text, text: "Record a holds A." }]
+          usage: { inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup: []
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: coordinator@1
+    input: [{ type: text, text: "Find record a" }]
+    capture:
+      - event: { type: tool.call, payload: { callId: c1, tool: ask_helper } }
+        bind: { payload.childSessionId: $child, runId: $r }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, seq: 1, payload: { persona: coordinator@1, parent: { $absent: true } } }
+          - { type: tool.call, runId: $r, payload: { callId: c1, tool: ask_helper, childSessionId: $child } }
+          - { type: tool.result, runId: $r, payload: { callId: c1, tool: ask_helper, result: { ok: { $any: true } } } }
+          - { type: run.ended, runId: $r, payload: { reason: responded } }
+    $child:
+      events:
+        mode: subsequence
+        items:
+          - type: session.created
+            sessionId: $child
+            seq: 1
+            runId: { $absent: true }
+            traceContext: { traceparent: { $regex: "^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$" } }
+            payload:
+              persona: helper@1
+              parent: { sessionId: $s, runId: $r, callId: c1, tool: ask_helper, depth: 1 }
+          - { type: run.started, runId: $rc }
+          - { type: tool.call, runId: $rc, payload: { callId: d1, tool: ask_sub, childSessionId: { $all: [$gc, { $not: $child }, { $not: $s }] } } }
+          - { type: tool.result, runId: $rc, payload: { callId: d1, tool: ask_sub, result: { ok: { $any: true } } } }
+          - { type: run.ended, runId: $rc, payload: { reason: responded } }
+    $gc:
+      events:
+        mode: subsequence
+        items:
+          - type: session.created
+            sessionId: $gc
+            seq: 1
+            traceContext: { traceparent: { $regex: "^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$" } }
+            payload:
+              persona: sub@1
+              parent: { sessionId: $child, runId: { $all: [$rc, { $not: $r }] }, callId: d1, tool: ask_sub, depth: 2 }
+          - { type: run.started, runId: { $all: [{ $not: $rc }, { $not: $r }] } }
+          - { type: run.ended, payload: { reason: responded } }
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $all:
+            - { $every: { sessionId: $s } }
+            - { $count: { of: { type: session.created }, equals: 1 } }
+            - { $count: { of: { type: tool.call }, equals: 1 } }
+            - { $count: { of: { type: tool.result }, equals: 1 } }
+            - { $count: { of: { payload: { callId: d1 } }, equals: 0 } }
+        $child:
+          $all:
+            - { $every: { sessionId: $child } }
+            - { $count: { of: { type: session.created }, equals: 1 } }
+            - { $count: { of: { seq: 1 }, equals: 1 } }
+        $gc:
+          $all:
+            - { $every: { sessionId: $gc } }
+            - { $count: { of: { type: session.created }, equals: 1 } }
+            - { $count: { of: { seq: 1 }, equals: 1 } }
+  providerRequests:
+    scripted-a: { count: 5 }

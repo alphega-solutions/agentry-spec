@@ -1,0 +1,183 @@
+schemaVersion: "0.1.0"
+id: orchestration.escalate-decide-root-only
+title: Decisions on a chained escalation are accepted only against the root's escalation
+description: >-
+  The depth-2 chain of orchestration.escalate-chain-mirrored: the clerk
+  (depth 2) owns a `tool_call` action for file_record (`approval: always`),
+  mirrored on the manager (depth 1) and the root. The clerk's session ID is
+  captured from the manager's tool.call (`capture.session`).
+
+  decide() on the manager's session, decide() on the owner's (clerk's)
+  session, and resume() with a decision on the owner's session are each
+  refused with `conflict` (`agentry.delegation.child_session`) — whoever
+  the reviewer and although the action ID is valid in those sessions —
+  record nothing and emit no events (ORCH-063, ORCH-006 as amended
+  2026-11-02). listPendingEscalations returns only the root's escalation.
+  Control: the same reviewer's decision on the root's escalation is
+  accepted (no events, HITL-040) and is the only decision audited, with
+  the root's escalation ID. Nothing is dispatched and every session stays
+  `suspended`.
+requirements: [ORCH-063]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: file_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: File a record.
+        input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }
+        effect: mutating
+        approval: always
+        binding: { kind: native, handler: test.file_record }
+      - kind: Persona
+        id: clerk
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You file records."
+        tools: [file_record@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: ask_clerk
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the clerk to file a record.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: mutating
+        binding: { kind: agent, persona: clerk@1 }
+      - kind: Persona
+        id: manager
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You delegate filing to the clerk."
+        tools: [ask_clerk@1, file_record@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: ask_manager
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the manager to get a record filed.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: mutating
+        binding: { kind: agent, persona: manager@1 }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, ask_manager@1, ask_clerk@1, file_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model: { provider: scripted-a, name: model-a }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        # 1. root, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_manager, arguments: { task: "File record k1" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 2. manager (depth 1), step 1
+        - parts: [{ type: tool_call, callId: m1, tool: ask_clerk, arguments: { task: "File k1" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 3. clerk (depth 2), step 1 — escalates (approval: always)
+        - parts: [{ type: tool_call, callId: g1, tool: file_record, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      file_record: []
+      lookup: []
+      update_record: []
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Get record k1 filed" }]
+    capture:
+      - event: { type: tool.call, payload: { tool: ask_manager } }
+        bind: { payload.childSessionId: $mgr }
+      - session: $mgr
+        event: { type: tool.call, payload: { tool: ask_clerk } }
+        bind: { payload.childSessionId: $clerk }
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $escRoot, payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  # Decision on the manager's (mirrored) escalation: refused.
+  - action: decide
+    session: $mgr
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000c31", pendingActionId: $act, type: approve }
+    expect: { ok: false, error: { category: conflict, code: agentry.delegation.child_session }, newEvents: 0 }
+  # Decision on the owner's escalation: refused.
+  - action: decide
+    session: $clerk
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000c32", pendingActionId: $act, type: approve }
+    expect: { ok: false, error: { category: conflict, code: agentry.delegation.child_session }, newEvents: 0 }
+  - action: resume
+    session: $clerk
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000c33", pendingActionId: $act, type: approve }
+    expect: { ok: false, error: { category: conflict, code: agentry.delegation.child_session }, newEvents: 0 }
+  - action: listPendingEscalations
+    tenant: t1
+    expect:
+      ok: true
+      newEvents: 0
+      escalations:
+        - { id: $escRoot, sessionId: $s, pendingActions: [{ id: $act, delegated: true, chain: [$mgr, $clerk] }] }
+  # Control: the same decision against the root is accepted.
+  - action: decide
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000c34", pendingActionId: $act, type: approve }
+    expect: { ok: true, newEvents: 0 }
+expect:
+  sessions:
+    $s:
+      state: suspended
+    $mgr:
+      state: suspended
+      absentEvents:
+        - { type: escalation.resolved }
+        - { type: run.started, payload: { kind: resume } }
+    $clerk:
+      state: suspended
+      absentEvents:
+        - { type: escalation.resolved }
+        - { type: run.started, payload: { kind: resume } }
+        - { type: tool.call, payload: { callId: g1 } }
+  stubCalls:
+    file_record: { count: 0 }
+  providerRequests:
+    scripted-a: { count: 3 }
+  ports:
+    auditLog:
+      t1:
+        $all:
+          - $contains:
+              - type: decision
+                sessionId: $s
+                reviewer: { subject: reviewer-1, tenant: t1 }
+                details: { id: "01900000-0000-7000-8000-000000000c34", escalationId: $escRoot, pendingActionId: $act }
+          - $count: { of: { type: decision }, equals: 1 }

@@ -10,7 +10,7 @@ description: >-
   row for tool errors), and a delegation error never ends the parent run by
   itself (ORCH-051): the parent model receives the error and the parent run
   responds, leaving the parent session idle.
-requirements: [TOOL-053, ORCH-051]
+requirements: [TOOL-053, ORCH-050, ORCH-051]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:

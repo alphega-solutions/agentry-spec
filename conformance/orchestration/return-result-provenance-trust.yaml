@@ -1,0 +1,233 @@
+schemaVersion: "0.1.0"
+id: orchestration.return-result-provenance-trust
+title: A child's result carries `agent:<persona>`, the untrusted provenances the child saw in order, and the union of its labels; it is trusted only if the child was never tainted
+description: >-
+  The bundle trusts lookup (sensitivity [pii]); chart ([phi]) and notes
+  (no labels) are untrusted. The child persona `helper` is reached through
+  ask_helper.
+
+  - $sT: the child calls only lookup, so it is never tainted. The parent's
+    tool.result for ask_helper has `provenances` exactly ["agent:helper"]
+    (no untrusted provenance was seen) and labels exactly [pii]; the part
+    the parent model receives has provenance agent:helper and labels
+    [pii]. The result is trusted (ORCH-052 as amended 2026-11-02): the
+    parent stays untainted, its next update_record call raises no taint
+    `policy.decision` and is dispatched.
+  - $sU (control): the child calls lookup, then chart, then notes, so it is
+    tainted by chart. The parent's tool.result has `provenances` exactly
+    ["agent:helper", "tool:chart", "tool:notes"] — agent:helper followed by
+    the untrusted provenances in order of first entry, the trusted lookup
+    excluded — and labels pii and phi. The result taints the parent: its
+    update_record call is stopped by the taint rule (escalate) with
+    provenances agent:helper, tool:chart and tool:notes, and is not
+    dispatched.
+
+  ORCH-052's "binary content is returned as blob references" is not
+  verified here: the amended output mapping (structured value, or
+  `{ text }`) gives no place for a child's image or file parts.
+requirements: [ORCH-052]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        trustedTools: [lookup@1]
+        sensitivityPolicies:
+          pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+          phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+      - kind: Tool
+        id: lookup
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Look up a record by key.
+        input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }
+        effect: read
+        sensitivity: [pii]
+        binding: { kind: native, handler: test.lookup }
+      - kind: Tool
+        id: chart
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Read a chart entry.
+        input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }
+        effect: read
+        sensitivity: [phi]
+        binding: { kind: native, handler: test.chart }
+      - kind: Tool
+        id: notes
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Read notes on a record.
+        input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }
+        effect: read
+        binding: { kind: native, handler: test.notes }
+      - kind: Persona
+        id: helper
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You look things up."
+        tools: [lookup@1, chart@1, notes@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: ask_helper
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the helper persona to look something up.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: read
+        binding: { kind: agent, persona: helper@1 }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, chart@1, notes@1, ask_helper@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model: { provider: scripted-a, name: model-a }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # $sT 1. parent, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_helper, arguments: { task: "Read record a" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sT 2. child, step 1
+        - parts: [{ type: tool_call, callId: h1, tool: lookup, arguments: { key: a } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sT 3. child, step 2
+        - parts: [{ type: text, text: "Record a read." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sT 4. parent, step 2
+        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: a, value: "checked" } }]
+          usage: { inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sT 5. parent, step 3
+        - parts: [{ type: text, text: "Record a is checked." }]
+          usage: { inputTokens: 50, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sU 6. parent, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_helper, arguments: { task: "Read everything about a" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sU 7. child, step 1
+        - parts: [{ type: tool_call, callId: h1, tool: lookup, arguments: { key: a } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sU 8. child, step 2
+        - parts: [{ type: tool_call, callId: h2, tool: chart, arguments: { key: a } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sU 9. child, step 3
+        - parts: [{ type: tool_call, callId: h3, tool: notes, arguments: { key: a } }]
+          usage: { inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sU 10. child, step 4
+        - parts: [{ type: text, text: "Everything about a." }]
+          usage: { inputTokens: 50, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sU 11. parent, step 2 (stopped by the taint rule)
+        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: a, value: "checked" } }]
+          usage: { inputTokens: 60, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "synthetic-a" } }
+        - ok: { output: { value: "synthetic-a" } }
+      chart:
+        - ok: { output: { entry: "synthetic-entry" } }
+      notes:
+        - ok: { output: { note: "synthetic-note" } }
+      update_record:
+        - ok: { output: { updated: true } }
+script:
+  - action: run
+    bind: $sT
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Ask the helper to read record a, then mark it checked" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sU
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Ask the helper for everything about a, then mark it checked" }]
+    expect: { ok: true, endReason: escalated }
+expect:
+  sessions:
+    $sT:
+      state: idle
+      checkpoint: { taint: { tainted: false } }
+      events:
+        mode: subsequence
+        items:
+          - type: tool.result
+            provenances: ["agent:helper"]
+            labels: [pii]
+            payload: { callId: c1, tool: ask_helper, result: { ok: { $any: true } } }
+          - { type: tool.call, payload: { callId: c2, tool: update_record } }
+          - { type: tool.result, payload: { callId: c2, result: { ok: { output: { updated: true } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: policy.decision, payload: { kind: taint } }
+    $sU:
+      state: suspended
+      checkpoint:
+        taint:
+          tainted: true
+          provenances: { $all: [{ $contains: ["agent:helper", "tool:chart", "tool:notes"] }, { $len: 3 }] }
+      events:
+        mode: subsequence
+        items:
+          - type: tool.result
+            provenances: ["agent:helper", "tool:chart", "tool:notes"]
+            labels: { $all: [{ $contains: [pii, phi] }, { $len: 2 }] }
+            payload: { callId: c1, tool: ask_helper, result: { ok: { $any: true } } }
+          - type: policy.decision
+            payload:
+              kind: taint
+              outcome: escalate
+              callId: c2
+              provenances: { $all: [{ $contains: ["agent:helper", "tool:chart", "tool:notes"] }, { $len: 3 }] }
+          - { type: run.ended, payload: { reason: escalated } }
+      absentEvents:
+        - { type: tool.call, payload: { callId: c2 } }
+  stubCalls:
+    lookup: { count: 2 }
+    chart: { count: 1 }
+    notes: { count: 1 }
+    update_record: [{ arguments: { key: a, value: "checked" }, context: { sessionId: $sT } }]
+  providerRequests:
+    scripted-a:
+      - {}
+      - {}
+      - {}
+      - messages:
+          $contains:
+            - role: tool
+              parts:
+                - { type: tool_result, callId: c1, provenance: "agent:helper", labels: [pii] }
+      - {}
+      - {}
+      - {}
+      - {}
+      - {}
+      - {}
+      - messages:
+          $contains:
+            - role: tool
+              parts:
+                - type: tool_result
+                  callId: c1
+                  provenance: "agent:helper"
+                  labels: { $all: [{ $contains: [pii, phi] }, { $len: 2 }] }

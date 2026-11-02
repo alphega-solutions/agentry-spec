@@ -1,0 +1,243 @@
+schemaVersion: "0.1.0"
+id: orchestration.expire-chain-close-deepest-first
+title: On chain expiry with `close`, every session in the chain closes `expired`, deepest first, and no tool result is written to any of them
+description: >-
+  A three-level chain: the root (assistant) calls ask_mid (agent → mid@1),
+  mid calls ask_leaf (agent → leaf@1), and leaf calls update_record, which
+  is `approval: always`, so leaf escalates and mid and the root suspend with
+  the mirrored action (ORCH-060). Every session uses default@1
+  (suspendedTtl PT72H, onExpiry absent, so `close`). Child tools are the
+  child allowlist intersected with the parent's visible tools (ORCH-013),
+  so the root's and mid's allowlists include the tools their descendants
+  use.
+
+
+  Cross-session order is observed through a telemetry `sessionEnd` hook,
+  on-end, required by the policy bundle and therefore run by every session
+  in the chain (ORCH-015). Its native stub records one invocation per
+  session close, in call order, each `HookRequest` naming the session and
+  its `summary.closeReason` (HOOK-091 as amended). Timestamps cannot order
+  the closes: all are stamped with the expiry time.
+
+
+  One second before the expiry the root's escalation is listed. At exactly
+  2026-01-04T00:00:00Z (createdAt + PT72H; equal time counts as elapsed)
+  listPendingEscalations performs the due expiry processing and returns
+  nothing. Every session closes `expired`, leaf first, then mid, then the
+  root (the hook is invoked in that order); each `session.closed` is
+  stamped with the expiry time. No `tool.result` is appended in any
+  session — not for update_record in leaf, nor for the pending agent calls
+  m1 in mid and c1 in the root (ORCH-066; TOOL-034 exception as amended).
+  No expiry rejection is recorded, no escalation is resolved, and
+  update_record is never dispatched. A later resume() on the root fails
+  with `conflict` (closed).
+requirements: [ORCH-066]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Hook
+        id: on-end
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [sessionEnd]
+        results: [annotate]
+        purpose: telemetry
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.on_end }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        requiredHooks: [on-end@1]
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.update_record }
+      - kind: Persona
+        id: leaf
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You update records."
+        tools: [update_record@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: ask_leaf
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the leaf persona to update a record.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: mutating
+        binding: { kind: agent, persona: leaf@1 }
+      - kind: Persona
+        id: mid
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You delegate record updates."
+        tools: [update_record@1, ask_leaf@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: ask_mid
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the mid persona to get a record updated.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: mutating
+        binding: { kind: agent, persona: mid@1 }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, ask_mid@1, ask_leaf@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        # root, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_mid, arguments: { task: "Set k1 to v1" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # mid (depth 1), step 1
+        - parts: [{ type: tool_call, callId: m1, tool: ask_leaf, arguments: { task: "Set k1 to v1" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # leaf (depth 2), step 1: escalates (approval always)
+        - parts: [{ type: tool_call, callId: l1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record: []
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Get k1 set to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $esc, payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  - clock: { set: "2026-01-03T23:59:59Z" }
+  - action: listPendingEscalations
+    tenant: t1
+    expect:
+      ok: true
+      escalations: [{ id: $esc, sessionId: $s, expiresAt: { $regex: "^2026-01-04T00:00:00" } }]
+  # Exactly the chain's expiry.
+  - clock: { set: "2026-01-04T00:00:00Z" }
+  - action: listPendingEscalations
+    tenant: t1
+    expect: { ok: true, escalations: [] }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions: []
+    expect: { ok: false, error: { category: conflict }, newEvents: 0 }
+expect:
+  sessions:
+    $s:
+      state: closed
+      closeReason: expired
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: ask_mid, childSessionId: $mid } }
+          - type: escalation.raised
+            payload:
+              escalation:
+                id: $esc
+                expiresAt: { $regex: "^2026-01-04T00:00:00" }
+                pendingActions: [{ id: $act, delegated: true, chain: [$mid, $leaf], tool: update_record }]
+          - { type: run.ended, payload: { reason: escalated } }
+          - { type: session.closed, runId: { $absent: true }, timestamp: { $regex: "^2026-01-04T00:00:00" }, payload: { reason: expired } }
+      absentEvents:
+        - { type: tool.result }
+        - { type: escalation.resolved }
+        - { type: run.started, payload: { kind: resume } }
+    $mid:
+      state: closed
+      closeReason: expired
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, payload: { persona: mid@1, parent: { sessionId: $s, callId: c1, tool: ask_mid, depth: 1 } } }
+          - { type: tool.call, payload: { callId: m1, tool: ask_leaf, childSessionId: $leaf } }
+          - type: escalation.raised
+            payload:
+              escalation:
+                expiresAt: { $regex: "^2026-01-04T00:00:00" }
+                pendingActions: [{ id: $act, delegated: true, chain: [$leaf] }]
+          - { type: run.ended, payload: { reason: escalated } }
+          - { type: session.closed, runId: { $absent: true }, timestamp: { $regex: "^2026-01-04T00:00:00" }, payload: { reason: expired } }
+      absentEvents:
+        - { type: tool.result }
+        - { type: escalation.resolved }
+    $leaf:
+      state: closed
+      closeReason: expired
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, payload: { persona: leaf@1, parent: { sessionId: $mid, callId: m1, tool: ask_leaf, depth: 2 } } }
+          - type: escalation.raised
+            payload:
+              escalation:
+                pendingActions: [{ id: $act, delegated: { $absent: true }, callId: l1, tool: update_record }]
+          - { type: run.ended, payload: { reason: escalated } }
+          - { type: session.closed, runId: { $absent: true }, timestamp: { $regex: "^2026-01-04T00:00:00" }, payload: { reason: expired } }
+      absentEvents:
+        - { type: tool.call }
+        - { type: tool.result }
+        - { type: escalation.resolved }
+  ports:
+    auditLog:
+      t1:
+        $count: { of: { type: decision }, equals: 0 }
+  stubCalls:
+    on-end:
+      - { arguments: { point: sessionEnd, sessionId: $leaf, summary: { closeReason: expired } } }
+      - { arguments: { point: sessionEnd, sessionId: $mid, summary: { closeReason: expired } } }
+      - { arguments: { point: sessionEnd, sessionId: $s, summary: { closeReason: expired } } }
+    update_record: { count: 0 }
+  providerRequests:
+    scripted-a: { count: 3 }

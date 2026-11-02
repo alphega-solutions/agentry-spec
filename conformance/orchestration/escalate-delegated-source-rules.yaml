@@ -1,0 +1,270 @@
+schemaVersion: "0.1.0"
+id: orchestration.escalate-delegated-source-rules
+title: A delegated action keeps its original source, so self-approval and source-keyed reviewer rules apply to it as to a non-delegated action
+description: >-
+  The bundle sets `allowSelfApproval: { approval: true, hook: true }` (a
+  `taint` key cannot be set at all) and reviewer rules keyed by source:
+  `taint` → "'security' in reviewer.roles", `approval` → "'approver' in
+  reviewer.roles". The session principal p1 holds both roles; rA holds only
+  `approver`, rS only `security`. The root delegates to helper@1 through
+  ask_helper (depth 1).
+
+  - $sTaint: the helper reads an untrusted lookup result, then calls
+    update_record, which the taint rule escalates. The root's mirrored
+    action keeps source `taint` and reason `agentry.taint.mutating`, is
+    marked `delegated: true` with chain [helper session], and its reviewer
+    requirements say `selfApprovalAllowed: false` and list only the taint
+    rule (ORCH-061). The owner's escalation carries the helper's tainting
+    provenance [tool:lookup]; the root's carries its own, which are none —
+    the root is not tainted (ORCH-060 as amended 2026-11-02: each session's
+    own). At the root, p1's approval is refused with `unauthorized`
+    (`agentry.hitl.reviewer_refused`) although p1 satisfies every rule —
+    self-approval is never allowed for `taint`; rA's is refused (fails the
+    taint rule; the approval rule does not stand in for it); rS's is
+    accepted. Nothing is dispatched.
+  - $sAppr (control): the helper calls read_ledger (`approval: always`).
+    The root's mirrored action keeps source `approval`, its requirements
+    say `selfApprovalAllowed: true` and list only the approval rule. rS is
+    refused (fails the approval rule); p1 approves its own escalation with
+    resume(), which is accepted, and read_ledger is dispatched once.
+
+  Refused decisions record nothing and emit no events; exactly two
+  decisions are audited.
+requirements: [ORCH-061]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        allowSelfApproval: { approval: true, hook: true }
+        reviewerRules:
+          taint: [{ rule: "'security' in reviewer.roles" }]
+          approval: [{ rule: "'approver' in reviewer.roles" }]
+        sensitivityPolicies:
+          pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+          phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+      - kind: Tool
+        id: read_ledger
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Read a ledger entry.
+        input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }
+        effect: read
+        approval: always
+        binding: { kind: native, handler: test.read_ledger }
+      - kind: Persona
+        id: helper
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You maintain records."
+        tools: [lookup@1, update_record@1, read_ledger@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: ask_helper
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the helper persona to maintain a record.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: mutating
+        binding: { kind: agent, persona: helper@1 }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, read_ledger@1, ask_helper@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model: { provider: scripted-a, name: model-a }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor, roles: [approver, security] }
+        - { id: rA, subject: reviewer-a, assurance: multi_factor, roles: [approver] }
+        - { id: rS, subject: reviewer-s, assurance: multi_factor, roles: [security] }
+  providers:
+    scripted-a:
+      responses:
+        # $sTaint 1. root, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_helper, arguments: { task: "Update k1 from its lookup" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sTaint 2. helper, step 1
+        - parts: [{ type: tool_call, callId: h1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sTaint 3. helper, step 2 — taint rule escalates
+        - parts: [{ type: tool_call, callId: h2, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sAppr 4. root, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_helper, arguments: { task: "Read ledger k2" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sAppr 5. helper, step 1 — approval: always escalates
+        - parts: [{ type: tool_call, callId: h1, tool: read_ledger, arguments: { key: k2 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sAppr 6. helper, step 2 (resume run)
+        - parts: [{ type: text, text: "Ledger k2 read." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sAppr 7. root, step 2 (resume run)
+        - parts: [{ type: text, text: "The helper read ledger k2." }]
+          usage: { inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "synthetic untrusted value" } }
+      read_ledger:
+        - ok: { output: { entry: "synthetic entry" } }
+      update_record: []
+script:
+  # $sTaint
+  - action: run
+    bind: $sTaint
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Have the helper update k1 from its lookup" }]
+    capture:
+      - event: { type: tool.call, payload: { tool: ask_helper } }
+        bind: { payload.childSessionId: $hTaint }
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $actTaint }
+    expect: { ok: true, endReason: escalated }
+  - action: decide
+    session: $sTaint
+    reviewer: p1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000c51", pendingActionId: $actTaint, type: approve }
+    expect: { ok: false, error: { category: unauthorized, code: agentry.hitl.reviewer_refused, details: { decisionId: "01900000-0000-7000-8000-000000000c51" } }, newEvents: 0 }
+  - action: decide
+    session: $sTaint
+    reviewer: rA
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000c52", pendingActionId: $actTaint, type: approve }
+    expect: { ok: false, error: { category: unauthorized, code: agentry.hitl.reviewer_refused, details: { decisionId: "01900000-0000-7000-8000-000000000c52" } }, newEvents: 0 }
+  - action: decide
+    session: $sTaint
+    reviewer: rS
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000c53", pendingActionId: $actTaint, type: reject }
+    expect: { ok: true, newEvents: 0 }
+  # $sAppr (control)
+  - action: run
+    bind: $sAppr
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Have the helper read ledger k2" }]
+    capture:
+      - event: { type: tool.call, payload: { tool: ask_helper } }
+        bind: { payload.childSessionId: $hAppr }
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $actAppr }
+    expect: { ok: true, endReason: escalated }
+  - action: decide
+    session: $sAppr
+    reviewer: rS
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000c54", pendingActionId: $actAppr, type: approve }
+    expect: { ok: false, error: { category: unauthorized, code: agentry.hitl.reviewer_refused, details: { decisionId: "01900000-0000-7000-8000-000000000c54" } }, newEvents: 0 }
+  - action: resume
+    session: $sAppr
+    reviewer: p1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000c55", pendingActionId: $actAppr, type: approve }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sTaint:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            payload:
+              escalation:
+                sources: [taint]
+                reasonCodes: [agentry.taint.mutating]
+                taintProvenances: []
+                pendingActions:
+                  - id: $actTaint
+                    kind: tool_call
+                    source: taint
+                    reasonCode: agentry.taint.mutating
+                    callId: h2
+                    tool: update_record
+                    delegated: true
+                    chain: [$hTaint]
+                    reviewerRequirements:
+                      requiredApprovals: 1
+                      selfApprovalAllowed: false
+                      rules: ["'security' in reviewer.roles"]
+    $hTaint:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            payload:
+              escalation:
+                taintProvenances: ["tool:lookup"]
+                pendingActions:
+                  - { id: $actTaint, source: taint, delegated: { $absent: true }, reviewerRequirements: { selfApprovalAllowed: false } }
+      absentEvents:
+        - { type: tool.call, payload: { callId: h2 } }
+    $sAppr:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            payload:
+              escalation:
+                sources: [approval]
+                pendingActions:
+                  - id: $actAppr
+                    source: approval
+                    reasonCode: agentry.approval.always
+                    callId: h1
+                    tool: read_ledger
+                    delegated: true
+                    chain: [$hAppr]
+                    reviewerRequirements:
+                      requiredApprovals: 1
+                      selfApprovalAllowed: true
+                      rules: ["'approver' in reviewer.roles"]
+          - { type: escalation.resolved, payload: { decisions: ["01900000-0000-7000-8000-000000000c55"] } }
+          - { type: tool.result, payload: { callId: c1, tool: ask_helper, result: { ok: { output: { text: "Ledger k2 read." } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+    $hAppr:
+      state: closed
+      closeReason: completed
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: h1, tool: read_ledger, arguments: { key: k2 } } }
+          - { type: run.ended, payload: { reason: responded } }
+  stubCalls:
+    lookup: { count: 1 }
+    read_ledger: [{ arguments: { key: k2 }, context: { sessionId: $hAppr } }]
+    update_record: { count: 0 }
+  providerRequests:
+    scripted-a: { count: 7 }
+  ports:
+    auditLog:
+      t1:
+        $all:
+          - $contains:
+              - { type: decision, sessionId: $sTaint, reviewer: { subject: reviewer-s, tenant: t1 }, details: { id: "01900000-0000-7000-8000-000000000c53", pendingActionId: $actTaint, type: reject } }
+              - { type: decision, sessionId: $sAppr, reviewer: { subject: user-1, tenant: t1 }, details: { id: "01900000-0000-7000-8000-000000000c55", pendingActionId: $actAppr, type: approve } }
+          - $count: { of: { type: decision }, equals: 2 }

@@ -1,0 +1,171 @@
+schemaVersion: "0.1.0"
+id: orchestration.return-responded-output
+title: A child that responds returns `ok` with its text joined by newlines, or with its structured value when it has an output schema, and is closed `completed`
+description: >-
+  The parent calls two agent tools in turn. ask_writer is bound to persona
+  writer@1, which has no output schema; its child answers with two text
+  parts, so the parent receives `ok` with output exactly `{ text: "Line
+  one.\nLine two." }` (ORCH-050 as amended 2026-11-02: the text parts joined
+  with a newline). ask_counter is bound to persona counter@1, which declares
+  an output schema; its child answers with a `structured` part and a text
+  part, so the parent receives `ok` with output exactly the structured
+  value `{ count: 2 }`, without the text. Both children end `responded` and
+  are closed with reason `completed` (a `responded` run leaves a session
+  idle, CORE-020, and closing an idle session is `completed`). The parent
+  model receives both outputs and the parent run responds.
+requirements: [ORCH-050]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Persona
+        id: writer
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You write short notes."
+        tools: [lookup@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Persona
+        id: counter
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You count records."
+        tools: [lookup@1]
+        outputSchema:
+          type: object
+          additionalProperties: false
+          required: [count]
+          properties: { count: { type: integer } }
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: ask_writer
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the writer persona for a note.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: read
+        binding: { kind: agent, persona: writer@1 }
+      - kind: Tool
+        id: ask_counter
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the counter persona to count records.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: read
+        binding: { kind: agent, persona: counter@1 }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, ask_writer@1, ask_counter@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model: { provider: scripted-a, name: model-a }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # 1. parent, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_writer, arguments: { task: "Write a two-line note" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 2. writer child, step 1
+        - parts:
+            - { type: text, text: "Line one." }
+            - { type: text, text: "Line two." }
+          usage: { inputTokens: 20, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 3. parent, step 2
+        - parts: [{ type: tool_call, callId: c2, tool: ask_counter, arguments: { task: "Count the records" } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 4. counter child, step 1
+        - parts:
+            - { type: structured, value: { count: 2 } }
+            - { type: text, text: "Two records." }
+          usage: { inputTokens: 20, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 5. parent, step 3
+        - parts: [{ type: text, text: "The note has two lines and there are two records." }]
+          usage: { inputTokens: 40, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup: []
+      update_record: []
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Get a note from the writer and a count from the counter" }]
+    capture:
+      - event: { type: tool.call, payload: { tool: ask_writer } }
+        bind: { payload.childSessionId: $writer }
+      - event: { type: tool.call, payload: { tool: ask_counter } }
+        bind: { payload.childSessionId: $counter }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: tool.result
+            payload:
+              callId: c1
+              tool: ask_writer
+              result: { ok: { output: { text: "Line one.\nLine two." }, blob: { $absent: true } } }
+          - type: tool.result
+            payload:
+              callId: c2
+              tool: ask_counter
+              result: { ok: { output: { count: 2, text: { $absent: true } }, blob: { $absent: true } } }
+          - { type: model.request, step: 3 }
+          - { type: run.ended, payload: { reason: responded } }
+    $writer:
+      state: closed
+      closeReason: completed
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, payload: { persona: writer@1 } }
+          - { type: run.ended, payload: { reason: responded } }
+          - { type: session.closed, payload: { reason: completed } }
+    $counter:
+      state: closed
+      closeReason: completed
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, payload: { persona: counter@1 } }
+          - { type: run.ended, payload: { reason: responded } }
+          - { type: session.closed, payload: { reason: completed } }
+  stubCalls:
+    lookup: { count: 0 }
+    update_record: { count: 0 }
+  providerRequests:
+    scripted-a:
+      - {}
+      - {}
+      - messages:
+          $contains:
+            - role: tool
+              parts:
+                - { type: tool_result, callId: c1, result: { ok: { output: { text: "Line one.\nLine two." } } } }
+      - outputSchema: { required: [count] }
+      - messages:
+          $contains:
+            - role: tool
+              parts:
+                - { type: tool_result, callId: c2, result: { ok: { output: { count: 2, text: { $absent: true } } } } }

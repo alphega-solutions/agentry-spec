@@ -1,0 +1,286 @@
+schemaVersion: "0.1.0"
+id: orchestration.recover-chain-idempotent-redispatched
+title: Recovering an orphaned three-level chain recovers the deepest child first — its idempotent call re-dispatched with the same key — then each ancestor's agent call re-attaches to its existing child's outcome, with no new child sessions
+description: >-
+  A three-level chain: the root (assistant) calls ask_mid (agent → mid@1),
+  mid calls ask_leaf (agent → leaf@1), and leaf calls set_flag, which is
+  mutating and idempotent. Child tools are the child allowlist intersected
+  with the parent's visible tools (ORCH-013). The run lease is PT1M
+  (`limits.leaseTtl`); default@1 is replaced with a copy whose
+  `timeouts.run` is PT30M, and the agent tools have `timeoutMs` 900000, so
+  no run or call deadline (ORCH-043) elapses during the test.
+
+
+  Turn 1 of the root responds. A crash is armed at `after_dispatch` for the
+  root's next action (turn 2). Reading of the crash step: the children run
+  synchronously inside that action, and `after_dispatch` is defined by a
+  stub having run, which agent-bound calls have none of, so the first
+  point reached is the dispatch of leaf's set_flag l1: its first behaviour
+  is consumed, no outcome is recorded. The three runs are orphaned when
+  the lease lapses; the root's c1 and mid's m1 are in flight with started
+  records holding their children's IDs (ORCH-002).
+
+
+  At exactly +1m run() on the root triggers recovery (HITL-092). In-flight
+  children are found through the started records and recovered deepest
+  first (ORCH-071): leaf's set_flag has a started record and no outcome
+  and is idempotent, so it is re-dispatched with the same idempotency key
+  (HITL-091 as amended, step 3) and leaf's orphaned run continues (no new
+  `run.started`) to its response and closes `completed`; then mid's m1
+  re-attaches to that leaf's outcome and mid's orphaned run continues to
+  its response and closes `completed`; then the root's c1 re-attaches to
+  mid's outcome and the root's orphaned run $r2 continues to `responded`.
+  The order is observed through the shared scripted provider, whose
+  responses are consumed in call order: leaf's step 2 request (holding
+  set_flag's result) comes before mid's step 2 request (holding
+  ask_leaf's result), which comes before the root's (holding ask_mid's
+  result). No second child is created at either level: each agent call has
+  one tool.call and one tool.result, each child has one session.created and
+  one run, and no response is left for an extra child. No escalation is
+  raised and nothing fails. Only then does the triggering run() proceed
+  with its own run $r3 (turn 3), which responds.
+requirements: [ORCH-071, ORCH-002]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT30M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+      - kind: Tool
+        id: set_flag
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Flag a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: mutating
+        idempotent: true
+        binding: { kind: native, handler: test.set_flag }
+      - kind: Persona
+        id: leaf
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You flag records."
+        tools: [set_flag@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: ask_leaf
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the leaf persona to flag a record.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: mutating
+        timeoutMs: 900000
+        binding: { kind: agent, persona: leaf@1 }
+      - kind: Persona
+        id: mid
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You delegate flagging."
+        tools: [set_flag@1, ask_leaf@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: ask_mid
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the mid persona to get a record flagged.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: mutating
+        timeoutMs: 900000
+        binding: { kind: agent, persona: mid@1 }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, set_flag@1, ask_mid@1, ask_leaf@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+  providers:
+    scripted-a:
+      responses:
+        # 0: root, turn 1
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 1: root, turn 2, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_mid, arguments: { task: "Flag k1" } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 2: mid (depth 1), step 1
+        - parts: [{ type: tool_call, callId: m1, tool: ask_leaf, arguments: { task: "Flag k1" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 3: leaf (depth 2), step 1 (crash after l1's dispatch)
+        - parts: [{ type: tool_call, callId: l1, tool: set_flag, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 4: leaf, step 2 (recovery, after the re-dispatched l1)
+        - parts: [{ type: text, text: "k1 is flagged." }]
+          usage: { inputTokens: 30, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 5: mid, step 2 (recovery, after ask_leaf re-attaches)
+        - parts: [{ type: text, text: "The leaf flagged k1." }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 6: root, turn 2, step 2 (recovery, after ask_mid re-attaches)
+        - parts: [{ type: text, text: "k1 has been flagged." }]
+          usage: { inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 7: root, turn 3 (the triggering run)
+        - parts: [{ type: text, text: "Yes, done." }]
+          usage: { inputTokens: 50, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      set_flag:
+        - ok: { output: { flagged: true, attempt: "first" } }
+        - ok: { output: { flagged: true, attempt: "second" } }
+  limits:
+    leaseTtl: PT1M
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - crash: { at: after_dispatch, session: $s }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Flag k1 through the helpers" }]
+  - restart: {}
+  # Exactly the lease expiry: all three runs orphaned.
+  - clock: { advance: PT1M }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Is it done?" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: run.ended, runId: $r1, payload: { reason: responded } }
+          - { type: run.started, runId: { $all: [$r2, { $not: $r1 }] }, payload: { kind: run } }
+          - { type: tool.call, runId: $r2, turn: 2, step: 1, payload: { callId: c1, tool: ask_mid, childSessionId: $mid } }
+          - { type: tool.result, runId: $r2, turn: 2, step: 1, payload: { callId: c1, tool: ask_mid, result: { ok: { output: { text: "The leaf flagged k1." } } } } }
+          - { type: model.request, runId: $r2, turn: 2, step: 2 }
+          - { type: run.ended, runId: $r2, payload: { reason: responded } }
+          - { type: run.started, runId: { $all: [$r3, { $not: $r2 }] }, timestamp: { $regex: "^2026-01-01T00:01:00" }, payload: { kind: run } }
+          - { type: run.ended, runId: $r3, payload: { reason: responded } }
+      absentEvents:
+        - { type: escalation.raised }
+        - { type: run.ended, payload: { reason: failed } }
+    $mid:
+      state: closed
+      closeReason: completed
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, payload: { persona: mid@1, parent: { sessionId: $s, runId: $r2, callId: c1, tool: ask_mid, depth: 1 } } }
+          - { type: run.started, runId: $mr }
+          - { type: tool.call, runId: $mr, payload: { callId: m1, tool: ask_leaf, childSessionId: $leaf } }
+          - { type: tool.result, runId: $mr, payload: { callId: m1, tool: ask_leaf, result: { ok: { output: { text: "k1 is flagged." } } } } }
+          - { type: run.ended, runId: $mr, payload: { reason: responded } }
+          - { type: session.closed, payload: { reason: completed } }
+      absentEvents:
+        - { type: escalation.raised }
+    $leaf:
+      state: closed
+      closeReason: completed
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, payload: { persona: leaf@1, parent: { sessionId: $mid, runId: $mr, callId: m1, tool: ask_leaf, depth: 2 } } }
+          - { type: run.started, runId: $lr }
+          - { type: tool.call, runId: $lr, payload: { callId: l1, tool: set_flag } }
+          - { type: tool.result, runId: $lr, payload: { callId: l1, tool: set_flag, result: { ok: { output: { flagged: true, attempt: "second" } } } } }
+          - { type: run.ended, runId: $lr, payload: { reason: responded } }
+          - { type: session.closed, payload: { reason: completed } }
+      absentEvents:
+        - { type: escalation.raised }
+  stubCalls:
+    set_flag:
+      - { arguments: { key: k1 }, completed: false, context: { sessionId: $leaf, runId: $lr, idempotencyKey: $k } }
+      - { arguments: { key: k1 }, completed: true, context: { sessionId: $leaf, runId: $lr, idempotencyKey: $k } }
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $all:
+            - $count: { of: { type: run.started }, equals: 3 }
+            - $count: { of: { type: tool.call, payload: { callId: c1 } }, equals: 1 }
+            - $count: { of: { type: tool.result, payload: { callId: c1 } }, equals: 1 }
+        $mid:
+          $all:
+            - $count: { of: { type: session.created }, equals: 1 }
+            - $count: { of: { type: run.started }, equals: 1 }
+            - $count: { of: { type: tool.call, payload: { callId: m1 } }, equals: 1 }
+            - $count: { of: { type: tool.result, payload: { callId: m1 } }, equals: 1 }
+        $leaf:
+          $all:
+            - $count: { of: { type: session.created }, equals: 1 }
+            - $count: { of: { type: run.started }, equals: 1 }
+            - $count: { of: { type: tool.result, payload: { callId: l1 } }, equals: 1 }
+    idempotencyStore:
+      t1:
+        $k: { state: completed }
+        $kMid: { childSessionId: $mid }
+        $kLeaf: { childSessionId: $leaf }
+  providerRequests:
+    scripted-a:
+      - {}
+      - {}
+      - {}
+      - {}
+      # leaf step 2: first after recovery
+      - messages:
+          $contains:
+            - role: tool
+              parts:
+                - { type: tool_result, callId: l1, result: { ok: { output: { flagged: true, attempt: "second" } } } }
+      # mid step 2
+      - messages:
+          $contains:
+            - role: tool
+              parts:
+                - { type: tool_result, callId: m1, result: { ok: { output: { text: "k1 is flagged." } } } }
+      # root turn 2 step 2
+      - messages:
+          $contains:
+            - role: tool
+              parts:
+                - { type: tool_result, callId: c1, result: { ok: { output: { text: "The leaf flagged k1." } } } }
+      - {}

@@ -1,0 +1,159 @@
+schemaVersion: "0.1.0"
+id: orchestration.child-hooks
+title: A child session runs the hooks required by the policy bundles, its own persona and its own profile
+description: >-
+  Five native `sessionStart` hooks, each answering `continue` (default
+  hook stub): org-h required by policy bundle org@1; coord-h by the
+  parent persona `coordinator`; parent-prof-h by the parent's profile
+  default@1; helper-h by the child persona `helper`; helper-prof-h by the
+  child's default profile helper-profile@1.
+
+
+  The parent's sessionStart runs org-h, coord-h and parent-prof-h. The
+  child's sessionStart runs org-h, helper-h and helper-prof-h (ORCH-015):
+  the bundle's hook runs once in each session, with that session's ID and
+  persona in its HookRequest, while the parent persona's and parent
+  profile's hooks do not run in the child, and the child's persona and
+  profile hooks do not run in the parent. Order within a point is HOOK-030's
+  and is not re-asserted here.
+requirements: [ORCH-015]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - { kind: Hook, id: org-h, version: 1, schemaVersion: "0.1.0", points: [sessionStart], results: [annotate], timeoutMs: 1000, source: { kind: native, handler: test.hook.org-h } }
+      - { kind: Hook, id: coord-h, version: 1, schemaVersion: "0.1.0", points: [sessionStart], results: [annotate], timeoutMs: 1000, source: { kind: native, handler: test.hook.coord-h } }
+      - { kind: Hook, id: parent-prof-h, version: 1, schemaVersion: "0.1.0", points: [sessionStart], results: [annotate], timeoutMs: 1000, source: { kind: native, handler: test.hook.parent-prof-h } }
+      - { kind: Hook, id: helper-h, version: 1, schemaVersion: "0.1.0", points: [sessionStart], results: [annotate], timeoutMs: 1000, source: { kind: native, handler: test.hook.helper-h } }
+      - { kind: Hook, id: helper-prof-h, version: 1, schemaVersion: "0.1.0", points: [sessionStart], results: [annotate], timeoutMs: 1000, source: { kind: native, handler: test.hook.helper-prof-h } }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        requiredHooks: [org-h@1]
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+        requiredHooks: [parent-prof-h@1]
+      - kind: HarnessProfile
+        id: helper-profile
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        requiredHooks: [helper-prof-h@1]
+      - kind: Persona
+        id: helper
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You look things up."
+        tools: [lookup@1]
+        defaultProfile: helper-profile@1
+        allowedProfiles: [helper-profile@1]
+        requiredHooks: [helper-h@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: ask_helper
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the helper persona to look something up.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: read
+        binding: { kind: agent, persona: helper@1 }
+      - kind: Persona
+        id: coordinator
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You coordinate helpers."
+        tools: [ask_helper@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        requiredHooks: [coord-h@1]
+        model: { provider: scripted-a, name: model-a }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # parent, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_helper, arguments: { task: "Find record a" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # child, step 1
+        - parts: [{ type: text, text: "Record a holds A." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # parent, step 2
+        - parts: [{ type: text, text: "The helper says record a holds A." }]
+          usage: { inputTokens: 40, outputTokens: 8, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup: []
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: coordinator@1
+    input: [{ type: text, text: "Ask the helper to find record a" }]
+    capture:
+      - event: { type: tool.call, payload: { callId: c1, tool: ask_helper } }
+        bind: { payload.childSessionId: $child }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: c1, tool: ask_helper, result: { ok: { $any: true } } } }
+          - { type: run.ended, payload: { reason: responded } }
+    $child:
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, payload: { persona: helper@1, profile: helper-profile@1, parent: { sessionId: $s, callId: c1 } } }
+          - { type: run.ended, payload: { reason: responded } }
+  stubCalls:
+    org-h:
+      - { arguments: { hook: org-h@1, point: sessionStart, sessionId: $s, session: { persona: coordinator@1 } } }
+      - { arguments: { hook: org-h@1, point: sessionStart, sessionId: $child, session: { persona: helper@1 } } }
+    coord-h:
+      - { arguments: { hook: coord-h@1, point: sessionStart, sessionId: $s } }
+    parent-prof-h:
+      - { arguments: { hook: parent-prof-h@1, point: sessionStart, sessionId: $s } }
+    helper-h:
+      - { arguments: { hook: helper-h@1, point: sessionStart, sessionId: $child, session: { persona: helper@1 } } }
+    helper-prof-h:
+      - { arguments: { hook: helper-prof-h@1, point: sessionStart, sessionId: $child, session: { persona: helper@1 } } }
+  providerRequests:
+    scripted-a: { count: 3 }
