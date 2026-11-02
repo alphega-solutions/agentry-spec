@@ -23,7 +23,7 @@ description: >-
      `contextLimit: 2000000` (declared 1,000,000), model-a
      `maxOutputTokens: 8192` (declared 4,096), model-b `vision: true`
      (declared off).
-requirements: [PROV-031, PROV-020]
+requirements: [PROV-031, PROV-020, PROV-008]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:

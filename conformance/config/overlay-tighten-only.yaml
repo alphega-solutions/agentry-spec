@@ -4,7 +4,9 @@ title: An environment overlay may change deployment fields and tighten behaviour
 description: >-
   A `prod` overlay changes a provider endpoint and lowers the default
   profile's token budget: it loads, and the next run is bound by the lower
-  budget. A second overlay raises the budget above the profile's value and
+  budget: its first response, a tool call, reaches it, and the run ends
+  `budget_exhausted` at the budget check before step 2 (PROV-071 reading,
+  amendment 2026-11-02). A second overlay raises the budget above the profile's value and
   is rejected with details naming the overlay layer. Overlays also must not
   loosen deployment governance: one that removes the policy bundle from the
   stack, and one that adds an attachment source, are each rejected with
@@ -23,7 +25,7 @@ setup:
   providers:
     scripted-a:
       responses:
-        - parts: [{ type: text, text: "Over budget." }]
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: a } }]
           usage: { inputTokens: 400, outputTokens: 200, cachedInputTokens: 0, reasoningTokens: 0 }
 script:
   - load:
@@ -84,3 +86,7 @@ expect:
         mode: contains
         items:
           - { type: session.created, snapshotHash: $hTight }
+      absentEvents:
+        - { type: model.request, step: 2 }
+  providerRequests:
+    scripted-a: { count: 1 }

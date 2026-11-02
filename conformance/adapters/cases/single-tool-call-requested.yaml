@@ -8,7 +8,7 @@ description: >-
   provider request permits at most one tool call per response
   (`atMostOneToolCall`, e.g. by disabling parallel tool calls), and the
   adapter returns the one call the provider made.
-requirements: [PROV-043, PROV-001]
+requirements: [PROV-043, PROV-001, PROV-009]
 condition: ok_tool_calls
 request:
   model: model-a

@@ -6,7 +6,7 @@ description: >-
   mapped error (PROV-080 row 3). The vendor's validation message is original
   provider detail: an adapter may keep it in `details`, redacted (PROV-083),
   but is not required to, and `details` is not asserted.
-requirements: [PROV-007, PROV-080, PROV-083]
+requirements: [PROV-007, PROV-080, PROV-083, PROV-009]
 condition: bad_request
 request:
   model: model-a

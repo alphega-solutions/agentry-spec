@@ -10,8 +10,9 @@ description: >-
   neither its data nor any reasoning block derived from it appears, while the
   tool call, tool result and other parts of the same messages are sent. The
   harness also excludes such parts (PROV-055, CTX-060); this case checks the
-  adapter's own guard.
-requirements: [PROV-005]
+  adapter's own guard. Reasoning the adapter's own provider produced is
+  sent instead (adapter.reasoning-own-provider-sent).
+requirements: [PROV-005, PROV-009]
 condition: ok_text
 request:
   model: model-a

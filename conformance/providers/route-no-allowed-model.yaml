@@ -27,11 +27,10 @@ description: >-
   hold the phi marker.
 
 
-  Reading chosen ($sFailover): an outage whose only remaining fallbacks are
-  not allowed is not a routing block (PROV-052 applies when no model is
-  allowed for the call; scripted-a was allowed and was called), so the run
-  ends `failed`, not `blocked`; no assertion is made about a
-  `policy.decision` for the skipped fallback.
+  $sFailover follows the PROV-053/PROV-060 reading (amendment 2026-11-02):
+  a failover whose only fallback is not allowed for the content does not
+  happen; the failure stands, the run ends `failed`, not `blocked`, and no
+  routing decision is emitted.
 requirements: [PROV-052, PROV-053]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -164,6 +163,7 @@ expect:
           - { type: run.ended, payload: { reason: failed } }
       absentEvents:
         - { type: model.request, payload: { provider: scripted-b } }
+        - { type: policy.decision, payload: { kind: routing } }
     $sControl:
       events:
         mode: subsequence

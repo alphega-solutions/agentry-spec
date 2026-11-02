@@ -7,7 +7,7 @@ description: >-
   `agentry.provider.refused`, which is only for refusals the provider returns
   as an error (`adapter.error-safety-refusal`). A vendor refusal flag or
   finish reason, if any, may be kept in the part's `extensions`.
-requirements: [PROV-081, PROV-004]
+requirements: [PROV-081, PROV-004, PROV-009]
 condition: ok_refusal_text
 request:
   model: model-a

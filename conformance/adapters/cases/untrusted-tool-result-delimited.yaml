@@ -10,7 +10,7 @@ description: >-
   here (as with the baseline bundle, which trusts no tools; ADR-0008). The
   transcript's matchers confirm that part 3 is wrapped in the adapter's
   untrusted-content delimiting and parts 0–2 are not.
-requirements: [PROV-003]
+requirements: [PROV-003, PROV-009]
 condition: ok_text
 request:
   model: model-a

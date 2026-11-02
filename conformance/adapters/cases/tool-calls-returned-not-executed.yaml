@@ -9,7 +9,7 @@ description: >-
   framework it wraps disabled (`noBuiltinToolExecution`). The transcript's
   matchers confirm a single wire request with no tool-execution settings
   enabled.
-requirements: [PROV-001, PROV-004]
+requirements: [PROV-001, PROV-004, PROV-009]
 condition: ok_tool_calls
 request:
   model: model-a

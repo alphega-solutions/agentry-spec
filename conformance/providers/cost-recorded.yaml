@@ -33,8 +33,8 @@ description: >-
     `context.compacted`. Turn 2 then answers (57 + 7 → 1 USD).
 
 
-  Format reading: an `error` response's sibling `usage` is the usage the
-  provider reported for the failed call.
+  An `error` response's `usage` is the usage the provider reported for the
+  failed call (fixture format, `scriptedResponse.usage`).
 requirements: [PROV-072, PROV-074]
 contract: ">=0.1.0 <1.0.0"
 features: []

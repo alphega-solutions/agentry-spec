@@ -5,8 +5,8 @@ description: >-
   The connection fails before any provider response (reset or timeout at the
   transport). The adapter returns the mapped error (PROV-080 row 1) rather
   than raising a transport exception, and reports no usage, since the
-  provider reported none.
-requirements: [PROV-007, PROV-080]
+  provider reported none (`usage: null`).
+requirements: [PROV-006, PROV-007, PROV-080, PROV-009]
 condition: network_failure
 request:
   model: model-a
@@ -19,3 +19,4 @@ request:
         - { type: text, text: "What is the status of record A-100?", provenance: principal, labels: [] }
 expect:
   error: { category: unavailable, retryable: true, code: agentry.provider.unavailable, source: provider }
+  usage: null

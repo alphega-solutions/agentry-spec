@@ -27,16 +27,20 @@ description: >-
     model hook `judge` blocks it at a cost of 1 USD, recorded on its
     decision but not counted; step 2 asks for a lookup (0.124), step 3
     answers (0.124): 0.748 in all, and the run responds. Counting the
-    hook's cost would reach the budget before step 3.
+    hook's cost would put the turn at 0.5 + 1 = 1.5 ≥ 1 at the check before
+    step 2, so neither step 2 nor step 3 would be called.
   - $sSum (compactor, budget 3 on both runs): turn 1 costs 0.75. In turn 2
     the summarizer costs 2 (recorded on `context.compacted`) and step 1
     asks for a lookup with 57 + 7 tokens → 1: the turn is at 3, reached,
     no step-2 call. Without the summarizer's cost it would be at 1.
 
 
-  Not asserted: whether a lookup requested by the last call runs before
-  the run ends. Format reading as in providers.usage-recorded for the
-  failed call's usage.
+  Budgets are checked immediately before each session model call and each
+  summarizer call; a call whose response reaches the budget completes,
+  including dispatching its tool calls, and the run ends at the next check
+  (PROV-071, PROV-074 reading, amendment 2026-11-02). So every lookup
+  requested (k1–k5, one per session) is dispatched. The failed call's
+  usage is scripted as in the fixture format (`scriptedResponse.usage`).
 requirements: [PROV-074]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -286,3 +290,4 @@ expect:
     scripted-judge: { count: 1 }
   stubCalls:
     update_record: { count: 0 }
+    lookup: { count: 5 }

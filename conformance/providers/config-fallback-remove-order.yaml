@@ -9,8 +9,10 @@ description: >-
   - The default profile restating the list with an extra model-a4 → rejected
     (adds a fallback).
   - The default profile listing [model-a3, model-a1] → accepted: it removes
-    model-a2. Reading: a lower layer's list only selects which entries
-    remain; the effective order is the persona's, [model-a1, model-a3].
+    model-a2. Per the PROV-021 reading (amendment 2026-11-02), a lower
+    layer's `fallbacks` list only selects which of the pinning layer's
+    entries remain, and the pinning layer's order always applies: the
+    effective order is the persona's, [model-a1, model-a3].
 
   The run's first call (model-a) fails with a non-retryable authentication
   error, so it is eligible for failover at once (PROV-060); model-a1 fails

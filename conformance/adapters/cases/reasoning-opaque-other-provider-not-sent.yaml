@@ -6,7 +6,7 @@ description: >-
   followed by model text. The adapter sends the model text and drops the
   reasoning part (`noReasoningFromOtherProviders`); it does not try to pass
   the opaque data through as an encrypted or signed block of its own vendor.
-requirements: [PROV-005]
+requirements: [PROV-005, PROV-009]
 condition: ok_text
 request:
   model: model-a

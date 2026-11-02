@@ -23,10 +23,10 @@ description: >-
     mid-turn.
 
 
-  Reading chosen (as in core.error-vendor-mapped and
-  context.assembly-reasoning-own-provider): a failure of the turn's first
-  model call may fail over to a different provider; the replacement call
-  is still the turn's first call.
+  Per the PROV-062 reading (amendment 2026-11-02), failover to a different
+  provider is allowed until a session model call of the turn has
+  succeeded, so it covers the turn's first call; mid-turn, fallbacks of
+  another provider are not eligible.
 requirements: [PROV-061, PROV-062]
 contract: ">=0.1.0 <1.0.0"
 features: []

@@ -9,7 +9,7 @@ description: >-
   attachment (`attachment:mail-import`, labelled `pii`). Untrusted: 1 and 3.
   Labels do not affect delimiting. No trust configuration accompanies the
   request, so these sources are untrusted (ADR-0008).
-requirements: [PROV-003]
+requirements: [PROV-003, PROV-009]
 condition: ok_text
 request:
   model: model-a

@@ -5,10 +5,9 @@ description: >-
   The provider returns a transient internal server error. The adapter
   returns the mapped error (PROV-080 row 1). The vendor's own status and
   error code must not appear in `code` or `category`; they may be kept only
-  in `details`, subject to redaction (PROV-083, CORE-194). `details` is
-  optional and not asserted here, since the case format's `expect.error` has
-  no `details` field.
-requirements: [PROV-007, PROV-080, PROV-083]
+  in `details`, subject to redaction (PROV-083, CORE-194). Keeping them
+  is optional (PROV-083 is a MAY), so `details` is not asserted.
+requirements: [PROV-007, PROV-080, PROV-083, PROV-009]
 condition: server_error
 request:
   model: model-a

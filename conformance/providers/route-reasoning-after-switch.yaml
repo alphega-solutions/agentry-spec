@@ -29,10 +29,10 @@ description: >-
     tool call only.
 
 
-  Reading chosen: PROV-055 bars pre-switch reasoning for the rest of the
-  turn, including when a later step of the same turn returns to the
-  provider that produced it (CTX-060's protection "applies only while the
-  same provider continues"). Across turns the reasoning is sent to its own
+  Per the PROV-055 reading (amendment 2026-11-02), after a provider switch
+  in a turn, reasoning produced before it is sent to no provider for the
+  rest of the turn, including the provider that produced it (CTX-060's
+  protection "applies only while the same provider continues"). Across turns the reasoning is sent to its own
   provider again (context.assembly-reasoning-own-provider). A return to the
   original provider within a turn is only reachable when the content that
   forced the switch leaves context, here by compaction of an earlier turn

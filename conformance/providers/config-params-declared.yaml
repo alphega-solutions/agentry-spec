@@ -2,23 +2,22 @@ schemaVersion: "0.1.0"
 id: providers.config-params-declared
 title: "`params` holds only generation parameters the adapter declares; endpoints, regions, tool, safety and retention settings are rejected"
 description: >-
-  Each failing load replaces the persona (or the default profile) with a
-  model block whose `params` carries one value that is not a declared
-  generation parameter; everything else equals the baseline. Rejected:
-  `endpoint`, `region`, a safety setting (`safetySettings`), a tool setting
-  (`toolChoice`), a data-retention setting (`dataRetention`), and an
-  undeclared parameter name (`syntheticUndeclaredParam`); and, under the
-  same rule (PROV-023), `endpoint` in `compaction.model.params`. The
-  control sets `maxOutputTokens` (a parameter every adapter accepts,
-  within the scripted model's default limit of 4,096) and loads; a session
-  then runs on scripted-a/model-a.
-
-  The fixture format does not state which generation parameters the
-  scripted adapter declares (PROV-008), and recorded provider requests do
-  not carry parameters, so this fixture relies on the scripted adapter
-  declaring no parameter named `syntheticUndeclaredParam`, and does not
-  verify that declared parameters reach the provider request.
-requirements: [PROV-022]
+  The scripted adapter declares the generation parameters maxOutputTokens,
+  temperature, topP, stopSequences and seed
+  (`conformance/adapters/manifests/scripted.yaml`, PROV-008). Each failing
+  load replaces the persona (or the default profile) with a model block
+  whose `params` carries one value that is not a declared generation
+  parameter; everything else equals the baseline. Rejected: `endpoint`,
+  `region`, a safety setting (`safetySettings`), a tool setting
+  (`toolChoice`), a data-retention setting (`dataRetention`), and
+  `presencePenalty`, a generation parameter the scripted adapter does not
+  declare; and, under the same rule (PROV-023), `endpoint` in
+  `compaction.model.params`. A persona setting the declared `seed` loads.
+  The control sets `maxOutputTokens: 1000` (within the scripted model's
+  default limit of 4,096) and loads; a session then runs on
+  scripted-a/model-a, and its provider request carries the parameter
+  (`params: { maxOutputTokens: 1000 }`).
+requirements: [PROV-008, PROV-022]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:
@@ -57,8 +56,13 @@ script:
     expect: { ok: false, error: { category: configuration } }
   - load:
       artifacts:
-        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }], params: { syntheticUndeclaredParam: 3 } } }
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }], params: { presencePenalty: 0.5 } } }
     expect: { ok: false, error: { category: configuration } }
+  # A declared parameter loads.
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }], params: { seed: 7 } } }
+    expect: { ok: true }
   # Summarizer model params follow the same rule.
   - load:
       artifacts:
@@ -85,5 +89,6 @@ expect:
           - { type: model.request, payload: { provider: scripted-a, model: model-a, role: primary } }
           - { type: run.ended, payload: { reason: responded } }
   providerRequests:
-    scripted-a: { count: 1 }
+    scripted-a:
+      - { provider: scripted-a, model: model-a, params: { maxOutputTokens: 1000 } }
     scripted-b: { count: 0 }

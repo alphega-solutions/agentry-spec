@@ -1,0 +1,47 @@
+schemaVersion: "0.1.0"
+id: adapter.reasoning-own-provider-sent
+title: Reasoning produced by the adapter's own provider is sent back on the wire
+description: >-
+  The request's history contains a `reasoning` part whose `provider` is the
+  provider ID the adapter is declared under (`{"$selfProvider": true}`),
+  followed by the tool call it led to and that call's result: a tool-call
+  continuation within one provider. The adapter carries the reasoning part
+  back to its provider in the form the vendor requires (for example a
+  signed or encrypted reasoning block), so the reasoning the provider needs
+  to continue is not lost (CTX-060 while the same provider continues;
+  PROV-005 bars only other providers). The transcript's matchers confirm
+  the reasoning part at index 2 (in request order across all messages:
+  system text 0, principal text 1, reasoning 2, tool call 3, tool result 4)
+  is sent (`reasoningSent`).
+requirements: [PROV-005, PROV-009, CTX-060]
+condition: ok_text
+request:
+  model: model-a
+  messages:
+    - role: system
+      parts:
+        - { type: text, text: "You are a records assistant.", provenance: system, labels: [] }
+    - role: principal
+      parts:
+        - { type: text, text: "What is the status of A-100?", provenance: principal, labels: [] }
+    - role: assistant
+      parts:
+        - { type: reasoning, provider: { "$selfProvider": true }, data: "OWN-PROVIDER-REASONING-2c9e: the user wants a status; call lookup.", opaque: false, provenance: model, labels: [] }
+        - { type: tool_call, callId: call-1, tool: lookup, arguments: { key: "A-100" }, provenance: model, labels: [] }
+    - role: tool
+      parts:
+        - { type: tool_result, callId: call-1, tool: lookup, result: { ok: { output: { key: "A-100", status: active } } }, provenance: "tool:lookup", labels: [] }
+  tools:
+    - name: lookup
+      description: Look up a record by key.
+      input:
+        type: object
+        additionalProperties: false
+        required: [key]
+        properties:
+          key: { type: string }
+expect:
+  parts:
+    - { type: text, text: { "$regex": "\\S" } }
+  wire:
+    reasoningSent: [2]

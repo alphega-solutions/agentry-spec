@@ -3,22 +3,18 @@ id: providers.request-contents
 title: Each model call hands the adapter the assembled context, exactly the visible tools, and the output schema
 description: >-
   Harness side of PROV-002 (the adapter side is adapter.request-context-tools-schema-params).
-  Persona extractor lists lookup and update_record and declares an output
-  schema; the run's runtime scope narrows the visible set to lookup
-  (TOOL-020). $sSchema: step 1 answers with a lookup call, step 2 with a
-  valid structured value. Both requests go to scripted-a / model-a and
-  carry exactly the assembled context (step 2 adds the step-1 assistant
-  message and the one `tool` message), exactly one tool definition
-  (lookup, as `{name, description, input}`), and the persona's output
-  schema. $sPlain (control): persona assistant has no output schema and no
-  runtime scope, so its request lists both tools and no `outputSchema`.
-
-
-  Not verified here: generation parameters (`params`, PROV-022). The
-  provider-request record (`conformance/schema/fixture.yaml`,
-  `expect.providerRequests`) has no field for them, so whether the harness
-  passes the effective `params` to the adapter is not observable in a
-  harness fixture.
+  Persona extractor lists lookup and update_record, declares an output
+  schema and sets `params` { maxOutputTokens: 512, temperature: 0.2 }
+  (declared by the scripted adapter); the run's runtime scope narrows the
+  visible set to lookup (TOOL-020). $sSchema: step 1 answers with a lookup
+  call, step 2 with a valid structured value. Both requests go to
+  scripted-a / model-a and carry exactly the assembled context (step 2
+  adds the step-1 assistant message and the one `tool` message), exactly
+  one tool definition (lookup, as `{name, description, input}`), the
+  persona's output schema, and the effective generation parameters
+  (`params`, PROV-022). $sPlain (control): persona assistant has no output
+  schema and no runtime scope, so its request lists both tools and no
+  `outputSchema`.
 requirements: [PROV-002]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -43,6 +39,7 @@ setup:
           name: model-a
           fallbacks:
             - { provider: scripted-b, name: model-b }
+          params: { maxOutputTokens: 512, temperature: 0.2 }
         outputSchema:
           type: object
           additionalProperties: false
@@ -122,6 +119,7 @@ expect:
           properties:
             key: { type: string }
             value: { type: string }
+        params: { maxOutputTokens: 512, temperature: 0.2 }
       # $sSchema, step 2
       - provider: scripted-a
         model: model-a
@@ -151,6 +149,7 @@ expect:
           properties:
             key: { type: string }
             value: { type: string }
+        params: { maxOutputTokens: 512, temperature: 0.2 }
       # $sPlain
       - provider: scripted-a
         model: model-a

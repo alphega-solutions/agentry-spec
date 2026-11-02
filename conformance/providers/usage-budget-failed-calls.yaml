@@ -24,9 +24,11 @@ description: >-
     reasoning tokens again would reach the budget after step 1.
 
 
-  Not asserted: whether $sFailed's lookup runs before the run ends.
-  Format reading as in providers.usage-recorded: an `error` response's
-  sibling `usage` is the usage the provider reported for the failed call.
+  The call that reaches the budget completes, including dispatching its
+  lookup; the run ends at the check before the next call (PROV-071
+  reading, amendment 2026-11-02), so all three lookups run. An `error`
+  response's `usage` is the usage the provider reported for the failed
+  call (fixture format, `scriptedResponse.usage`).
 requirements: [PROV-071]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -116,3 +118,5 @@ expect:
   providerRequests:
     scripted-a: { count: 7 }
     scripted-b: { count: 0 }
+  stubCalls:
+    lookup: { count: 3 }

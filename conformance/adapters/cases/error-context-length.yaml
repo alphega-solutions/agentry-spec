@@ -7,7 +7,7 @@ description: >-
   itself long, since the condition is the provider's). The adapter returns
   the mapped error (PROV-080 row 4), which the harness ends as context_limit
   (PROV-082, verified by harness fixtures).
-requirements: [PROV-007, PROV-080]
+requirements: [PROV-007, PROV-080, PROV-009]
 condition: context_length
 request:
   model: model-a

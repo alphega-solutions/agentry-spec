@@ -5,7 +5,7 @@ description: >-
   The credentials are valid but not permitted to use the model. The adapter
   returns the same mapping as an authentication failure (PROV-080 row 2):
   category unavailable, not retryable, code agentry.provider.auth.
-requirements: [PROV-007, PROV-080]
+requirements: [PROV-007, PROV-080, PROV-009]
 condition: permission_failure
 request:
   model: model-a

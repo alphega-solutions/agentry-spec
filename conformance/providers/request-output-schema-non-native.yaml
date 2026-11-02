@@ -7,11 +7,16 @@ description: >-
   configuration loads (PROV-041: an output schema does not require
   `structuredOutput`). outputRetryLimit is 2.
 
-  - $sCorrected: the first answer is text only (no structured value), so
-    validation fails and the harness requests a correction (step 2, CORE-132);
-    the second answer is a structured value with quantity 0, which fails the
-    schema's minimum, so a second correction is requested (step 3); the
-    third is valid and the run responds with it.
+  The model answers in text (the scripted adapter returns parts as
+  scripted); following the PROV-041 reading (amendment 2026-11-02), the
+  harness parses a text answer as JSON into the `structured` part before
+  validating it.
+
+  - $sCorrected: the first answer is prose, not JSON, so validation fails
+    and the harness requests a correction (step 2, CORE-132); the second
+    answer is JSON with quantity 0, which fails the schema's minimum, so a
+    second correction is requested (step 3); the third is valid JSON and
+    the run responds with it, delivered as a `structured` part.
   - $sFailed: three invalid answers; the retry limit is reached and the
     run ends `failed` with agentry.output.schema_mismatch (fatal), the
     session closed (CORE-133). No fourth call is made.
@@ -19,14 +24,6 @@ description: >-
   Every request still carries the output schema (PROV-002; how a
   non-native adapter conveys it, e.g. in its instructions, is
   adapter-specific and checked by adapter cases).
-
-
-  Reading chosen: the scripted adapter returns parts as scripted, so a
-  valid answer is given as a `structured` part. The spec does not say
-  whether, for a model without `structuredOutput`, JSON text is turned into
-  a `structured` part by the adapter or by the harness (the Area 5 reading
-  for model hooks parses response text only for hooks, HOOK-101); this
-  fixture does not depend on it.
 requirements: [PROV-041]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -64,16 +61,16 @@ setup:
         # $sCorrected
         - parts: [{ type: text, text: "Two widgets." }]
           usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
-        - parts: [{ type: structured, value: { item: widget, quantity: 0 } }]
+        - parts: [{ type: text, text: '{"item":"widget","quantity":0}' }]
           usage: { inputTokens: 30, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
-        - parts: [{ type: structured, value: { item: widget, quantity: 2 } }]
+        - parts: [{ type: text, text: '{"item":"widget","quantity":2}' }]
           usage: { inputTokens: 40, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
         # $sFailed
         - parts: [{ type: text, text: "Some widgets." }]
           usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
-        - parts: [{ type: structured, value: { item: widget, quantity: "two" } }]
+        - parts: [{ type: text, text: '{"item":"widget","quantity":"two"}' }]
           usage: { inputTokens: 30, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
-        - parts: [{ type: structured, value: { item: widget } }]
+        - parts: [{ type: text, text: '{"item":"widget"}' }]
           usage: { inputTokens: 40, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
     scripted-b: { responses: [] }
 script:
@@ -101,10 +98,7 @@ expect:
           - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-a, model: model-a, role: primary } }
           - { type: model.request, turn: 1, step: 2, payload: { provider: scripted-a, model: model-a, role: primary } }
           - { type: model.request, turn: 1, step: 3, payload: { provider: scripted-a, model: model-a, role: primary } }
-          - type: model.response
-            turn: 1
-            step: 3
-            payload: { message: { parts: { $contains: [{ type: structured, value: { item: widget, quantity: 2 } }] } } }
+          - { type: model.response, turn: 1, step: 3 }
           - { type: run.ended, payload: { reason: responded } }
       absentEvents:
         - { type: model.request, step: 4 }

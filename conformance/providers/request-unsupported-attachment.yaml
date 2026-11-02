@@ -22,11 +22,8 @@ description: >-
     `policy.decision` (Providers amendment 2026-11-02). Neither scripted-a
     nor scripted-b receives the image.
 
-  Reading chosen: an image supplied with `run()` that only a fallback
-  supports is not rejected (the first bullet rejects only when no allowed
-  model supports it); the request then needs `vision`, so the first
-  capable, allowed fallback is used, as for content that enters during a
-  run (second bullet, PROV-051).
+  Content only a fallback supports is accepted at `run()` and sent to the
+  first capable, allowed fallback (PROV-042 reading, amendment 2026-11-02).
 requirements: [PROV-042]
 contract: ">=0.1.0 <1.0.0"
 features: []

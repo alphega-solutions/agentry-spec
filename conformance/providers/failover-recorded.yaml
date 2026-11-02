@@ -16,12 +16,10 @@ description: >-
     scripted-b/model-b]): step 1 asks for a lookup; step 2's call to
     model-a fails with a retryable `unavailable` three times (the call and
     `retry.unavailable` 2 retries); the harness fails over mid-turn to
-    model-a2. The error event that precedes the fallback's request names
-    model-a and agentry.provider.unavailable.
-
-
-  Not asserted: whether the retried failures before the last one emit
-  their own `error` events.
+    model-a2. Every failed attempt, retries included, emits its own
+    `error` event naming model-a and agentry.provider.unavailable (PROV-065
+    reading, amendment 2026-11-02): exactly three at step 2, the last
+    before the fallback's request.
 requirements: [PROV-065]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -109,7 +107,17 @@ expect:
         mode: subsequence
         items:
           - { type: model.request, turn: 1, step: 2, payload: { provider: scripted-a, model: model-a, role: primary } }
+          - type: error
+            payload:
+              provider: scripted-a
+              model: model-a
+              error: { category: unavailable, code: agentry.provider.unavailable, retryable: true, source: provider }
           - { type: model.request, turn: 1, step: 2, payload: { provider: scripted-a, model: model-a, role: primary } }
+          - type: error
+            payload:
+              provider: scripted-a
+              model: model-a
+              error: { category: unavailable, code: agentry.provider.unavailable, retryable: true, source: provider }
           - { type: model.request, turn: 1, step: 2, payload: { provider: scripted-a, model: model-a, role: primary } }
           - type: error
             payload:
@@ -119,6 +127,11 @@ expect:
           - { type: model.request, turn: 1, step: 2, payload: { provider: scripted-a, model: model-a2, role: fallback, fallbackReason: failover } }
           - { type: model.response, turn: 1, step: 2, payload: { provider: scripted-a, model: model-a2 } }
           - { type: run.ended, payload: { reason: responded } }
+  ports:
+    eventLog:
+      t1:
+        $sSame:
+          $count: { of: { type: error, turn: 1, step: 2, payload: { provider: scripted-a, model: model-a } }, equals: 3 }
   providerRequests:
     scripted-a:
       - { model: model-a }

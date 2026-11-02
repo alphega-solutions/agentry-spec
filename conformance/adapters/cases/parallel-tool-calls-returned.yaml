@@ -6,7 +6,7 @@ description: >-
   `singleToolCall`. The provider answers with two `lookup` calls; the adapter
   returns both as `tool_call` parts in the provider's order, with distinct
   call IDs, and executes neither.
-requirements: [PROV-043, PROV-001, PROV-004]
+requirements: [PROV-043, PROV-001, PROV-004, PROV-009]
 condition: ok_parallel_tool_calls
 request:
   model: model-a

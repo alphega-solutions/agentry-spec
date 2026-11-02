@@ -9,7 +9,7 @@ description: >-
   (`agent:researcher`). Untrusted: 5, 6 and 9. No trust configuration
   accompanies the request, so tool results and agent output are untrusted
   (ADR-0008; Area 7 provenance ranking).
-requirements: [PROV-003]
+requirements: [PROV-003, PROV-009]
 condition: ok_text
 request:
   model: model-a

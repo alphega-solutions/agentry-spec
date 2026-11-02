@@ -4,7 +4,9 @@ title: Provider overload maps to unavailable, retryable
 description: >-
   The provider reports it is overloaded. The adapter returns the mapped
   error (PROV-080 row 1) and makes no further call.
-requirements: [PROV-007, PROV-080]
+  The overload response reports no usage, so the adapter reports none
+  (`usage: null`).
+requirements: [PROV-006, PROV-007, PROV-080, PROV-009]
 condition: overload
 request:
   model: model-a
@@ -17,3 +19,4 @@ request:
         - { type: text, text: "What is the status of record A-100?", provenance: principal, labels: [] }
 expect:
   error: { category: unavailable, retryable: true, code: agentry.provider.unavailable, source: provider }
+  usage: null

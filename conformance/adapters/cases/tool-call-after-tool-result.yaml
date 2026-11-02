@@ -7,7 +7,7 @@ description: >-
   (tool call and matching result) into one provider call and returns the new
   call as a `tool_call` part. It does not execute `update_record` and does not
   loop back to the provider with a result of its own.
-requirements: [PROV-001]
+requirements: [PROV-001, PROV-009]
 condition: ok_tool_calls
 request:
   model: model-a

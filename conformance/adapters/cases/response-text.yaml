@@ -7,7 +7,7 @@ description: >-
   only in the part's `extensions`, never as other fields. Usage is
   normalized; the provider reports no cached or reasoning tokens for this
   call, so both are 0.
-requirements: [PROV-004, PROV-006]
+requirements: [PROV-004, PROV-006, PROV-009]
 condition: ok_text
 request:
   model: model-a

@@ -8,7 +8,7 @@ description: >-
   (PROV-006, PROV-070): 30 input tokens, nothing output, cached and
   reasoning 0. The harness ends the run blocked with the fallback message
   (PROV-081, verified by core.block-provider-refusal).
-requirements: [PROV-007, PROV-080, PROV-006, PROV-070]
+requirements: [PROV-007, PROV-080, PROV-006, PROV-070, PROV-009]
 condition: safety_refusal_error
 request:
   model: model-a

@@ -24,7 +24,13 @@ description: >-
   - $sHook: one turn of three steps (lookup, lookup, answer) using 25, 35
     and 35 session tokens (95 in all), with the judge called before each
     (210 tokens, not counted). The run responds after step 3. Counting the
-    judge's tokens would reach the budget before step 3 is called.
+    judge's tokens would put the turn at 70 + 25 + 70 = 165 ≥ 100 at the
+    budget check before step 2 (budgets are checked after
+    `beforeModelCall` hooks, PROV-071 reading, amendment 2026-11-02), so
+    neither step 2 nor step 3 would be called.
+
+  The call that reaches the budget completes, including dispatching its
+  tool calls, so $sSum's lookup runs: lookup is called three times in all.
 requirements: [PROV-071]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -190,3 +196,5 @@ expect:
     scripted-b: { count: 0 }
     scripted-sum: { count: 1 }
     scripted-judge: { count: 5 }
+  stubCalls:
+    lookup: { count: 3 }

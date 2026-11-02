@@ -15,9 +15,14 @@ description: >-
     accepted.
   - Fallback scripted-e/model-e with default@1 setting
     `context.reserveOutputTokens: 101` → rejected (101 > 100); with 100 →
-    accepted. Only default@1 is allowed, and the reserve is set
-    explicitly, so the result does not depend on how the default reserve
-    is derived.
+    accepted. Only default@1 is allowed.
+  - The same fallback with default@1 restored to the baseline (no
+    `reserveOutputTokens` set) → accepted: the default reserve is never an
+    error (PROV-040 as narrowed, amendment 2026-11-02).
+  - The same fallback with persona `params.maxOutputTokens: 101`, above the
+    smallest `maxOutputTokens` capability among the primary (4,096) and
+    its fallbacks (scripted-e, 100) → rejected, not clamped; with 100 →
+    accepted.
 requirements: [PROV-040]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -92,5 +97,20 @@ script:
       artifacts:
         - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-e, name: model-e }] } }
         - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, deliveryMode: buffered, budget: { tokens: 100000 }, timeouts: { run: PT5M, tool: PT30S }, retry: { unavailable: 2 }, outputRetryLimit: 2, limits: { partSize: 1048576, sessionSize: 10485760 }, defaultAttachmentLabels: [], context: { reserveOutputTokens: 100 } }
+    expect: { ok: true }
+  # Default reserve with a fallback whose maxOutputTokens is 100: never an error.
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-e, name: model-e }] } }
+        - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, deliveryMode: buffered, budget: { tokens: 100000 }, timeouts: { run: PT5M, tool: PT30S }, retry: { unavailable: 2 }, outputRetryLimit: 2, limits: { partSize: 1048576, sessionSize: 10485760 }, defaultAttachmentLabels: [] }
+    expect: { ok: true }
+  # params.maxOutputTokens above the smallest capability among primary and fallbacks.
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a, params: { maxOutputTokens: 101 }, fallbacks: [{ provider: scripted-e, name: model-e }] } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a, params: { maxOutputTokens: 100 }, fallbacks: [{ provider: scripted-e, name: model-e }] } }
     expect: { ok: true }
 expect: {}

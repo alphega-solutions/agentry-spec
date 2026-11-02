@@ -19,14 +19,12 @@ description: >-
     usage at all: its `model.response` records all four fields as 0.
 
 
-  Format readings: a scripted response's `usage` is the usage the provider
-  reports, and a field left out of it is a field the provider does not
-  report; on an `error` response, a sibling `usage` is usage the provider
-  reported for the failed call (the fixture format gives `usage` no
-  description; this is the only way to script it). That the harness
-  treats cached and reasoning tokens as inside input and output is also
-  observable through budgets (providers.usage-budget-failed-calls) and
-  cost (providers.cost-recorded).
+  A scripted response's `usage` is the usage the provider reports, for a
+  success or an error; a field left out is one the provider does not
+  report, and no `usage` means none is reported (fixture format,
+  `scriptedResponse.usage`). That the harness treats cached and reasoning
+  tokens as inside input and output is also observable through budgets
+  (providers.usage-budget-failed-calls) and cost (providers.cost-recorded).
 requirements: [PROV-006, PROV-070]
 contract: ">=0.1.0 <1.0.0"
 features: []

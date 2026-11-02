@@ -587,6 +587,18 @@ MATCHERS = {"$any", "$absent", "$regex", "$len", "$contains", "$not", "$every",
             "$gte", "$lte", "$all", "$count", "$selfProvider"}
 
 
+def _self_provider_as_string(value):
+    """Adapter cases: `{"$selfProvider": true}` stands for the adapter's
+    declared provider ID; check it as the string it will become."""
+    if value == {"$selfProvider": True}:
+        return "self-provider"
+    if isinstance(value, dict):
+        return {k: _self_provider_as_string(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_self_provider_as_string(v) for v in value]
+    return value
+
+
 def _pattern_sites(doc: dict):
     """(path, value) of every place matchers and placeholders may appear:
     step `expect`, `capture` and `startAfter` (inside `concurrently` too), then
@@ -835,7 +847,8 @@ def main() -> int:
         prefix = {CEL_ID: "cel.", ADAPTER_ID: "adapter."}.get(target)
         if prefix and not str(doc.get("id", "")).startswith(prefix):
             errors.append(f"{fx.relative_to(ROOT)}: id must start with {prefix!r}")
-        for err in validator(target).iter_errors(doc):
+        checked = _self_provider_as_string(doc) if target == ADAPTER_ID else doc
+        for err in validator(target).iter_errors(checked):
             errors.append(f"{fx.relative_to(ROOT)}: {describe(err)}")
         fid = doc.get("id")
         if fid in ids:

@@ -6,7 +6,7 @@ description: >-
   (PROV-080 row 2); not retryable, so the harness fails over instead of
   retrying. Credential material never appears in the error, including
   `details` (CORE-194).
-requirements: [PROV-007, PROV-080]
+requirements: [PROV-007, PROV-080, PROV-009]
 condition: auth_failure
 request:
   model: model-a

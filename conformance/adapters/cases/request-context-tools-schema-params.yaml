@@ -5,15 +5,19 @@ description: >-
   The request carries assembled context (system and principal messages), two
   visible tool definitions, an output schema and declared generation
   parameters. The adapter sends all of them in its one provider call: the
-  transcript's matchers confirm both tool definitions, the output schema (as
-  native structured output where the model supports it, otherwise in the
-  instructions; PROV-041) and every parameter in `paramsSent` (with the
-  vendor's names for them). The provider answers with structured output,
-  returned as a `structured` part whose value satisfies the schema.
-  `paramsSent` uses the agentry parameter names; an adapter that does not
-  declare one of these parameters (PROV-008) is configured with the subset it
-  declares, and its transcript records that subset.
-requirements: [PROV-002, PROV-004]
+  transcript's matchers confirm both tool definitions, in order
+  (`toolsSent`), the output schema (`outputSchemaSent`) and every parameter
+  in `paramsSent` (with the vendor's names for them). This case applies to
+  models with native structured output (`structuredOutput`): each transcript
+  set maps `model-a` to such a model, so the schema is sent as native
+  structured output and the answer is returned as a `structured` part whose
+  value satisfies the schema. (Without `structuredOutput` the adapter
+  returns text and the harness parses it, PROV-041; that path is covered by
+  `providers.request-output-schema-non-native`.) `paramsSent` uses the
+  agentry parameter names; an adapter that does not declare one of these
+  parameters (PROV-008) is configured with the subset it declares, and its
+  transcript records that subset.
+requirements: [PROV-002, PROV-004, PROV-009]
 condition: ok_structured
 request:
   model: model-a
@@ -62,6 +66,8 @@ expect:
         key: "A-100"
         status: { "$regex": "^(active|closed)$" }
   wire:
+    toolsSent: [lookup, update_record]
+    outputSchemaSent: true
     paramsSent:
       temperature: 0.2
       topP: 0.9
