@@ -4,13 +4,26 @@ title: "A hook decision records a hash of the hook's input: identical input give
 description: >-
   The rule hook hasher annotates at sessionStart every time. $sFirst and
   $sSame are separate sessions with the same principal, persona and first
-  input; $sOther differs only in its input text. Each decision's inputHash
-  is a sha256 value. $sFirst and $sSame record the same inputHash;
-  $sOther records a different one. Reading: the hashed input is the hook's
-  view of the content and variables at its point (canonicalized with RFC
-  8785, EVAL-000), not session or run identifiers, which differ between
-  any two sessions and would make every hash distinct and replay
-  (EVAL-063) impossible. Replay itself is Area 11's.
+  input; $sOther differs only in its input text. $sFirst and $sSame record
+  the same inputHash; $sOther records a different one, so the hash covers
+  the hook's view and not the session or run identifiers (HOOK-062 as
+  amended 2026-11-01; replay itself, EVAL-063, is Area 11's).
+
+
+  The exact inputHash of $sFirst (and $sSame) is asserted. It is
+  "sha256:" + the hex SHA-256 of the RFC 8785 canonical JSON of the hook's
+  view at sessionStart — the `variables` of its HookRequest, without
+  schemaVersion, hook, point, tenant, sessionId, runId and traceContext:
+  principal {subject: user-1, tenant: t1, roles: [analyst], attributes:
+  {dept: ops}, assurance: multi_factor} (roles and attributes are set
+  explicitly so no default applies); session {persona: assistant@1,
+  tainted: false, turn: 1, step: 0} (step 0 at sessionStart); content [the
+  principal's first input as one text part {type: text, text:
+  SYN-INPUT-0062-A, provenance: principal, labels: []}]. The canonical
+  bytes hashed are exactly:
+  {"content":[{"labels":[],"provenance":"principal","text":"SYN-INPUT-0062-A","type":"text"}],"principal":{"assurance":"multi_factor","attributes":{"dept":"ops"},"roles":["analyst"],"subject":"user-1","tenant":"t1"},"session":{"persona":"assistant@1","step":0,"tainted":false,"turn":1}}
+  For $sOther the same view with text SYN-INPUT-0062-B gives
+  sha256:e9418271524270f018758df879d4f8dca186deca6c13a2c48cf6d6c0c294b8f6.
 requirements: [HOOK-062]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -46,7 +59,7 @@ setup:
             - { provider: scripted-b, name: model-b }
   tenants:
     - id: t1
-      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+      principals: [{ id: p1, subject: user-1, roles: [analyst], attributes: { dept: ops }, assurance: multi_factor }]
   providers:
     scripted-a:
       responses:
@@ -84,7 +97,7 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: hook.decision, payload: { hook: hasher@1, point: sessionStart, result: annotate, inputHash: { $all: [$h, { $regex: "^sha256:[0-9a-f]{64}$" }] } } }
+          - { type: hook.decision, payload: { hook: hasher@1, point: sessionStart, result: annotate, inputHash: { $all: [$h, "sha256:fddc18b23c93dad8c69f6d0e7eecfdc31ff07037a09758639a4021273af6b4ab"] } } }
     $sSame:
       events:
         mode: subsequence
@@ -94,4 +107,4 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: hook.decision, payload: { hook: hasher@1, point: sessionStart, result: annotate, inputHash: { $all: [{ $not: $h }, { $regex: "^sha256:[0-9a-f]{64}$" }] } } }
+          - { type: hook.decision, payload: { hook: hasher@1, point: sessionStart, result: annotate, inputHash: { $all: [{ $not: $h }, "sha256:e9418271524270f018758df879d4f8dca186deca6c13a2c48cf6d6c0c294b8f6"] } } }

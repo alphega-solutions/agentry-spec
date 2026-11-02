@@ -5,9 +5,10 @@ description: >-
   Two rule hooks block with distinctive reason codes. $sTool: the
   beforeToolCall hook blocks update_record; the hook.decision (and its
   audit record) carries test.guard.reason-tool-0023, but the model's next
-  request holds only a generic `policy` error as the tool result: its code
-  is not the reason code, its message does not mention it, and it carries
-  no details. The run ends normally with the model's text. $sResponse: the
+  request holds only the generic hook error as the tool result, exactly
+  {code: agentry.hook.blocked, category: policy, retryable: false, source:
+  hook, message: "Blocked by policy."} with no details (HOOK-023 as amended
+  2026-11-01). The run ends normally with the model's text. $sResponse: the
   beforeResponse hook blocks the answer; the hook.decision carries
   test.guard.reason-response-0023, and the principal receives exactly the
   persona's fixed fallback message, with no reason in the run outcome.
@@ -92,7 +93,14 @@ expect:
           - type: tool.result
             payload:
               callId: c1
-              result: { error: { category: policy, code: { $not: { $regex: "reason-(tool|response)-0023" } }, message: { $not: { $regex: "reason-(tool|response)-0023" } } } }
+              result:
+                error:
+                  code: agentry.hook.blocked
+                  category: policy
+                  retryable: false
+                  source: hook
+                  message: "Blocked by policy."
+                  details: { $absent: true }
           - { type: run.ended, payload: { reason: responded } }
     $sResponse:
       events:
@@ -113,9 +121,11 @@ expect:
                   callId: c1
                   result:
                     error:
+                      code: agentry.hook.blocked
                       category: policy
-                      code: { $not: { $regex: "reason-(tool|response)-0023" } }
-                      message: { $not: { $regex: "reason-(tool|response)-0023" } }
+                      retryable: false
+                      source: hook
+                      message: "Blocked by policy."
                       details: { $absent: true }
       - {}
   ports:

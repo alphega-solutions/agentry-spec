@@ -7,10 +7,11 @@ description: >-
   non-continue result emits one hook.decision carrying the hook's id@version,
   the point, the result, the reason code (for block) and the snapshot hash,
   and one audit record of type hook_decision for that session, with the
-  same snapshot hash, linked to the event by ID. $sContinue has no
-  hook.decision event and no hook_decision audit record. The shape of a
-  hook_decision audit record's `details` is not specified, so only the
-  envelope fields and the event link are checked.
+  same snapshot hash, linked to the event by ID, whose `details` equal the
+  hook.decision payload (HOOK-060 as amended 2026-11-01): each payload is
+  bound whole ($pAnn, $pRw, $pBlk) and the audit record's `details` must
+  match it. $sContinue has no hook.decision event and no hook_decision
+  audit record.
 requirements: [HOOK-060, HOOK-061]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -101,21 +102,21 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: hook.decision, eventId: $eAnn, snapshotHash: $snap, payload: { hook: recorder@1, point: sessionStart, result: annotate, labelsAdded: [pii] } }
+          - { type: hook.decision, eventId: $eAnn, snapshotHash: $snap, payload: $pAnn }
       absentEvents:
         - { type: hook.decision, payload: { result: { $not: annotate } } }
     $sRewrite:
       events:
         mode: subsequence
         items:
-          - { type: hook.decision, eventId: $eRw, snapshotHash: $snap, payload: { hook: recorder@1, point: sessionStart, result: rewrite } }
+          - { type: hook.decision, eventId: $eRw, snapshotHash: $snap, payload: $pRw }
       absentEvents:
         - { type: hook.decision, payload: { result: { $not: rewrite } } }
     $sBlock:
       events:
         mode: subsequence
         items:
-          - { type: hook.decision, eventId: $eBlk, snapshotHash: $snap, payload: { hook: recorder@1, point: sessionStart, result: block, reasonCode: test.guard.recorded } }
+          - { type: hook.decision, eventId: $eBlk, snapshotHash: $snap, payload: $pBlk }
           - { type: run.ended, payload: { reason: blocked } }
     $sContinue:
       events:
@@ -125,13 +126,24 @@ expect:
       absentEvents:
         - { type: hook.decision }
   ports:
+    eventLog:
+      t1:
+        $sAnnotate:
+          $contains:
+            - { eventId: $eAnn, payload: { hook: recorder@1, point: sessionStart, result: annotate, labelsAdded: [pii], reasonCode: { $absent: true }, inputHash: { $regex: "^sha256:[0-9a-f]{64}$" } } }
+        $sRewrite:
+          $contains:
+            - { eventId: $eRw, payload: { hook: recorder@1, point: sessionStart, result: rewrite, reasonCode: { $absent: true }, inputHash: { $regex: "^sha256:[0-9a-f]{64}$" } } }
+        $sBlock:
+          $contains:
+            - { eventId: $eBlk, payload: { hook: recorder@1, point: sessionStart, result: block, reasonCode: test.guard.recorded, inputHash: { $regex: "^sha256:[0-9a-f]{64}$" } } }
     auditLog:
       t1:
         $all:
           - $contains:
-              - { type: hook_decision, tenant: t1, sessionId: $sAnnotate, snapshotHash: $snap, eventIds: { $contains: [$eAnn] } }
-              - { type: hook_decision, tenant: t1, sessionId: $sRewrite, snapshotHash: $snap, eventIds: { $contains: [$eRw] } }
-              - { type: hook_decision, tenant: t1, sessionId: $sBlock, snapshotHash: $snap, eventIds: { $contains: [$eBlk] } }
+              - { type: hook_decision, tenant: t1, sessionId: $sAnnotate, snapshotHash: $snap, eventIds: { $contains: [$eAnn] }, details: $pAnn }
+              - { type: hook_decision, tenant: t1, sessionId: $sRewrite, snapshotHash: $snap, eventIds: { $contains: [$eRw] }, details: $pRw }
+              - { type: hook_decision, tenant: t1, sessionId: $sBlock, snapshotHash: $snap, eventIds: { $contains: [$eBlk] }, details: $pBlk }
           - $count: { of: { type: hook_decision, sessionId: $sAnnotate }, equals: 1 }
           - $count: { of: { type: hook_decision, sessionId: $sRewrite }, equals: 1 }
           - $count: { of: { type: hook_decision, sessionId: $sBlock }, equals: 1 }
