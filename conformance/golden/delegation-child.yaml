@@ -48,7 +48,13 @@ events:
   principalRef: {subject: user-1, tenant: t1}
   snapshotHash: sha256:a7faa5cfd75dde10c0945620c11dbd21f11b77182befaeedb2cbf41ad5dd36b2
   traceContext: {traceparent: 00-7ef92f3577b34da6a3ce929d0e0e4739-0000000000000003-01}
-  payload: {}
+  provenances: [principal]
+  labels: []
+  payload:
+    message:
+      role: principal
+      parts:
+      - {type: text, text: Ask the helper about record k1., provenance: principal, labels: []}
 - schemaVersion: 0.1.0
   eventId: 019cb813-5410-7006-8000-004400000006
   sessionId: 019cb813-5280-7001-8000-004400000001
@@ -435,7 +441,16 @@ children:
     principalRef: {subject: user-1, tenant: t1}
     snapshotHash: sha256:a7faa5cfd75dde10c0945620c11dbd21f11b77182befaeedb2cbf41ad5dd36b2
     traceContext: {traceparent: 00-7ef92f3577b34da6a3ce929d0e0e4739-0000000000000103-01}
-    payload: {}
+    provenances: [model]
+    labels: []
+    payload:
+      message:
+        role: principal
+        parts:
+        - type: structured
+          value: {task: Look up record k1}
+          provenance: model
+          labels: []
   - schemaVersion: 0.1.0
     eventId: 019cb813-5668-700e-8000-00440000000e
     sessionId: 019cb813-5474-7008-8000-004400000008

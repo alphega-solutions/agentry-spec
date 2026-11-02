@@ -50,7 +50,17 @@ events:
   principalRef: {subject: user-1, tenant: t1}
   snapshotHash: sha256:5d5fd5a488fbd5146e7b569d071cf15e0f460f87ea6e5ae0696766ea4f28f63a
   traceContext: {traceparent: 00-8ff92f3577b34da6a3ce929d0e0e473a-0000000000000003-01}
-  payload: {}
+  provenances: [principal]
+  labels: []
+  payload:
+    message:
+      role: principal
+      parts:
+      - type: text
+        text: SYN-AP-01 SYN-AP-02 SYN-AP-03 SYN-AP-04 SYN-AP-05 SYN-AP-06 SYN-AP-07 SYN-AP-08 SYN-AP-09 SYN-AP-10 SYN-AP-11 SYN-AP-12 SYN-AP-13 SYN-AP-14 SYN-AP-15 SYN-AP-16 SYN-AP-17 SYN-AP-18 SYN-AP-19
+          SYN-AP-20
+        provenance: principal
+        labels: []
 - schemaVersion: 0.1.0
   eventId: 019cbd39-b010-7006-8000-005500000006
   sessionId: 019cbd39-ae80-7001-8000-005500000001
@@ -174,7 +184,18 @@ events:
   principalRef: {subject: user-1, tenant: t1}
   snapshotHash: sha256:5d5fd5a488fbd5146e7b569d071cf15e0f460f87ea6e5ae0696766ea4f28f63a
   traceContext: {traceparent: 00-8ff92f3577b34da6a3ce929d0e0e473a-000000000000000a-01}
-  payload: {}
+  provenances: [principal]
+  labels: []
+  payload:
+    message:
+      role: principal
+      parts:
+      - type: text
+        text: SYN-BP-01 SYN-BP-02 SYN-BP-03 SYN-BP-04 SYN-BP-05 SYN-BP-06 SYN-BP-07 SYN-BP-08 SYN-BP-09 SYN-BP-10 SYN-BP-11 SYN-BP-12 SYN-BP-13 SYN-BP-14 SYN-BP-15 SYN-BP-16 SYN-BP-17 SYN-BP-18 SYN-BP-19
+          SYN-BP-20 SYN-BP-21 SYN-BP-22 SYN-BP-23 SYN-BP-24 SYN-BP-25 SYN-BP-26 SYN-BP-27 SYN-BP-28 SYN-BP-29 SYN-BP-30 SYN-BP-31 SYN-BP-32 SYN-BP-33 SYN-BP-34 SYN-BP-35 SYN-BP-36 SYN-BP-37 SYN-BP-38 SYN-BP-39
+          SYN-BP-40 SYN-BP-41 SYN-BP-42 SYN-BP-43 SYN-BP-44 SYN-BP-45
+        provenance: principal
+        labels: []
 - schemaVersion: 0.1.0
   eventId: 019cbd39-b2cc-700e-8000-00550000000e
   sessionId: 019cbd39-ae80-7001-8000-005500000001

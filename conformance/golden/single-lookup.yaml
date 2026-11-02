@@ -4,8 +4,9 @@
 # responds "Record k1 holds SYN-VALUE-0001." and the run ends `responded`.
 # Snapshot: the baseline configuration (conformance/shared/baseline) with
 # schema defaults filled in; `hash` is sha256 of the RFC 8785 JSON of
-# `artifacts` (CFG-050). Each model.request references its assembled context
-# (principal input included) as an application/json blob carried in `blobs`.
+# `artifacts` (CFG-050). turn.started carries the principal's message; each
+# model.request also references its assembled context (optional) as an
+# application/json blob carried in `blobs`.
 # Generated: hashes, sizes and IDs are computed, never hand-edited.
 schemaVersion: 0.1.0
 tenant: t1
@@ -49,7 +50,13 @@ events:
   principalRef: {subject: user-1, tenant: t1}
   snapshotHash: sha256:917994aa752361a52830e78416b0550055054dca7ee4aecfbae787862d1eeb19
   traceContext: {traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000003-01}
-  payload: {}
+  provenances: [principal]
+  labels: []
+  payload:
+    message:
+      role: principal
+      parts:
+      - {type: text, text: Look up record k1., provenance: principal, labels: []}
 - schemaVersion: 0.1.0
   eventId: 019ca8a0-4010-7006-8000-001100000006
   sessionId: 019ca8a0-3e80-7001-8000-001100000001

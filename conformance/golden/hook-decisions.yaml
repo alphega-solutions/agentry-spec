@@ -51,7 +51,13 @@ events:
   principalRef: {subject: user-1, tenant: t1}
   snapshotHash: sha256:0d6de43c172c9f36e746b8146518a2444b590a232234c95c52791aa9f42cf7a3
   traceContext: {traceparent: 00-90f92f3577b34da6a3ce929d0e0e473b-0000000000000003-01}
-  payload: {}
+  provenances: [principal]
+  labels: []
+  payload:
+    message:
+      role: principal
+      parts:
+      - {type: text, text: 'Set record k1 to SYN-VALUE-0006, then read it.', provenance: principal, labels: []}
 - schemaVersion: 0.1.0
   eventId: 019cc260-0c10-7006-8000-006600000006
   sessionId: 019cc260-0a80-7001-8000-006600000001

@@ -3,7 +3,8 @@
 # beforeToolCall hook clamp@1 (results [rewrite]), required by assistant@1.
 # Steps 1 and 2: the model asks count_records {prefix: a, limit: 50} (c1,
 # then c2 with identical arguments); clamp rewrites both to {prefix: a,
-# limit: 10} (hook.decision `rewrite`, audited); the DISPATCHED arguments
+# limit: 10} (hook.decision `rewrite` with `replacementRef`, the rewritten
+# tool_call part as JSON in `blobs`; audited); the DISPATCHED arguments
 # recorded on tool.call are the post-hook ones. The two identical calls
 # answer {count: 3} then {count: 4}. Step 3: the model responds "First count
 # 3, then count 4." and the run ends `responded`. inputHash per HOOK-062 as
@@ -50,7 +51,13 @@ events:
   principalRef: {subject: user-1, tenant: t1}
   snapshotHash: sha256:6f44c0cfcd5855090f5f55a2888fa8164796a4da0d92a0d29f3270ede616437a
   traceContext: {traceparent: 00-6df92f3577b34da6a3ce929d0e0e4738-0000000000000003-01}
-  payload: {}
+  provenances: [principal]
+  labels: []
+  payload:
+    message:
+      role: principal
+      parts:
+      - {type: text, text: 'Count the records with prefix a, twice.', provenance: principal, labels: []}
 - schemaVersion: 0.1.0
   eventId: 019cb2ec-f810-7006-8000-003300000006
   sessionId: 019cb2ec-f680-7001-8000-003300000001
@@ -118,6 +125,11 @@ events:
     hook: clamp@1
     point: beforeToolCall
     result: rewrite
+    replacementRef:
+      id: blob-golden-33-02
+      hash: sha256:cb855125210f6d0ef9833c82224d39987cb537a260ce01aeb123d6365892e352
+      mediaType: application/json
+      size: 130
     inputHash: sha256:13525781bbb156a09dc57d07c50a2c0c67b2c5f5a796fb7fd6e4efb610a40e92
 - schemaVersion: 0.1.0
   eventId: 019cb2ec-f93c-700a-8000-00330000000a
@@ -177,7 +189,7 @@ events:
     model: model-a
     role: primary
     context:
-      id: blob-golden-33-02
+      id: blob-golden-33-03
       hash: sha256:f91954a563820cca9c00266ba6f3012f0f22043bf643996cad3a3380a0dd534e
       mediaType: application/json
       size: 667
@@ -226,6 +238,11 @@ events:
     hook: clamp@1
     point: beforeToolCall
     result: rewrite
+    replacementRef:
+      id: blob-golden-33-04
+      hash: sha256:9b803740ae8a154f918fa36a6d6392b6a7a4e5431d238d28389e94246ec0db85
+      mediaType: application/json
+      size: 130
     inputHash: sha256:637d6d28c85a4eaeed7cf655e44fe8d92d008f22dd8a10592f3067e622f44e2c
 - schemaVersion: 0.1.0
   eventId: 019cb2ec-fb30-7010-8000-003300000010
@@ -285,7 +302,7 @@ events:
     model: model-a
     role: primary
     context:
-      id: blob-golden-33-03
+      id: blob-golden-33-05
       hash: sha256:b949c42ffbfad3508c03d559c75f2e94c2068cf531cacec9a9d0aed43f838bfe
       mediaType: application/json
       size: 998
@@ -347,13 +364,27 @@ blobs:
   base64: W3sicm9sZSI6InN5c3RlbSIsInBhcnRzIjpbeyJ0eXBlIjoidGV4dCIsInRleHQiOiJGb2xsb3cgb3JnYW5pc2F0aW9uYWwgcG9saWN5LiIsInByb3ZlbmFuY2UiOiJzeXN0ZW0iLCJsYWJlbHMiOltdfSx7InR5cGUiOiJ0ZXh0IiwidGV4dCI6IllvdSBhcmUgYSB0ZXN0IGFzc2lzdGFudC4iLCJwcm92ZW5hbmNlIjoic3lzdGVtIiwibGFiZWxzIjpbXX1dfSx7InJvbGUiOiJwcmluY2lwYWwiLCJwYXJ0cyI6W3sidHlwZSI6InRleHQiLCJ0ZXh0IjoiQ291bnQgdGhlIHJlY29yZHMgd2l0aCBwcmVmaXggYSwgdHdpY2UuIiwicHJvdmVuYW5jZSI6InByaW5jaXBhbCIsImxhYmVscyI6W119XX1d
 - ref:
     id: blob-golden-33-02
+    hash: sha256:cb855125210f6d0ef9833c82224d39987cb537a260ce01aeb123d6365892e352
+    mediaType: application/json
+    size: 130
+  labels: []
+  base64: W3sidHlwZSI6InRvb2xfY2FsbCIsImNhbGxJZCI6ImMxIiwidG9vbCI6ImNvdW50X3JlY29yZHMiLCJhcmd1bWVudHMiOnsicHJlZml4IjoiYSIsImxpbWl0IjoxMH0sInByb3ZlbmFuY2UiOiJtb2RlbCIsImxhYmVscyI6W119XQ==
+- ref:
+    id: blob-golden-33-03
     hash: sha256:f91954a563820cca9c00266ba6f3012f0f22043bf643996cad3a3380a0dd534e
     mediaType: application/json
     size: 667
   labels: []
   base64: W3sicm9sZSI6InN5c3RlbSIsInBhcnRzIjpbeyJ0eXBlIjoidGV4dCIsInRleHQiOiJGb2xsb3cgb3JnYW5pc2F0aW9uYWwgcG9saWN5LiIsInByb3ZlbmFuY2UiOiJzeXN0ZW0iLCJsYWJlbHMiOltdfSx7InR5cGUiOiJ0ZXh0IiwidGV4dCI6IllvdSBhcmUgYSB0ZXN0IGFzc2lzdGFudC4iLCJwcm92ZW5hbmNlIjoic3lzdGVtIiwibGFiZWxzIjpbXX1dfSx7InJvbGUiOiJwcmluY2lwYWwiLCJwYXJ0cyI6W3sidHlwZSI6InRleHQiLCJ0ZXh0IjoiQ291bnQgdGhlIHJlY29yZHMgd2l0aCBwcmVmaXggYSwgdHdpY2UuIiwicHJvdmVuYW5jZSI6InByaW5jaXBhbCIsImxhYmVscyI6W119XX0seyJyb2xlIjoiYXNzaXN0YW50IiwicGFydHMiOlt7InR5cGUiOiJ0b29sX2NhbGwiLCJjYWxsSWQiOiJjMSIsInRvb2wiOiJjb3VudF9yZWNvcmRzIiwiYXJndW1lbnRzIjp7InByZWZpeCI6ImEiLCJsaW1pdCI6NTB9LCJwcm92ZW5hbmNlIjoibW9kZWwiLCJsYWJlbHMiOltdfV19LHsicm9sZSI6InRvb2wiLCJwYXJ0cyI6W3sidHlwZSI6InRvb2xfcmVzdWx0IiwiY2FsbElkIjoiYzEiLCJ0b29sIjoiY291bnRfcmVjb3JkcyIsInJlc3VsdCI6eyJvayI6eyJvdXRwdXQiOnsiY291bnQiOjN9fX0sInByb3ZlbmFuY2UiOiJ0b29sOmNvdW50X3JlY29yZHMiLCJsYWJlbHMiOltdfV19XQ==
 - ref:
-    id: blob-golden-33-03
+    id: blob-golden-33-04
+    hash: sha256:9b803740ae8a154f918fa36a6d6392b6a7a4e5431d238d28389e94246ec0db85
+    mediaType: application/json
+    size: 130
+  labels: []
+  base64: W3sidHlwZSI6InRvb2xfY2FsbCIsImNhbGxJZCI6ImMyIiwidG9vbCI6ImNvdW50X3JlY29yZHMiLCJhcmd1bWVudHMiOnsicHJlZml4IjoiYSIsImxpbWl0IjoxMH0sInByb3ZlbmFuY2UiOiJtb2RlbCIsImxhYmVscyI6W119XQ==
+- ref:
+    id: blob-golden-33-05
     hash: sha256:b949c42ffbfad3508c03d559c75f2e94c2068cf531cacec9a9d0aed43f838bfe
     mediaType: application/json
     size: 998
@@ -535,6 +566,11 @@ auditRecords:
     hook: clamp@1
     point: beforeToolCall
     result: rewrite
+    replacementRef:
+      id: blob-golden-33-02
+      hash: sha256:cb855125210f6d0ef9833c82224d39987cb537a260ce01aeb123d6365892e352
+      mediaType: application/json
+      size: 130
     inputHash: sha256:13525781bbb156a09dc57d07c50a2c0c67b2c5f5a796fb7fd6e4efb610a40e92
 - schemaVersion: 0.1.0
   id: 019cb2ec-facc-700f-8000-00330000000f
@@ -549,4 +585,9 @@ auditRecords:
     hook: clamp@1
     point: beforeToolCall
     result: rewrite
+    replacementRef:
+      id: blob-golden-33-04
+      hash: sha256:9b803740ae8a154f918fa36a6d6392b6a7a4e5431d238d28389e94246ec0db85
+      mediaType: application/json
+      size: 130
     inputHash: sha256:637d6d28c85a4eaeed7cf655e44fe8d92d008f22dd8a10592f3067e622f44e2c

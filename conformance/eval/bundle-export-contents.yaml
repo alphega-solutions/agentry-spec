@@ -21,8 +21,8 @@ description: >-
     events are bound whole and must equal, element by element, the event
     log the port holds for the session;
   - `blobs`: every referenced blob with its bytes, among them blob-file-1
-    with its exact reference and its 44 bytes as base64 (it is referenced
-    by the final `model.response`, and as the principal's attachment);
+    with its exact reference and its 44 bytes as base64 (referenced by the
+    principal's message on `turn.started` and by the final `model.response`);
   - `snapshot`: the snapshot record whose `hash` is the session's snapshot
     hash (bound from the bundle and matched against every event and the
     session's `session.created`), with the artifacts grouped by kind
@@ -188,6 +188,8 @@ expect:
         mode: subsequence
         items:
           - { type: session.created, seq: 1, snapshotHash: $snap }
+          - type: turn.started
+            payload: { message: { role: principal, parts: { $contains: [{ type: file, blob: { id: blob-file-1 }, provenance: "attachment:upload" }] } } }
           - { type: tool.call, payload: { callId: c1, tool: ask_helper, childSessionId: $child } }
           - { type: escalation.raised, eventId: $evRaised }
           - { type: tool.call, payload: { callId: c2, tool: update_record } }

@@ -1,6 +1,6 @@
 schemaVersion: "0.1.0"
 id: eval.replay-canonical-arguments
-title: Replay matches calls on their canonical post-hook arguments, in order for repeated identical calls; a call whose arguments genuinely differ gets agentry.eval.unrecorded_call and the run continues
+title: Replay matches calls on their canonical post-hook arguments, in order for repeated identical calls; a call whose arguments genuinely differ gets agentry.eval.unrecorded_call and the run continues; a recorded rewrite is reused under replay-decisions
 description: >-
   `golden/rewrite-canonical.yaml` records, under a snapshot in which the
   native beforeToolCall hook clamp@1 (results [rewrite]) is required by
@@ -10,7 +10,8 @@ description: >-
   identical calls answered {count: 3} then {count: 4}; step 3 responds
   "First count 3, then count 4." Both replays use `snapshot: recorded` and
   `hookMode: reEvaluate`, so clamp runs again on the replayed content
-  (EVAL-063); its stub answers are the only thing that differs.
+  (EVAL-063); its stub answers are the only thing that differs. A third
+  replay uses `replayDecisions`.
 
 
   - $rMatch: clamp answers `rewrite` with arguments `{limit: 10.0, prefix:
@@ -33,6 +34,16 @@ description: >-
     final text is the recorded one and the run ends `responded`.
 
 
+  - $rReuse, `replayDecisions` (EVAL-063): clamp's view of c1 and of c2
+    hashes as recorded (c2 sees a tainted session, as recorded, since c1's
+    result is untrusted tool output), so both recorded `rewrite` decisions
+    are reused — clamp is not invoked in $rReuse — and the rewritten
+    arguments come from each decision's `replacementRef` blob (Area 11
+    amendment 2026-11-02). The dispatched {prefix: a, limit: 10} matches
+    the recording: c1 gets {count: 3}, c2 {count: 4}, no divergence; each
+    replayed `hook.decision` is a `rewrite` with the recorded input hash.
+
+
   clamp's four invocations are asserted in order: two per replay, each on
   the model's pre-hook arguments. count_records is never dispatched (its
   stub has no behaviours) and no provider is called. The fixture's own
@@ -40,7 +51,7 @@ description: >-
   recorded snapshot's) only so that their native handlers are registered;
   the replayed sessions run under the recorded snapshot, whose hash their
   `session.created` carries.
-requirements: [EVAL-000, EVAL-026, EVAL-062]
+requirements: [EVAL-000, EVAL-026, EVAL-062, EVAL-063]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:
@@ -111,6 +122,13 @@ script:
       divergences:
         - { kind: unrecorded_call, callId: c1, tool: count_records }
         - { kind: unrecorded_call, callId: c2, tool: count_records }
+  - action: replay
+    bind: $rReuse
+    tenant: t1
+    bundle: golden/rewrite-canonical.yaml
+    snapshot: recorded
+    hookMode: replayDecisions
+    expect: { ok: true, divergences: [] }
 expect:
   sessions:
     $rMatch:
@@ -158,6 +176,26 @@ expect:
       absentEvents:
         - { type: tool.result, payload: { result: { ok: { $any: true } } } }
         - { type: run.ended, payload: { reason: { $not: responded } } }
+    $rReuse:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, snapshotHash: "sha256:6f44c0cfcd5855090f5f55a2888fa8164796a4da0d92a0d29f3270ede616437a" }
+          - { type: run.started, runId: $u1 }
+          - type: hook.decision
+            runId: $u1
+            payload: { hook: clamp@1, point: beforeToolCall, result: rewrite, replacementRef: { $any: true }, inputHash: "sha256:13525781bbb156a09dc57d07c50a2c0c67b2c5f5a796fb7fd6e4efb610a40e92" }
+          - { type: tool.call, runId: $u1, step: 1, payload: { callId: c1, tool: count_records, arguments: { prefix: a, limit: 10 } } }
+          - { type: tool.result, runId: $u1, step: 1, payload: { callId: c1, tool: count_records, result: { ok: { output: { count: 3 } } } } }
+          - type: hook.decision
+            runId: $u1
+            payload: { hook: clamp@1, point: beforeToolCall, result: rewrite, replacementRef: { $any: true }, inputHash: "sha256:637d6d28c85a4eaeed7cf655e44fe8d92d008f22dd8a10592f3067e622f44e2c" }
+          - { type: tool.call, runId: $u1, step: 2, payload: { callId: c2, tool: count_records, arguments: { prefix: a, limit: 10 } } }
+          - { type: tool.result, runId: $u1, step: 2, payload: { callId: c2, tool: count_records, result: { ok: { output: { count: 4 } } } } }
+          - { type: run.ended, runId: $u1, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.result, payload: { result: { error: { $any: true } } } }
   ports:
     eventLog:
       t1:
@@ -171,6 +209,7 @@ expect:
       - { arguments: { sessionId: $rMatch, point: beforeToolCall, call: { arguments: { prefix: a, limit: 50 } } } }
       - { arguments: { sessionId: $rDiff, point: beforeToolCall, call: { arguments: { prefix: a, limit: 50 } } } }
       - { arguments: { sessionId: $rDiff, point: beforeToolCall, call: { arguments: { prefix: a, limit: 50 } } } }
+    # none for $rReuse: both recorded rewrites are reused
     count_records: { count: 0 }
   providerRequests:
     scripted-a: { count: 0 }

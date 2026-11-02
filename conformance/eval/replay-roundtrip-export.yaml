@@ -71,6 +71,9 @@ expect:
         items:
           - { type: session.created, sessionId: { $all: [$rp, { $not: $s }] }, snapshotHash: $snap }
           - { type: run.started, runId: $r }
+          - type: turn.started
+            runId: $r
+            payload: { message: { role: principal, parts: [{ type: text, text: "Look up record k1.", provenance: principal }] } }
           - { type: tool.call, runId: $r, payload: { callId: c1, tool: lookup, arguments: { key: k1 } } }
           - { type: tool.result, runId: $r, payload: { callId: c1, tool: lookup, result: { ok: { output: { value: SYN-VALUE-0007 } } } } }
           - type: model.response

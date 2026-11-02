@@ -18,7 +18,8 @@ description: >-
   stub has an empty behaviour list (a dispatch fails the fixture), and both
   are asserted unused. The replayed session reproduces the recorded
   outcomes: the same tool call with the same arguments, the recorded tool
-  result, the recorded final text, one run ending `responded`; the
+  result, the recorded final text, one run ending `responded`; its turn
+  starts from the bundle's recorded principal message (`turn.started`); the
   session is a new one (not the recorded session ID) and is left `idle`. No
   divergence is reported.
 
@@ -66,7 +67,11 @@ expect:
             snapshotHash: "sha256:917994aa752361a52830e78416b0550055054dca7ee4aecfbae787862d1eeb19"
             payload: { persona: assistant@1, profile: default@1 }
           - { type: run.started, runId: $r1, payload: { kind: run } }
-          - { type: turn.started, runId: $r1, turn: 1 }
+          - type: turn.started
+            runId: $r1
+            turn: 1
+            provenances: [principal]
+            payload: { message: { role: principal, parts: [{ type: text, text: "Look up record k1.", provenance: principal }] } }
           - type: model.response
             runId: $r1
             step: 1
