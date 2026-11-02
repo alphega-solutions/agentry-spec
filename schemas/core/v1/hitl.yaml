@@ -68,6 +68,7 @@ $defs:
           `agentry.taint.mutating`, `agentry.taint.egress`,
           `agentry.approval.always`, `agentry.approval.rule`,
           `agentry.approval.rule_error`, `agentry.approval.no_rules`,
+          `agentry.approval.rewritten`,
           `agentry.recovery.unknown_outcome`.
         $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/errorCode"
       hook:
