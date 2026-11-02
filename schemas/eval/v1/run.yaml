@@ -14,7 +14,7 @@ properties:
   id: { type: string, minLength: 1 }
   tenant: { type: string, minLength: 1, description: The dedicated eval tenant (EVAL-040). }
   deployment:
-    description: The eval deployment, whose port bindings must not be production ones (EVAL-040).
+    description: The eval deployment; its `environment` must be `eval` (EVAL-040 as amended).
     $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/artifactRef"
   cases:
     type: array
@@ -42,9 +42,9 @@ properties:
     additionalProperties: false
     properties:
       snapshot:
-        description: "`recorded` replays against each bundle's own snapshot; a hash replays against that candidate snapshot."
+        description: "`recorded` replays against each bundle's own snapshot; `candidate` against the run's current configuration; a hash against that stored snapshot."
         oneOf:
-          - const: recorded
+          - enum: [recorded, candidate]
           - $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/sha256"
       hookMode: { enum: [reEvaluate, replayDecisions], default: reEvaluate }
   baseline: { type: string, description: Run ID of the report to compare with (EVAL-080). }

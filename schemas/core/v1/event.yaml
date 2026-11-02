@@ -162,8 +162,10 @@ $defs:
 
   turnStarted:
     description: >-
-      The principal's message as received (CORE-080), so context can be
-      rebuilt from events (CTX-001, Area 11 amendment 2026-11-02).
+      The principal's message as it enters context — after the turn's
+      `sessionStart` hooks, so input they rewrite or redact is never
+      persisted in its original form (CORE-080) — so context can be rebuilt
+      from events (CTX-001, Area 11 amendment 2026-11-02).
       Attachments appear by blob reference; the inline view may be redacted,
       with the full message behind the event's `contentRef` (CORE-154).
     type: object
@@ -270,9 +272,10 @@ $defs:
       labelsAdded: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/labels" }
       replacementRef:
         description: >-
-          For `rewrite`, the replacement content (the rewritten parts, as JSON)
-          in the BlobStore, so context and replay can reproduce it (CTX-001,
-          EVAL-063; Area 11 amendment 2026-11-02).
+          For `rewrite`, the content as rewritten — a JSON array of parts,
+          each with the provenance and labels the harness assigned (HOOK-021)
+          — in the BlobStore as `application/json`, so context and replay can
+          reproduce it (CTX-001, EVAL-063; Area 11 amendment 2026-11-02).
         $ref: "https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/blobRef"
       annotations:
         description: For `annotate`, the labels added per part index into the content the hook saw, from which later context assembly reapplies them (CTX-001, Area 7 amendment 2026-11-01).

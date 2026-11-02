@@ -8,7 +8,9 @@ description: >-
   bundle or a conversion names it in `replay` instead of stubs (EVAL-060).
 type: object
 additionalProperties: false
-required: [schemaVersion, id, persona, inputs, graders]
+required: [schemaVersion, id, graders]
+if: { not: { required: [replay] } }
+then: { required: [persona, inputs] }
 properties:
   schemaVersion: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/contractVersion" }
   id: { type: string, pattern: "^[a-z0-9]+([._-][a-z0-9]+)*$" }
@@ -78,7 +80,7 @@ properties:
     additionalProperties: false
     required: [bundle]
     properties:
-      bundle: { type: string, description: Path of the bundle file, relative to the case. }
+      bundle: { type: string, description: "Path of the bundle file, relative to `conformance/` (e.g. `golden/x.yaml`) in the conformance suite, or to the eval suite's root." }
   tags:
     type: array
     items: { type: string, pattern: "^[a-z0-9][a-z0-9_-]*$" }

@@ -20,6 +20,8 @@ jobs:
         run: python tools/coverage.py
       - name: Spec-CI self-tests (EVAL-002, EVAL-010)
         run: python tools/selftest.py
+      - name: Golden trace bundles (EVAL-025, EVAL-026)
+        run: python tools/check_golden.py
       - name: Build JSON
         run: python tools/build.py
       - uses: actions/upload-artifact@v6

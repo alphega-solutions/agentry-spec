@@ -27,7 +27,8 @@ properties:
         fixture: { type: string }
         requirements: { type: array, items: { type: string } }
         status: { enum: [pass, fail, skipped] }
-        skippedFor: { type: string, description: The unsupported feature that justified the skip. }
+        skippedFor: { type: string, description: The unsupported feature that justified the skip; one of `unsupportedFeatures`. }
+        features: { type: array, items: { type: string }, description: The fixture's `features`. }
         firstUnmet: { type: string, description: For failures, the first expectation not met. }
       allOf:
         - if: { properties: { status: { const: skipped } } }
@@ -35,5 +36,10 @@ properties:
         - if: { properties: { status: { const: fail } } }
           then: { required: [firstUnmet] }
   conforms:
-    description: True if and only if no result failed and every skip is justified by a declared unsupported feature (EVAL-023).
+    description: True if and only if no result failed and every skip is justified by a declared unsupported feature the fixture needs (EVAL-023).
     type: boolean
+if: { properties: { conforms: { const: true } } }
+then:
+  properties:
+    results:
+      not: { contains: { properties: { status: { const: fail } }, required: [status] } }
