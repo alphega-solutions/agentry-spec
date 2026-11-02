@@ -74,7 +74,7 @@ allOf:
   - if: { properties: { type: { enum: [model.request, model.response, tool.call, tool.result] } } }
     then: { required: [turn, step] }
   # events that carry content carry its provenance and labels (CORE-151)
-  - if: { properties: { type: { enum: [model.response, tool.result, context.retrieved, context.compacted] } } }
+  - if: { properties: { type: { enum: [model.response, tool.call, tool.result, context.retrieved, context.compacted] } } }
     then: { required: [provenances, labels] }
 
   - if: { properties: { type: { const: session.created } } }
