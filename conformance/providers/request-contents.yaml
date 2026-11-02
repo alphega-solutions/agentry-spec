@@ -162,8 +162,11 @@ expect:
           - role: principal
             parts: [{ type: text, text: "Say hello", provenance: principal, labels: [] }]
         tools:
-          - { name: lookup, description: Look up a record by key. }
-          - { name: update_record, description: Update a record. }
+          $all:
+            - $len: 2
+            - $contains:
+                - { name: lookup, description: Look up a record by key. }
+                - { name: update_record, description: Update a record. }
         outputSchema: { $absent: true }
     scripted-b: { count: 0 }
   delivered:
