@@ -10,13 +10,14 @@ description: >-
   dispatched and their results recorded; the run ends `escalated` with no
   further model request. The implementation then restarts (in-process state
   is lost). On resume with c2 approved, the step continues: c1 and c3 have
-  recorded outcomes (stage 3), so they are neither dispatched again (the
+  recorded outcomes in the idempotency store (`state: completed`, with
+  their outcomes, asserted below), so they are neither dispatched again (the
   update_record stub holds a third behaviour a re-dispatch would consume)
   nor governed again (the hook stub is called exactly three times in all,
   once per call). c2 is dispatched, and the next model request carries the
   results of c1, c2 and c3 together, in request order, in one tool message
   (assumed message shape, as in tool.pipeline-parallel-independent).
-requirements: [TOOL-033, TOOL-030]
+requirements: [TOOL-033, TOOL-030, TOOL-061]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:
@@ -156,9 +157,20 @@ expect:
         - { type: tool.result, runId: $r2, payload: { callId: c3 } }
         - { type: tool.result, payload: { result: { ok: { output: { attempt: "redispatched" } } } } }
   stubCalls:
-    update_record: { $all: [{ $len: 2 }, { $contains: [{ arguments: { key: k1, value: v1 } }, { arguments: { key: k3, value: v3 } }] }] }
-    set_status: [{ arguments: { key: k2 } }]
+    update_record:
+      $all:
+        - { $len: 2 }
+        - $contains:
+            - { arguments: { key: k1, value: v1 }, context: { idempotencyKey: $k1 } }
+            - { arguments: { key: k3, value: v3 }, context: { idempotencyKey: $k3 } }
+    set_status: [{ arguments: { key: k2 }, context: { idempotencyKey: $k2 } }]
     pre: { count: 3 }
+  ports:
+    idempotencyStore:
+      t1:
+        $k1: { state: completed, outcome: { ok: { output: { updated: true, attempt: "first" } } } }
+        $k3: { state: completed, outcome: { ok: { output: { updated: true, attempt: "first" } } } }
+        $k2: { state: completed, outcome: { ok: { output: { status: set } } } }
   providerRequests:
     scripted-a:
       - {}

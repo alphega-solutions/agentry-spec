@@ -16,8 +16,11 @@ description: >-
     escalates again and, once approved, is dispatched with the rewritten
     arguments.
 
-  In both, the call is never dispatched with arguments a reviewer has not
-  approved, and is dispatched exactly once.
+  In both, the first escalation's pending action shows the model's
+  arguments, the second shows the rewritten ones, and the arguments
+  dispatched (the `tool.call` and the stub call) equal the second pending
+  action's `arguments` exactly: the call is never dispatched with arguments
+  a reviewer has not seen and approved, and is dispatched exactly once.
 requirements: [TOOL-036]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -180,12 +183,12 @@ expect:
         mode: subsequence
         items:
           - { type: policy.decision, runId: $rT1, payload: { kind: taint, outcome: escalate, callId: c2 } }
-          - { type: escalation.raised, runId: $rT1, payload: { escalation: { id: $escT1, sources: [taint], pendingActions: [{ callId: c2 }] } } }
+          - { type: escalation.raised, runId: $rT1, payload: { escalation: { id: $escT1, sources: [taint], pendingActions: [{ callId: c2, arguments: { key: k1, value: v1 } }] } } }
           - { type: run.ended, runId: $rT1, payload: { reason: escalated } }
           - { type: hook.decision, runId: $rT2, payload: { hook: normalise@1, point: beforeToolCall, result: rewrite } }
-          - { type: escalation.raised, runId: $rT2, payload: { escalation: { id: { $all: [$escT2, { $not: $escT1 }] }, pendingActions: [{ callId: c2 }] } } }
+          - { type: escalation.raised, runId: $rT2, payload: { escalation: { id: { $all: [$escT2, { $not: $escT1 }] }, pendingActions: [{ callId: c2, arguments: { $all: [$argsT2, { key: k1, value: V1-NORMALISED }] } }] } } }
           - { type: run.ended, runId: $rT2, payload: { reason: escalated } }
-          - { type: tool.call, runId: $rT3, payload: { callId: c2, arguments: { key: k1, value: V1-NORMALISED } } }
+          - { type: tool.call, runId: $rT3, payload: { callId: c2, arguments: $argsT2 } }
           - { type: tool.result, runId: $rT3, payload: { callId: c2 } }
           - { type: run.ended, runId: $rT3, payload: { reason: responded } }
       absentEvents:
@@ -200,12 +203,12 @@ expect:
         mode: subsequence
         items:
           - { type: hook.decision, runId: $rH1, payload: { hook: gate@1, point: beforeToolCall, result: escalate } }
-          - { type: escalation.raised, runId: $rH1, payload: { escalation: { id: $escH1, sources: [hook], pendingActions: [{ callId: c1 }] } } }
+          - { type: escalation.raised, runId: $rH1, payload: { escalation: { id: $escH1, sources: [hook], pendingActions: [{ callId: c1, arguments: { key: k2, value: v2 } }] } } }
           - { type: run.ended, runId: $rH1, payload: { reason: escalated } }
           - { type: hook.decision, runId: $rH2, payload: { hook: normalise@1, point: beforeToolCall, result: rewrite } }
-          - { type: escalation.raised, runId: $rH2, payload: { escalation: { id: { $all: [$escH2, { $not: $escH1 }] }, pendingActions: [{ callId: c1 }] } } }
+          - { type: escalation.raised, runId: $rH2, payload: { escalation: { id: { $all: [$escH2, { $not: $escH1 }] }, pendingActions: [{ callId: c1, arguments: { $all: [$argsH2, { key: k2, value: V2-NORMALISED }] } }] } } }
           - { type: run.ended, runId: $rH2, payload: { reason: escalated } }
-          - { type: tool.call, runId: $rH3, payload: { callId: c1, arguments: { key: k2, value: V2-NORMALISED } } }
+          - { type: tool.call, runId: $rH3, payload: { callId: c1, arguments: $argsH2 } }
           - { type: tool.result, runId: $rH3, payload: { callId: c1 } }
           - { type: run.ended, runId: $rH3, payload: { reason: responded } }
       absentEvents:
@@ -218,5 +221,5 @@ expect:
     gate: { count: 2 }
     normalise: { count: 2 }
     update_record:
-      - { arguments: { key: k1, value: V1-NORMALISED } }
-      - { arguments: { key: k2, value: V2-NORMALISED } }
+      - { arguments: $argsT2 }
+      - { arguments: $argsH2 }

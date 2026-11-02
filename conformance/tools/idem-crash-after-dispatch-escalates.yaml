@@ -5,14 +5,19 @@ description: >-
   The implementation is crashed at `after_dispatch` while update_record
   (mutating, not idempotent) is being called: the stub has received the
   call, but no outcome has been recorded. After a restart and a clock
-  advance past the run lease (`limits.leaseTtl`, default PT5M), run() on the session performs recovery first
-  (HITL-092): the call is not re-dispatched (the stub has a second behaviour
-  a re-dispatch would consume, and is called exactly once); a `recovery`
-  escalation is raised and the orphaned run ends `escalated`. A reviewer
-  confirms the call as succeeded. The stated outcome is recorded in the
+  advance past the run lease (`limits.leaseTtl`, default PT5M), run() on
+  the session performs recovery first (HITL-092; HITL-091 as amended
+  2026-11-01, step 4): the call is not re-dispatched (the stub has a second
+  behaviour a re-dispatch would consume, and is called exactly once, its
+  result never having reached the implementation: `completed: false`); a
+  `recovery` escalation is raised and the orphaned run ends `escalated`,
+  keeping its `runId` and emitting no new `run.started`. The triggering
+  run() then proceeds with its own request on a session that is now
+  `suspended`, so it is refused with `conflict` (CORE-051) and starts no
+  run. A reviewer confirms the call as succeeded. The stated outcome is recorded in the
   idempotency store under the call's key, delivered to the model as the
   call's result, and the call is still never dispatched again (TOOL-061).
-requirements: [TOOL-060, TOOL-061, TOOL-062]
+requirements: [TOOL-060, TOOL-061, TOOL-062, HITL-091]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:
@@ -60,6 +65,7 @@ script:
     capture:
       - event: { type: escalation.raised }
         bind: { payload.escalation.id: $esc, payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: false, error: { category: conflict } }
   - action: resume
     session: $s
     reviewer: r1
@@ -77,15 +83,17 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: tool.call, turn: 2, payload: { callId: c1, tool: update_record } }
+          - { type: tool.call, runId: $r2, turn: 2, payload: { callId: c1, tool: update_record } }
           - type: escalation.raised
+            runId: $r2
             payload:
               escalation:
                 id: $esc
                 sources: [recovery]
                 pendingActions:
                   - { id: $act, kind: recovery, source: recovery, tool: update_record, arguments: { key: k1, value: v1 }, idempotencyKey: $k, allowedDecisions: [confirm] }
-          - { type: run.ended, payload: { reason: escalated } }
+          - { type: run.ended, runId: $r2, payload: { reason: escalated } }
+          - { type: run.started, runId: { $not: $r2 }, payload: { kind: resume } }
           - { type: escalation.resolved, payload: { escalationId: $esc } }
           - { type: tool.result, turn: 2, payload: { callId: c1, tool: update_record, result: { ok: { output: { updated: true, confirmedBy: "reviewer" } } } } }
           - { type: model.request, turn: 2, step: 2 }
@@ -94,8 +102,12 @@ expect:
         - { type: tool.result, payload: { result: { ok: { output: { attempt: { $any: true } } } } } }
   stubCalls:
     update_record:
-      - { arguments: { key: k1, value: v1 }, context: { sessionId: $s, idempotencyKey: $k } }
+      - { arguments: { key: k1, value: v1 }, completed: false, context: { sessionId: $s, idempotencyKey: $k } }
   ports:
+    eventLog:
+      t1:
+        $s:
+          $count: { of: { type: run.started }, equals: 3 }
     idempotencyStore:
       t1:
         $k: { state: completed, outcome: { ok: { output: { updated: true, confirmedBy: "reviewer" } } } }

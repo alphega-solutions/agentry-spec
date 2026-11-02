@@ -4,11 +4,12 @@ title: A delegation error result is delivered to the parent model and does not e
 description: >-
   The child persona's only tool fails with category `fatal`, so the child
   run ends `failed`. The parent receives ask_helper's result as
-  `unavailable`, `retryable: false` (`agentry.delegation.failed`). Under
-  TOOL-053 a non-retryable `unavailable` would be treated as `fatal`; per
-  the Area 8 amendment to TOOL-053 (ORCH-051), a delegation error never ends
-  the parent run by itself: the parent model receives the error and the
-  parent run responds, leaving the parent session idle.
+  `unavailable`, `retryable: false` (`agentry.delegation.failed`). A
+  non-retryable tool error is delivered to the model as the call's result
+  (TOOL-053 as amended 2026-11-01, which amends CORE-191's `unavailable`
+  row for tool errors), and a delegation error never ends the parent run by
+  itself (ORCH-051): the parent model receives the error and the parent run
+  responds, leaving the parent session idle.
 requirements: [TOOL-053, ORCH-051]
 contract: ">=0.1.0 <1.0.0"
 features: []

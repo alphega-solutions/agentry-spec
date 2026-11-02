@@ -8,7 +8,9 @@ description: >-
   before the approval stage, so the escalation is for the rewritten
   arguments. On approval, processing resumes at stage 8: the taint rule and
   the hook are not evaluated again (one taint decision, one hook call in
-  all), and the call is dispatched once with the approved arguments.
+  all), and the call is dispatched once with the approved arguments: the
+  pending action's `arguments` (what the reviewer saw), the `tool.call`
+  arguments and the arguments the stub received are the same value.
 requirements: [TOOL-036]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -128,9 +130,15 @@ expect:
         items:
           - { type: policy.decision, runId: $r1, payload: { kind: taint, outcome: allow, callId: c2 } }
           - { type: hook.decision, runId: $r1, payload: { hook: pre@1, point: beforeToolCall, result: rewrite } }
-          - { type: escalation.raised, runId: $r1, payload: { escalation: { sources: [approval], pendingActions: [{ callId: c2, tool: set_status }] } } }
+          - type: escalation.raised
+            runId: $r1
+            payload:
+              escalation:
+                sources: [approval]
+                pendingActions:
+                  - { callId: c2, tool: set_status, arguments: { $all: [$approvedArgs, { key: k1, note: clean }] } }
           - { type: run.ended, runId: $r1, payload: { reason: escalated } }
-          - { type: tool.call, runId: $r2, payload: { callId: c2, arguments: { key: k1, note: clean } } }
+          - { type: tool.call, runId: $r2, payload: { callId: c2, arguments: $approvedArgs } }
           - { type: tool.result, runId: $r2, payload: { callId: c2, result: { ok: { output: { status: set } } } } }
           - { type: run.ended, runId: $r2, payload: { reason: responded } }
       absentEvents:
@@ -139,4 +147,4 @@ expect:
         - { type: escalation.raised, runId: $r2 }
   stubCalls:
     pre: { count: 1 }
-    set_status: [{ arguments: { key: k1, note: clean } }]
+    set_status: [{ arguments: $approvedArgs }]

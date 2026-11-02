@@ -5,10 +5,11 @@ description: >-
   Four read tools require each level in turn. Each principal calls the tool
   at its own level (passes: equal) and the tool one level above (fails:
   weaker). The phishing_resistant principal also calls the `none` tool
-  (passes: stronger). A passing call is dispatched with no policy decision; a
-  failing one is stopped at pipeline stage 4 with `policy`
-  (`agentry.tool.assurance`) and an assurance `policy.decision`, and the turn
-  continues.
+  (passes: stronger). A passing call is dispatched and is never blocked
+  (whether a passing check records a decision is not asserted); a failing
+  one is stopped at pipeline stage 4 with `policy`
+  (`agentry.tool.assurance`) and a blocking assurance `policy.decision`, and
+  the turn continues.
 requirements: [TOOL-005]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -158,7 +159,7 @@ expect:
           - { type: tool.result, payload: { callId: c2, result: { error: { category: policy, code: agentry.tool.assurance } } } }
           - { type: run.ended, payload: { reason: responded } }
       absentEvents:
-        - { type: policy.decision, payload: { callId: c1 } }
+        - { type: policy.decision, payload: { callId: c1, outcome: block } }
         - { type: tool.call, payload: { callId: c2 } }
     $sSingle:
       events:
@@ -169,7 +170,7 @@ expect:
           - { type: tool.result, payload: { callId: c2, result: { error: { category: policy, code: agentry.tool.assurance } } } }
           - { type: run.ended, payload: { reason: responded } }
       absentEvents:
-        - { type: policy.decision, payload: { callId: c1 } }
+        - { type: policy.decision, payload: { callId: c1, outcome: block } }
         - { type: tool.call, payload: { callId: c2 } }
     $sMulti:
       events:
@@ -180,7 +181,7 @@ expect:
           - { type: tool.result, payload: { callId: c2, result: { error: { category: policy, code: agentry.tool.assurance } } } }
           - { type: run.ended, payload: { reason: responded } }
       absentEvents:
-        - { type: policy.decision, payload: { callId: c1 } }
+        - { type: policy.decision, payload: { callId: c1, outcome: block } }
         - { type: tool.call, payload: { callId: c2 } }
     $sPhish:
       events:
@@ -190,7 +191,7 @@ expect:
           - { type: tool.call, payload: { callId: c2, tool: read_none } }
           - { type: run.ended, payload: { reason: responded } }
       absentEvents:
-        - { type: policy.decision }
+        - { type: policy.decision, payload: { outcome: block } }
   stubCalls:
     read_none: { count: 2 }
     read_single: { count: 1 }

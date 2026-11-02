@@ -9,9 +9,12 @@ description: >-
   allowlist). The child sees only lookup: update_record is excluded even
   though the runtime scope lists it (ORCH-013, as amended into TOOL-022).
   When the child's model requests update_record anyway, it is stopped as
-  unavailable and never dispatched. Session 2: the runtime scope is only
+  unavailable with a scope decision `reason: delegation` (it is in the
+  helper's allowlist and hidden only by the parent's visible set) and never
+  dispatched. Session 2: the runtime scope is only
   ask_helper, so the parent sees only ask_helper and the child sees no
-  tools; its lookup request is stopped and never dispatched.
+  tools; its lookup request is stopped (`reason: delegation`) and never
+  dispatched.
 requirements: [TOOL-101, ORCH-013]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -111,6 +114,7 @@ expect:
       events:
         mode: subsequence
         items:
+          - { type: policy.decision, payload: { kind: scope, outcome: block, callId: h1, tool: update_record, reason: delegation } }
           - { type: tool.result, payload: { callId: h1, result: { error: { category: policy, code: agentry.tool.unavailable } } } }
           - { type: run.ended, payload: { reason: responded } }
       absentEvents:
@@ -119,6 +123,7 @@ expect:
       events:
         mode: subsequence
         items:
+          - { type: policy.decision, payload: { kind: scope, outcome: block, callId: h1, tool: lookup, reason: delegation } }
           - { type: tool.result, payload: { callId: h1, result: { error: { category: policy, code: agentry.tool.unavailable } } } }
           - { type: run.ended, payload: { reason: responded } }
       absentEvents:

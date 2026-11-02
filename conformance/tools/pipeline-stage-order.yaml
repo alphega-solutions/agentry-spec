@@ -161,7 +161,7 @@ expect:
         - { type: tool.call, runId: $r1, payload: { callId: c2 } }
         - { type: policy.decision, runId: $r2 }
         - { type: hook.decision, runId: $r2, payload: { point: beforeToolCall } }
-        - { type: policy.decision, payload: { kind: assurance } }
+        - { type: policy.decision, payload: { kind: assurance, outcome: block } }
   stubCalls:
     lookup: { count: 1 }
     set_status: [{ arguments: { key: k1 } }]

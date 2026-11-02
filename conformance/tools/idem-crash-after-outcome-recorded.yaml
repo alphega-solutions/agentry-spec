@@ -1,22 +1,26 @@
 schemaVersion: "0.1.0"
 id: tool.idem-crash-after-outcome-recorded
-title: A call whose outcome was recorded before a crash is not dispatched or governed again; its recorded outcome is returned
+title: A call whose outcome was recorded before a crash is recovered from its recorded outcome at stage 9 — not dispatched or governed again, but afterToolCall hooks still apply
 description: >-
-  set_flag is mutating and NOT idempotent, and a remote beforeToolCall hook
-  `pre` (which continues) is required for it. The implementation is crashed
-  at `after_outcome_recorded` during the second run: the call has been
-  governed and dispatched, and its outcome is in the idempotency store, but
-  its tool.result has not been appended. After a restart and a clock advance
-  past the run lease, run() on the session performs recovery first
-  (HITL-092), which processes the interrupted call again (HITL-091). Stage 3
-  finds the recorded outcome (TOOL-061), so stages 4–9 are skipped: the stub
-  is not called again (it holds a second behaviour a re-dispatch would
-  consume), the hook is not called again, and no second tool.call is
-  emitted. The recorded outcome becomes the call's only tool.result and
-  reaches the model; the orphaned run continues to `responded`, with no
-  escalation even though the tool is not idempotent (HITL-091 as amended:
-  nothing is re-dispatched), and the new run() then responds.
-requirements: [TOOL-061, TOOL-030, HITL-091]
+  set_flag is mutating and NOT idempotent. A remote beforeToolCall hook
+  `pre` (which continues) and a remote afterToolCall hook `post` (which
+  redacts the output's `detail`) are required for it. The implementation
+  is crashed at `after_outcome_recorded` during the second run: the call
+  has been governed and dispatched, and its raw outcome is in the
+  idempotency store, but its tool.result has not been appended. After a
+  restart and a clock advance past the run lease, run() on the session
+  performs recovery first (HITL-092). Under HITL-091 as amended 2026-11-01
+  (step 1), the call re-enters the pipeline at stage 9 with the recorded
+  outcome: nothing is re-dispatched (the stub holds a second behaviour a
+  re-dispatch would consume), stages 1–8 are not repeated (the `pre` hook
+  is called once in all, and there is one tool.call), and the `post` hook
+  runs on the recorded outcome, so the call's only tool.result carries the
+  redacted output, exactly as for a live call (TOOL-073), while the store
+  keeps the raw outcome. The orphaned run keeps its `runId`, emits no new
+  `run.started`, delivers the result to the model and continues to
+  `responded`, with no escalation even though the tool is not idempotent.
+  The triggering run() then runs its own run (turn 3) and responds.
+requirements: [TOOL-061, TOOL-030, TOOL-073, HITL-091]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:
@@ -37,6 +41,7 @@ setup:
           - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
         remoteHooks:
           - { id: pre, endpoint: "memory://hook-pre", region: test-region }
+          - { id: post, endpoint: "memory://hook-post", region: test-region }
         ports:
           eventLog: { adapter: memory, region: test-region }
           checkpointStore: { adapter: memory, region: test-region }
@@ -55,11 +60,20 @@ setup:
         timeoutMs: 1000
         match: "tool.id == 'set_flag'"
         source: { kind: remote, endpoint: pre }
+      - kind: Hook
+        id: post
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [afterToolCall]
+        results: [rewrite]
+        timeoutMs: 1000
+        match: "tool.id == 'set_flag'"
+        source: { kind: remote, endpoint: post }
       - kind: Tool
         id: set_flag
         version: 1
         schemaVersion: "0.1.0"
-        description: Set a flag on a record. Safe to repeat.
+        description: Set a flag on a record.
         input:
           type: object
           additionalProperties: false
@@ -78,7 +92,7 @@ setup:
         fallbackMessage: "This request was blocked."
         defaultProfile: default@1
         allowedProfiles: [default@1, streamed@1]
-        requiredHooks: [pre@1]
+        requiredHooks: [pre@1, post@1]
         model:
           provider: scripted-a
           name: model-a
@@ -101,12 +115,18 @@ setup:
   stubs:
     tools:
       set_flag:
-        - ok: { output: { set: true, attempt: "first" } }
-        - ok: { output: { set: true, attempt: "second" } }
+        - ok: { output: { set: true, attempt: "first", detail: "SYN-RAW-0091" } }
+        - ok: { output: { set: true, attempt: "second", detail: "SYN-RAW-0091" } }
     remoteHooks:
       pre:
         - { result: continue }
         - { result: continue }
+      # A second behaviour in case an implementation reached stage 10 before the crash point.
+      post:
+        - result: rewrite
+          parts: [{ type: tool_result, callId: c1, tool: set_flag, result: { ok: { output: { set: true, attempt: "first", detail: "[redacted]" } } } }]
+        - result: rewrite
+          parts: [{ type: tool_result, callId: c1, tool: set_flag, result: { ok: { output: { set: true, attempt: "first", detail: "[redacted]" } } } }]
   limits:
     leaseTtl: PT5M
 script:
@@ -136,15 +156,24 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: tool.call, turn: 2, payload: { callId: c1, tool: set_flag } }
-          - { type: tool.result, turn: 2, payload: { callId: c1, tool: set_flag, result: { ok: { output: { set: true, attempt: "first" } } } } }
-          - { type: model.request, turn: 2, step: 2 }
-          - { type: turn.completed, turn: 2 }
-          - { type: turn.started, turn: 3 }
-          - { type: run.ended, payload: { reason: responded } }
+          - { type: tool.call, runId: $r2, turn: 2, payload: { callId: c1, tool: set_flag } }
+          - { type: hook.decision, runId: $r2, payload: { hook: post@1, point: afterToolCall, result: rewrite } }
+          - { type: tool.result, runId: $r2, turn: 2, payload: { callId: c1, tool: set_flag, result: { ok: { output: { set: true, attempt: "first", detail: "[redacted]" } } } } }
+          - { type: model.request, runId: $r2, turn: 2, step: 2 }
+          - { type: turn.completed, runId: $r2, turn: 2 }
+          - { type: run.ended, runId: $r2, payload: { reason: responded } }
+          - { type: run.started, runId: { $all: [$r3, { $not: $r2 }] }, payload: { kind: run } }
+          - { type: turn.started, runId: $r3, turn: 3 }
+          - { type: run.ended, runId: $r3, payload: { reason: responded } }
       absentEvents:
         - { type: escalation.raised }
         - { type: tool.result, payload: { result: { ok: { output: { attempt: "second" } } } } }
+        - { type: tool.result, payload: { result: { ok: { output: { detail: "SYN-RAW-0091" } } } } }
+  stubCalls:
+    set_flag:
+      - { arguments: { key: k1, flag: true }, completed: true, context: { sessionId: $s, idempotencyKey: $k } }
+    pre: { count: 1 }
+    post: { $count: { of: { $any: true }, gte: 1 } }
   ports:
     eventLog:
       t1:
@@ -152,13 +181,10 @@ expect:
           $all:
             - $count: { of: { type: tool.call, payload: { callId: c1 } }, equals: 1 }
             - $count: { of: { type: tool.result, payload: { callId: c1 } }, equals: 1 }
+            - $count: { of: { type: run.started }, equals: 3 }
     idempotencyStore:
       t1:
-        $k: { state: completed, outcome: { ok: { output: { set: true, attempt: "first" } } } }
-  stubCalls:
-    set_flag:
-      - { arguments: { key: k1, flag: true }, context: { sessionId: $s, idempotencyKey: $k } }
-    pre: { count: 1 }
+        $k: { state: completed, outcome: { ok: { output: { set: true, attempt: "first", detail: "SYN-RAW-0091" } } } }
   providerRequests:
     scripted-a:
       - {}
@@ -168,5 +194,5 @@ expect:
             - role: tool
               parts:
                 $contains:
-                  - { type: tool_result, callId: c1, result: { ok: { output: { set: true, attempt: "first" } } } }
+                  - { type: tool_result, callId: c1, result: { ok: { output: { set: true, attempt: "first", detail: "[redacted]" } } } }
       - {}

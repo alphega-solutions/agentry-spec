@@ -14,8 +14,9 @@ description: >-
   resolve. The final load adds one tool of each mandatory kind with a
   resolvable binding and succeeds.
 
-  `setup.handlers` registers the base configuration's handlers;
-  `unregistered.handler` is never registered.
+  The runner registers a stub handler for every native binding by default
+  (`setup.handlers` is not set); `unregistered.handler` is never
+  registered, as no name beginning `unregistered.` is.
 requirements: [TOOL-010]
 contract: ">=0.1.0 <1.0.0"
 features: []

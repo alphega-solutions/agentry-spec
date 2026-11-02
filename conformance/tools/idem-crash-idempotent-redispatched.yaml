@@ -4,13 +4,18 @@ title: A crash after dispatching an idempotent mutating call leads to re-dispatc
 description: >-
   set_flag is mutating and idempotent. The implementation is crashed at
   `after_dispatch` during the second run: the stub has received the call,
-  but no outcome has been recorded. After a restart and a clock advance past the run lease (`limits.leaseTtl`, default PT5M), run() on the session performs recovery first (HITL-092):
-  the call is re-dispatched with the same idempotency key (TOOL-041, stable
-  across resumes), its outcome reaches the model, and the orphaned run
-  continues to `responded`. No escalation is raised. The new run() then
-  proceeds and responds. The stub is called exactly twice, both times with
-  the same key and arguments.
-requirements: [TOOL-041, TOOL-062]
+  but its result never reached the implementation (`completed: false`) and
+  no outcome has been recorded. After a restart and a clock advance past
+  the run lease (`limits.leaseTtl`, default PT5M), run() on the session
+  performs recovery first (HITL-092; HITL-091 as amended 2026-11-01, step
+  3): the call is re-dispatched with the same idempotency key (TOOL-041,
+  stable across resumes), its outcome reaches the model, and the orphaned
+  run continues to `responded`, keeping its `runId` and emitting no new
+  `run.started`. No escalation is raised. The triggering run() then runs
+  its own run (its own `run.started`, turn 3) and responds. The stub is
+  called exactly twice, both times with the same key and arguments, and
+  the second call completes.
+requirements: [TOOL-041, TOOL-062, HITL-091]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:
@@ -23,7 +28,7 @@ setup:
         id: set_flag
         version: 1
         schemaVersion: "0.1.0"
-        description: Set a flag on a record. Safe to repeat.
+        description: Set a flag on a record. Safe to repeat with the same idempotency key.
         input:
           type: object
           additionalProperties: false
@@ -93,17 +98,24 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: tool.call, turn: 2, payload: { callId: c1, tool: set_flag } }
-          - { type: tool.result, turn: 2, payload: { callId: c1, tool: set_flag, result: { ok: { output: { set: true, attempt: "second" } } } } }
-          - { type: model.request, turn: 2, step: 2 }
-          - { type: turn.completed, turn: 2 }
-          - { type: turn.started, turn: 3 }
-          - { type: run.ended, payload: { reason: responded } }
+          - { type: tool.call, runId: $r2, turn: 2, payload: { callId: c1, tool: set_flag } }
+          - { type: tool.result, runId: $r2, turn: 2, payload: { callId: c1, tool: set_flag, result: { ok: { output: { set: true, attempt: "second" } } } } }
+          - { type: model.request, runId: $r2, turn: 2, step: 2 }
+          - { type: turn.completed, runId: $r2, turn: 2 }
+          - { type: run.ended, runId: $r2, payload: { reason: responded } }
+          - { type: run.started, runId: { $all: [$r3, { $not: $r2 }] }, payload: { kind: run } }
+          - { type: turn.started, runId: $r3, turn: 3 }
+          - { type: run.ended, runId: $r3, payload: { reason: responded } }
       absentEvents:
         - { type: escalation.raised }
   stubCalls:
     set_flag:
-      - { arguments: { key: k1, flag: true }, context: { sessionId: $s, idempotencyKey: $k } }
-      - { arguments: { key: k1, flag: true }, context: { sessionId: $s, idempotencyKey: $k } }
+      - { arguments: { key: k1, flag: true }, completed: false, context: { sessionId: $s, idempotencyKey: $k } }
+      - { arguments: { key: k1, flag: true }, completed: true, context: { sessionId: $s, idempotencyKey: $k } }
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $count: { of: { type: run.started }, equals: 3 }
   providerRequests:
     scripted-a: { count: 4 }

@@ -8,8 +8,9 @@ description: >-
   persona's three artifact-backed tools — lookup, update_record and
   get_contact — and never delete_contact. When the model nevertheless
   requests delete_contact, the call is stopped at the availability check
-  with `policy` (`agentry.tool.unavailable`), and the server never receives
-  it. The artifact-backed get_contact is dispatched to the server normally.
+  with `policy` (`agentry.tool.unavailable`), recorded as a scope decision
+  with `reason: unknown` (server discovery does not put it in the catalog),
+  and the server never receives it. The artifact-backed get_contact is dispatched to the server normally.
 requirements: [TOOL-090]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -113,6 +114,7 @@ expect:
         items:
           - { type: tool.call, payload: { callId: c1, tool: get_contact } }
           - { type: tool.result, provenances: ["tool:get_contact"], payload: { callId: c1, result: { ok: { output: { name: "Synthetic Contact" } } } } }
+          - { type: policy.decision, payload: { kind: scope, outcome: block, callId: c2, reason: unknown } }
           - { type: tool.result, payload: { callId: c2, result: { error: { category: policy, code: agentry.tool.unavailable } } } }
           - { type: run.ended, payload: { reason: responded } }
       absentEvents:

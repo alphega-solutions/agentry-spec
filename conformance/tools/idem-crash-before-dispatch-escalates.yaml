@@ -8,14 +8,17 @@ description: >-
   been written but the call has not been dispatched. Reaching the crash
   point shows the started record is written before dispatch (TOOL-060).
   After a restart and a clock advance past the run lease (`limits.leaseTtl`, default PT5M), resume() on the
-  session first performs recovery (HITL-092): the call has a started record
-  and no outcome, so it is not dispatched; a `recovery` escalation is raised
-  and the orphaned run ends `escalated`. Because the escalation's action is
-  undecided, that resume() itself is refused with `conflict` (HITL-070). A
+  session first performs recovery (HITL-092; HITL-091 as amended
+  2026-11-01, step 4): the call has a started record and no outcome, so it
+  is not dispatched; a `recovery` escalation is raised and the orphaned run
+  ends `escalated`, keeping its `runId` and emitting no new `run.started`.
+  The triggering resume() then proceeds with its own request: the
+  escalation's action is undecided, so it is refused with `conflict`
+  (HITL-070) and starts no run. A
   reviewer then confirms the call as succeeded; the stated outcome is
   delivered to the model and recorded, the turn continues to `responded`,
   and the stub is never called.
-requirements: [TOOL-060, TOOL-062]
+requirements: [TOOL-060, TOOL-062, HITL-091]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:
@@ -82,6 +85,7 @@ expect:
           - { type: run.started, runId: $r2, payload: { kind: run } }
           - { type: turn.started, runId: $r2, turn: 2 }
           - type: escalation.raised
+            runId: $r2
             payload:
               escalation:
                 id: $esc
@@ -89,12 +93,18 @@ expect:
                 pendingActions:
                   - { id: $act, kind: recovery, source: recovery, tool: update_record, arguments: { key: k1, value: v1 }, idempotencyKey: { $regex: "^.+$" }, allowedDecisions: [confirm] }
           - { type: run.ended, runId: $r2, payload: { reason: escalated } }
+          - { type: run.started, runId: { $not: $r2 }, payload: { kind: resume } }
           - { type: escalation.resolved, payload: { escalationId: $esc } }
           - { type: tool.result, turn: 2, payload: { callId: c1, tool: update_record, result: { ok: { output: { updated: true, source: "reviewer" } } } } }
           - { type: model.request, turn: 2, step: 2 }
           - { type: run.ended, payload: { reason: responded } }
       absentEvents:
         - { type: tool.result, payload: { result: { ok: { output: { source: "stub" } } } } }
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $count: { of: { type: run.started }, equals: 3 }
   stubCalls:
     update_record: { count: 0 }
   providerRequests:

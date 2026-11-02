@@ -6,11 +6,15 @@ description: >-
   result. Session 1: lookup returns about 1 KiB, the hook continues, and
   the result is stored in the BlobStore and reaches the model and the event
   log as a blob reference, never inline. Session 2: the run request
-  tightens limits.partSize to 2048 bytes and lookup returns about 3 KiB:
-  the result is replaced by `limit` (`agentry.tool.result_too_large`), the
-  oversized content is persisted nowhere (not even as a blob), and the run
-  ends `context_limit` without a further model call, leaving the session
-  idle (TOOL-072 as amended 2026-11-01). Session 3: lookup returns about 1 KiB
+  tightens limits.partSize to 2048 bytes; one model response requests c1
+  lookup, which returns about 3 KiB, and c2 set_status (`approval:
+  always`, so it cannot be dispatched before a decision). c1's result is
+  replaced by `limit` (`agentry.tool.result_too_large`), the oversized
+  content is persisted nowhere (not even as a blob), and the run ends
+  `context_limit` as soon as that is detected, without a further model
+  call, leaving the session idle (TOOL-072 as amended 2026-11-01). c2,
+  not yet dispatched, is never dispatched and no escalation is raised for
+  it. Session 3: lookup returns about 1 KiB
   but the hook rewrites it to a short value; size is judged after hooks, so
   the short result is passed inline and no blob holds the original.
 requirements: [TOOL-072]
@@ -53,13 +57,26 @@ setup:
         failureMode: failClosed
         timeoutMs: 1000
         source: { kind: remote, endpoint: shrinker }
+      - kind: Tool
+        id: set_status
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Set a record's status.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: mutating
+        approval: always
+        binding: { kind: native, handler: test.set_status }
       - kind: Persona
         id: assistant
         version: 1
         schemaVersion: "0.1.0"
         displayName: Test assistant
         instructions: "You are a test assistant."
-        tools: [lookup@1, update_record@1]
+        tools: [lookup@1, update_record@1, set_status@1]
         fallbackMessage: "This request was blocked."
         defaultProfile: default@1
         allowedProfiles: [default@1, streamed@1]
@@ -79,7 +96,9 @@ setup:
           usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
         - parts: [{ type: text, text: "Got it." }]
           usage: { inputTokens: 300, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
-        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: huge } }]
+        - parts:
+            - { type: tool_call, callId: c1, tool: lookup, arguments: { key: huge } }
+            - { type: tool_call, callId: c2, tool: set_status, arguments: { key: huge } }
           usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
         - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: shrink } }]
           usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
@@ -151,6 +170,7 @@ setup:
                 lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore
                 lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore
                 SYN-PRESHRINK-0072-END
+      set_status: []
     remoteHooks:
       shrinker:
         - result: continue
@@ -211,6 +231,8 @@ expect:
       absentEvents:
         - { type: model.request, step: 2 }
         - { type: tool.result, payload: { result: { ok: { $any: true } } } }
+        - { type: tool.call, payload: { callId: c2 } }
+        - { type: escalation.raised }
     $s3:
       events:
         mode: subsequence
@@ -219,6 +241,7 @@ expect:
           - { type: run.ended, payload: { reason: responded } }
   stubCalls:
     lookup: { count: 3 }
+    set_status: { count: 0 }
   providerRequests:
     scripted-a:
       - {}

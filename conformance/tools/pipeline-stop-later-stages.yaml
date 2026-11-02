@@ -12,15 +12,20 @@ description: >-
   shows whether stage 6 or stage 10 ran. Each session stops one call at one
   stage:
 
-  - $sAvailability (p0, tainted): `archive_record` → stage 1 `policy`
-    (`agentry.tool.unavailable`); no assurance or taint decision.
+  - $sAvailability (p0, tainted): in one step, `archive_record` (c2,
+    out of scope) and the unknown `purge_records` (c3), each with INVALID
+    arguments (a numeric key) → both stopped at stage 1 with `policy`
+    (`agentry.tool.unavailable`), reasons `out_of_scope` and `unknown`,
+    never `invalid_input`: availability is checked before argument
+    validation, so a swap of stages 1 and 2 would fail this session. No
+    assurance or taint decision.
   - $sArguments (p0, tainted): `set_status` with a numeric key → stage 2
     `invalid_input` (`agentry.tool.invalid_arguments`); no assurance or
     taint decision.
   - $sAssurance (p0, tainted): valid `set_status` → stage 4 `policy`
     (`agentry.tool.assurance`); no taint decision.
   - $sTaint (p1, tainted): valid `set_status` → stage 5 block; the
-    beforeToolCall hook is not called.
+    beforeToolCall hook is not called and there is no approval escalation.
   - $sHook (p1, untainted): the `pre` hook blocks at stage 6; no approval
     escalation.
   - $sApproval (p1, untainted): `pre` continues; stage 7 escalates; the
@@ -137,7 +142,9 @@ setup:
         # $sAvailability
         - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
           usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
-        - parts: [{ type: tool_call, callId: c2, tool: archive_record, arguments: { key: k1 } }]
+        - parts:
+            - { type: tool_call, callId: c2, tool: archive_record, arguments: { key: 5 } }
+            - { type: tool_call, callId: c3, tool: purge_records, arguments: { key: 5 } }
           usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
         - parts: [{ type: text, text: "Stopped." }]
           usage: { inputTokens: 40, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
@@ -242,13 +249,17 @@ expect:
   sessions:
     $sAvailability:
       events:
-        mode: subsequence
+        mode: contains
         items:
           - { type: tool.result, payload: { callId: c1 } }
           - { type: policy.decision, payload: { kind: scope, outcome: block, callId: c2, reason: out_of_scope } }
           - { type: tool.result, payload: { callId: c2, result: { error: { category: policy, code: agentry.tool.unavailable } } } }
+          - { type: policy.decision, payload: { kind: scope, outcome: block, callId: c3, reason: unknown } }
+          - { type: tool.result, payload: { callId: c3, result: { error: { category: policy, code: agentry.tool.unavailable } } } }
           - { type: model.request, step: 3 }
       absentEvents:
+        - { type: tool.result, payload: { result: { error: { category: invalid_input } } } }
+        - { type: tool.call, payload: { callId: c3 } }
         - { type: policy.decision, payload: { kind: assurance } }
         - { type: policy.decision, payload: { kind: taint } }
         - { type: hook.decision }
@@ -262,7 +273,8 @@ expect:
           - { type: tool.result, payload: { callId: c2, result: { error: { category: invalid_input, code: agentry.tool.invalid_arguments } } } }
           - { type: model.request, step: 3 }
       absentEvents:
-        - { type: policy.decision }
+        - { type: policy.decision, payload: { kind: assurance } }
+        - { type: policy.decision, payload: { kind: taint } }
         - { type: hook.decision }
         - { type: escalation.raised }
         - { type: tool.call, payload: { callId: c2 } }
@@ -288,7 +300,6 @@ expect:
           - { type: tool.result, payload: { callId: c2, result: { error: { category: policy } } } }
           - { type: model.request, step: 3 }
       absentEvents:
-        - { type: policy.decision, payload: { kind: assurance } }
         - { type: hook.decision }
         - { type: escalation.raised }
         - { type: tool.call, payload: { callId: c2 } }
@@ -300,7 +311,7 @@ expect:
           - { type: tool.result, payload: { callId: c1, result: { error: { category: policy } } } }
           - { type: model.request, step: 2 }
       absentEvents:
-        - { type: policy.decision }
+        - { type: policy.decision, payload: { kind: taint } }
         - { type: escalation.raised }
         - { type: tool.call }
         - { type: hook.decision, payload: { point: afterToolCall } }
@@ -315,7 +326,7 @@ expect:
           - { type: model.request, runId: $rA2, step: 2 }
           - { type: run.ended, runId: $rA2, payload: { reason: responded } }
       absentEvents:
-        - { type: policy.decision }
+        - { type: policy.decision, payload: { kind: taint } }
         - { type: hook.decision }
         - { type: tool.call }
         - { type: tool.result, runId: $rA1 }

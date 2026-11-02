@@ -13,7 +13,15 @@ description: >-
   `update_record` (allowed for both, but outside the parent's runtime
   scope), nor `archive_record`, which is in the parent's runtime scope but
   not visible to the parent. When the child model calls either, the call is
-  stopped at stage 1 as unavailable and nothing is dispatched.
+  stopped at stage 1 as unavailable, recorded with `reason: delegation`
+  (each is in the helper's allowlist and hidden only by the parent's
+  visible set), and nothing is dispatched.
+
+  Reason precedence (TOOL-030 stage 1 as amended): the child then calls, in
+  one step, `purge_record` (c3: in the catalog, outside the helper's
+  allowlist and not visible to the parent, so both `out_of_scope` and
+  `delegation` apply → `out_of_scope`) and `no_such_tool` (c4: not in the
+  catalog → `unknown`). The model-facing error is the same in every case.
 requirements: [TOOL-022, ORCH-013]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -35,6 +43,18 @@ setup:
           properties: { key: { type: string } }
         effect: mutating
         binding: { kind: native, handler: test.archive_record }
+      - kind: Tool
+        id: purge_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Purge a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: mutating
+        binding: { kind: native, handler: test.purge_record }
       - kind: Tool
         id: delegate
         version: 1
@@ -86,6 +106,10 @@ setup:
           usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
         - parts: [{ type: tool_call, callId: c2, tool: archive_record, arguments: { key: k1 } }]
           usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts:
+            - { type: tool_call, callId: c3, tool: purge_record, arguments: { key: k1 } }
+            - { type: tool_call, callId: c4, tool: no_such_tool, arguments: { key: k1 } }
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
         - parts: [{ type: text, text: "I could not change k1." }]
           usage: { inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
         # parent, step 2
@@ -95,6 +119,7 @@ setup:
     tools:
       update_record: []
       archive_record: []
+      purge_record: []
 script:
   - action: run
     bind: $s
@@ -120,18 +145,31 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: policy.decision, payload: { kind: scope, outcome: block, callId: c1, tool: update_record } }
+          - { type: policy.decision, payload: { kind: scope, outcome: block, callId: c1, tool: update_record, reason: delegation } }
           - { type: tool.result, payload: { callId: c1, result: { error: { category: policy, code: agentry.tool.unavailable } } } }
-          - { type: policy.decision, payload: { kind: scope, outcome: block, callId: c2, tool: archive_record } }
+          - { type: policy.decision, payload: { kind: scope, outcome: block, callId: c2, tool: archive_record, reason: delegation } }
           - { type: tool.result, payload: { callId: c2, result: { error: { category: policy, code: agentry.tool.unavailable } } } }
+          - { type: model.request, step: 3 }
+          - { type: model.request, step: 4 }
       absentEvents:
         - { type: tool.call }
+  ports:
+    eventLog:
+      t1:
+        $child:
+          $contains:
+            - { type: policy.decision, step: 3, payload: { kind: scope, outcome: block, callId: c3, tool: purge_record, reason: out_of_scope } }
+            - { type: tool.result, step: 3, payload: { callId: c3, result: { error: { category: policy, code: agentry.tool.unavailable } } } }
+            - { type: policy.decision, step: 3, payload: { kind: scope, outcome: block, callId: c4, reason: unknown } }
+            - { type: tool.result, step: 3, payload: { callId: c4, result: { error: { category: policy, code: agentry.tool.unavailable } } } }
   stubCalls:
     update_record: { count: 0 }
     archive_record: { count: 0 }
+    purge_record: { count: 0 }
   providerRequests:
     scripted-a:
       - tools: { $all: [{ $len: 2 }, { $contains: [{ name: lookup }, { name: delegate }] }] }
+      - tools: [{ name: lookup }]
       - tools: [{ name: lookup }]
       - tools: [{ name: lookup }]
       - tools: [{ name: lookup }]
