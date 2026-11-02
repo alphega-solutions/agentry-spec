@@ -221,3 +221,26 @@ agentry sessions are designed to run as steps inside a host's workflow engine (A
   4. **Non-idempotent mutating call** with a started record and no outcome: raises a `recovery` pending action.
 
   If any call took step 4, the run ends `escalated` once the other calls are processed. Otherwise the run continues. A run with no in-flight call ends `failed`. A continuing orphaned run keeps its `runId` and emits no new `run.started`. The host call that triggered recovery (HITL-092) proceeds with its own run after the orphaned run ends, and receives its own outcome.
+
+## Amendment 2026-11-01 — from Phase 4 (schemas and fixtures)
+
+Schemas: `schemas/core/v1/hitl.yaml` (`escalation`, `pendingAction`, `decision`, `reviewerView`); `escalation.raised` carries the `escalation` record.
+
+**The record (HITL-010, HITL-011)**
+
+- The escalation carries `id`, `sessionId`, `runId`, `turn`, `step`, `tenant`, `snapshotHash`, `sources` and `reasonCodes` (each the distinct values of its pending actions, in order of first appearance), `pendingActions` in request order, `taintProvenances` (when any action has source `taint`, in order of first entry, HOOK-126), `createdAt` and `expiresAt`.
+- Every pending action carries `id`, `kind`, `source`, `reasonCode`, `allowedDecisions` (exactly the set HITL-011 gives its kind), `reviewerRequirements`, and the contents of its kind; `hook` (`id@version`) when its source is `hook`; and `labels`, the labels of the content under review. Reviewer requirements are per action (HITL-024): the effective `requiredApprovals`, whether self-approval is allowed for its source (HITL-023), and the applicable reviewer rules.
+- Reason codes for harness sources: `agentry.taint.mutating` and `agentry.taint.egress` (the taint condition whose outcome applied; `mutating` when both give `escalate`); `agentry.approval.always`, `agentry.approval.rule`, `agentry.approval.rule_error` and `agentry.approval.no_rules` (TOOL-035, HOOK-131, HOOK-132); `agentry.recovery.unknown_outcome`. A hook's own reason code is used for source `hook`.
+
+**Host operations**
+
+- HITL-030: the reviewer view is returned by `getReviewerView(tenant, escalationId, reviewer)`. An escalation of another tenant is `not_found`, as for any tenant-scoped object (ADR-0014). A reviewer who is not human or not in the tenant is refused with `unauthorized` (HITL-022); reviewer-rule failures do not refuse the view — clearance is per part (HITL-031). Each pending action's content is its one `tool_call` part (`tool_call` and `recovery` actions) or the parts under review (`content` actions), with the decisions recorded so far and whether it is decided. A part the reviewer is not cleared for keeps `type`, `provenance` and `labels`, is marked `redacted: true`, and carries none of its content.
+- HITL-100: `listPendingEscalations(tenant)` returns escalation records. Neither operation changes state or emits events.
+
+**Decisions**
+
+- HITL-021: reviewer rules are evaluated per pending action, for the rules of that action's source; `escalation.source` and `escalation.reasonCode` are the action's.
+- HITL-040–043: `decide()` and `resume()` validate their decisions as one batch. If any decision is refused (`unauthorized`, `invalid_input`, or a pending action ID not in the open escalation, `not_found`), none of the batch is recorded and the error's `details.decisionId` names the first refused decision. An already recorded decision ID is acknowledged, not refused. A batch that records but leaves actions undecided makes `resume()` fail with `conflict` (HITL-070) after recording.
+- HITL-044: a decision is audited as a `decision` audit record whose `details` are the `decision` record, plus `original` for an `edit`. Expiry rejections are audited too, with `decidedBy: expiry`, no reviewer, and the expiry time as timestamp.
+- HITL-051: two replacements are identical when their RFC 8785 canonical JSON is equal.
+- HITL-072: `escalation.resolved` lists every decision ID recorded for the escalation, in recording order.

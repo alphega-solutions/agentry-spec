@@ -431,7 +431,14 @@ $defs:
     additionalProperties: false
     required: [action]
     properties:
-      action: { enum: [run, resume, decide, close, cancel] }
+      action:
+        description: >-
+          Host operation. `getReviewerView` (HITL-030) returns the reviewer
+          view of the session's open escalation for the step's `reviewer`,
+          called as `tenant`; `listPendingEscalations` (HITL-100) returns the
+          open escalations of `tenant`. Neither changes state or emits
+          events.
+        enum: [run, resume, decide, close, cancel, getReviewerView, listPendingEscalations]
       bind:
         description: Placeholder bound to the session the action creates or targets.
         $ref: "#/$defs/placeholder"
@@ -702,6 +709,16 @@ $defs:
         description: Number of events persisted as a result of this step (0 = none).
         type: integer
         minimum: 0
+      view:
+        description: >-
+          For `getReviewerView`: a pattern matched against the returned
+          `ReviewerView` (schemas/core/v1/hitl.yaml), objects partially,
+          arrays exactly unless wrapped in `$contains`.
+        type: object
+      escalations:
+        description: >-
+          For `listPendingEscalations`: a pattern matched against the
+          returned array of escalation records.
 
   eventPattern:
     type: object

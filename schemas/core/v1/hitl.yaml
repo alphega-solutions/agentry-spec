@@ -1,0 +1,249 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://alphega.io/agentry/schemas/core/hitl/v1.json
+title: Escalations, decisions and the reviewer view
+description: >-
+  Area 6 records (the `Escalation`, `PendingAction` and `Decision` of Area 6
+  §2): the escalation carried by `escalation.raised`, stored in the
+  checkpoint and returned by `listPendingEscalations`; the decision record
+  written to the audit log; and the reviewer view (HITL-030).
+$defs:
+  source:
+    description: Escalation sources (HITL-001). Closed; Area 8 adds none of its own, it mirrors child actions (ORCH-060).
+    enum: [taint, approval, hook, recovery]
+
+  decisionType:
+    enum: [approve, reject, edit, confirm]
+
+  reviewerRequirements:
+    description: >-
+      What a decision on this action needs (HITL-021–024): the effective
+      `requiredApprovals` (the highest among the applicable reviewer rules,
+      default 1), whether the session principal may decide it
+      (`allowSelfApproval` for its source; never for `taint` or `recovery`),
+      and the reviewer rules that apply, as CEL expressions.
+    type: object
+    additionalProperties: false
+    required: [requiredApprovals, selfApprovalAllowed, rules]
+    properties:
+      requiredApprovals: { type: integer, minimum: 1 }
+      selfApprovalAllowed: { type: boolean }
+      rules:
+        type: array
+        items: { $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/celExpression" }
+
+  pendingAction:
+    description: >-
+      One action awaiting a decision (HITL-011). Its allowed decisions are
+      fixed by its kind: `tool_call` → approve, reject, edit; `content` →
+      approve, reject, plus edit at `beforeResponse`; `recovery` → confirm.
+    type: object
+    additionalProperties: false
+    required: [id, kind, source, reasonCode, allowedDecisions, reviewerRequirements]
+    properties:
+      id: { type: string, minLength: 1 }
+      kind: { enum: [tool_call, content, recovery] }
+      source: { $ref: "#/$defs/source" }
+      reasonCode:
+        description: >-
+          Why it escalated (HITL-010). For `hook`, the hook's reason code
+          (HOOK-023); otherwise a harness code (Area 6 amendment 2026-11-01):
+          `agentry.taint.mutating`, `agentry.taint.egress`,
+          `agentry.approval.always`, `agentry.approval.rule`,
+          `agentry.approval.rule_error`, `agentry.approval.no_rules`,
+          `agentry.recovery.unknown_outcome`.
+        $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/errorCode"
+      hook:
+        description: The escalating hook, for source `hook`.
+        $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/artifactRef"
+      delegated:
+        description: Raised in a descendant session and mirrored here (ORCH-060, ORCH-061).
+        type: boolean
+      chain:
+        description: Session IDs from this session down to the one that raised it (ORCH-061).
+        type: array
+        items: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+      callId: { type: string, minLength: 1 }
+      tool: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/toolId" }
+      point: { enum: [sessionStart, beforeModelCall, afterModelCall, afterToolCall, beforeResponse] }
+      arguments:
+        description: The call's arguments, for `tool_call` and `recovery` actions; for `tool_call`, the arguments a decision applies to (as rewritten by earlier hooks, HOOK-034).
+        type: object
+      idempotencyKey:
+        description: The call's idempotency key, for `recovery` actions (TOOL-062).
+        type: string
+        minLength: 1
+      contentRef:
+        description: The content under review, stored in the BlobStore, for `content` actions (CORE-154).
+        $ref: "https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/blobRef"
+      labels:
+        description: Sensitivity labels of the content under review (the arguments or the parts).
+        $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/labels"
+      allowedDecisions:
+        type: array
+        minItems: 1
+        uniqueItems: true
+        items: { $ref: "#/$defs/decisionType" }
+      reviewerRequirements: { $ref: "#/$defs/reviewerRequirements" }
+    allOf:
+      - if: { properties: { kind: { const: tool_call } } }
+        then:
+          required: [callId, tool, arguments]
+          properties:
+            source: { enum: [taint, approval, hook] }
+            allowedDecisions: { items: { enum: [approve, reject, edit] }, minItems: 3 }
+          not: { anyOf: [{ required: [point] }, { required: [contentRef] }, { required: [idempotencyKey] }] }
+      - if: { properties: { kind: { const: recovery } } }
+        then:
+          required: [callId, tool, arguments, idempotencyKey]
+          properties:
+            source: { const: recovery }
+            allowedDecisions: { const: [confirm] }
+          not: { anyOf: [{ required: [point] }, { required: [contentRef] }] }
+      - if: { properties: { kind: { const: content } } }
+        then:
+          required: [point, contentRef]
+          properties: { source: { const: hook } }
+          not: { anyOf: [{ required: [callId] }, { required: [arguments] }, { required: [idempotencyKey] }] }
+      - if: { properties: { kind: { const: content }, point: { const: beforeResponse } }, required: [kind, point] }
+        then: { properties: { allowedDecisions: { items: { enum: [approve, reject, edit] }, minItems: 3 } } }
+      - if: { properties: { kind: { const: content }, point: { not: { const: beforeResponse } } }, required: [kind, point] }
+        then: { properties: { allowedDecisions: { items: { enum: [approve, reject] }, minItems: 2 } } }
+      - if: { properties: { source: { const: hook } } }
+        then: { required: [hook] }
+      - if: { required: [delegated], properties: { delegated: { const: true } } }
+        then: { required: [chain] }
+
+  escalation:
+    title: Escalation
+    description: The escalation record (HITL-010). At most one is open per session (HITL-002).
+    type: object
+    additionalProperties: false
+    required: [id, sessionId, runId, turn, step, tenant, snapshotHash, sources, reasonCodes, pendingActions, createdAt, expiresAt]
+    properties:
+      id: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+      sessionId: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+      runId: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+      turn: { type: integer, minimum: 1 }
+      step: { type: integer, minimum: 1 }
+      tenant: { type: string, minLength: 1 }
+      snapshotHash: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/sha256" }
+      sources:
+        description: The distinct sources of the pending actions, in order of first appearance.
+        type: array
+        minItems: 1
+        uniqueItems: true
+        items: { $ref: "#/$defs/source" }
+      reasonCodes:
+        description: The distinct reason codes of the pending actions, in order of first appearance.
+        type: array
+        minItems: 1
+        uniqueItems: true
+        items: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/errorCode" }
+      taintProvenances:
+        description: Provenances that tainted the session, in order of first entry (HOOK-126). Required when any action has source `taint`.
+        $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/provenances"
+      pendingActions:
+        description: One per escalating call or content in the step, in request order (HITL-002, TOOL-033).
+        type: array
+        minItems: 1
+        items: { $ref: "#/$defs/pendingAction" }
+      createdAt: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/timestamp" }
+      expiresAt:
+        description: "`createdAt` + `suspendedTtl` (HITL-010); in a delegation chain, the chain's earliest (ORCH-065)."
+        $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/timestamp"
+    if:
+      properties: { pendingActions: { contains: { properties: { source: { const: taint } }, required: [source] } } }
+    then: { required: [taintProvenances] }
+
+  decision:
+    title: Decision
+    description: >-
+      A recorded decision (HITL-041). Immutable once recorded (HITL-044).
+      Written to the audit log as a `decision` record whose `details` are
+      this object; an `edit` also carries `original`. An expiry rejection
+      (HITL-082) has `decidedBy: expiry` and no reviewer.
+    type: object
+    additionalProperties: false
+    required: [id, escalationId, pendingActionId, type, decidedBy, timestamp]
+    properties:
+      id: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+      escalationId: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+      pendingActionId: { type: string, minLength: 1 }
+      type: { $ref: "#/$defs/decisionType" }
+      decidedBy: { enum: [reviewer, expiry] }
+      reviewer:
+        description: The reviewer (HITL-020); never the session principal unless self-approval applies (HITL-023).
+        $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/principalRef"
+      timestamp: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/timestamp" }
+      replacement:
+        description: "For `edit`: the replacement arguments (`tool_call`) or parts (`content` at `beforeResponse`)."
+      original:
+        description: "For `edit`, in the audit record only: the content it replaces (HITL-044)."
+      outcome:
+        description: "For `confirm`: the stated outcome of the recovery action."
+        enum: [succeeded, failed]
+      output:
+        description: "For `confirm` with `succeeded`: the stated output, if given."
+    allOf:
+      - if: { properties: { decidedBy: { const: reviewer } } }
+        then: { required: [reviewer] }
+      - if: { properties: { decidedBy: { const: expiry } } }
+        then: { properties: { type: { const: reject } }, not: { required: [reviewer] } }
+      - if: { properties: { type: { const: edit } } }
+        then: { required: [replacement] }
+        else: { not: { anyOf: [{ required: [replacement] }, { required: [original] }] } }
+      - if: { properties: { type: { const: confirm } } }
+        then: { required: [outcome] }
+        else: { not: { anyOf: [{ required: [outcome] }, { required: [output] }] } }
+      - if: { properties: { outcome: { const: failed } }, required: [outcome] }
+        then: { not: { required: [output] } }
+
+  viewPart:
+    description: >-
+      A part as a reviewer sees it (HITL-031). A part the reviewer is not
+      cleared for keeps `type`, `provenance` and `labels`, has `redacted:
+      true`, and carries none of its content fields. Reasoning parts never
+      appear (HITL-032).
+    type: object
+    required: [type]
+    properties:
+      type: { enum: [text, image, file, structured, tool_call, tool_result] }
+    if: { required: [redacted] }
+    then:
+      additionalProperties: false
+      required: [type, provenance, labels, redacted]
+      properties:
+        type: true
+        provenance: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/provenance" }
+        labels: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/labels" }
+        redacted: { const: true }
+    else: { $ref: "https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/part" }
+
+  reviewerView:
+    title: ReviewerView
+    description: >-
+      What `getReviewerView` returns for one escalation and one reviewer
+      (HITL-030–032): the escalation record and, per pending action, its
+      content and the decisions recorded so far. A `tool_call` or `recovery`
+      action's content is its one `tool_call` part; a `content` action's is
+      the parts under review. No secret values or credentials appear.
+    type: object
+    additionalProperties: false
+    required: [escalation, actions]
+    properties:
+      escalation: { $ref: "#/$defs/escalation" }
+      actions:
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [pendingActionId, content, decisions, decided]
+          properties:
+            pendingActionId: { type: string, minLength: 1 }
+            content:
+              type: array
+              items: { $ref: "#/$defs/viewPart" }
+            decisions:
+              type: array
+              items: { $ref: "#/$defs/decision" }
+            decided: { type: boolean }
