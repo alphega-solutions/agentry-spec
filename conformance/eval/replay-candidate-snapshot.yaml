@@ -25,9 +25,11 @@ description: >-
 
   final-check is not in the recorded snapshot, so $rRec never invokes it.
   No provider is called and lookup is never dispatched in any replay.
-  Whether $base equals the bundle's hash depends on the implementation
-  filling the same schema defaults as the bundle's exporter; it is not
-  asserted here.
+  $base equals the bundle's snapshot hash: a snapshot holds effective
+  values, with defaults filled only within objects present (CFG-050,
+  EVAL-025 as amended 2026-11-02), and the bundle's snapshot is exactly
+  the baseline's effective snapshot (sha256 of the RFC 8785 JSON of its
+  artifacts).
 requirements: [EVAL-060]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -119,7 +121,7 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: session.created, snapshotHash: $base }
+          - { type: session.created, snapshotHash: { $all: [$base, "sha256:917994aa752361a52830e78416b0550055054dca7ee4aecfbae787862d1eeb19"] } }
           - { type: tool.result, payload: { callId: c1, result: { ok: { output: { key: k1, value: SYN-VALUE-0001 } } } } }
           - { type: run.ended, payload: { reason: responded } }
       absentEvents:

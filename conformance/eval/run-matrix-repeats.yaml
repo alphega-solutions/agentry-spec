@@ -3,30 +3,41 @@ id: eval.run-matrix-repeats
 title: Each case runs once per matrix cell per repeat, each run its own session, with governance in force
 description: >-
   Two cells — scripted-a/model-a and scripted-b/model-b, both default@1 —
-  and `repeats: 2`, one case: 2 × 2 = 4 results, each with its own
-  session (EVAL-044 as amended 2026-11-02). Deployment: the baseline copy
+  `repeats: 2` and two cases: 2 × 2 × 2 = 8 results, each with its own
+  session (EVAL-044 as amended 2026-11-02). Runs execute cell, then
+  repeat, then case, so each provider's responses are consumed in that
+  order and results are listed in execution order. Every run starts from
+  its case's stub behaviours afresh, so the only thing that varies is the
+  cell's model: its scripted responses. Deployment: the baseline copy
   with `environment: eval`; the bundle trusts no tools.
 
 
-  In every run of c-taint the model calls lookup (untrusted, so its
-  result taints the session) and then update_record. The taint rule
-  applies in the eval run as in production: a `policy.decision` (taint,
-  escalate) and an escalation from source `taint`, no dispatch. The case's
-  scripted decision rejects it (reviewer `eval-reviewer-1`) and the model
-  answers. Graders: escalated from `taint`; lookup called, update_record
-  not called. Every result passes: pass rate 1 and variance 0 per cell.
+  - c-taint: graders escalated from `taint`; lookup called, update_record
+    not called. When the model calls lookup (untrusted, so its result
+    taints the session) and then update_record, the taint rule applies in
+    the eval run as in production: a `policy.decision` (taint, escalate)
+    and an escalation from source `taint`, no dispatch; the case's
+    scripted decision rejects it (reviewer `eval-reviewer-1`) and the
+    model answers. model-a does this in both repeats; model-b does it in
+    repeat 1, but in repeat 2 it answers right after lookup, so nothing
+    escalates and the escalation grader fails (the trajectory grader
+    passes; no result `code`).
+
+  - c-plain: one grader, the final text equals `SYN-DONE`. model-a
+    answers `SYN-DONE` (pass); model-b answers `SYN-OTHER` (fail) in both
+    repeats.
 
 
-  Each session's model calls go to its cell's provider only. Each session
-  has exactly one `escalation.raised`, so no two results share a session.
-  Readings: runs consume scripted responses in the order cell, then repeat,
-  then case (the fixture format does not say; here each provider's
-  responses are the same for both repeats); results are listed per cell
-  by repeat; each run of a case starts from the case's own stub
-  behaviours (lookup lists four identical behaviours, so a runner sharing
-  one list across runs also passes). Scripted provider responses:
-  scripted-a 6, scripted-b 6 (3 per run). Stubs: lookup 4 calls;
-  update_record none (empty list).
+  Cell 0: all four results pass: `passRate` 1, `variance` 0. Cell 1:
+  c-taint passes 1 of 2 (p = 0.5, p(1−p) = 0.25), c-plain 0 of 2 (0):
+  `passRate` 1/4 = 0.25, `variance` (0.25 + 0) / 2 = 0.125 (EVAL-080
+  reading: population variance per case, averaged over cases).
+
+
+  Each session's model calls go to its cell's provider only. Scripted
+  provider responses: scripted-a 8 (c-taint 3 + c-plain 1, per repeat),
+  scripted-b 7 (repeat 1: 3 + 1; repeat 2: 2 + 1). Stubs: lookup 4 calls
+  (one per c-taint run, one behaviour in the case); update_record none.
 requirements: [EVAL-044]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -63,39 +74,46 @@ setup:
   providers:
     scripted-a:
       responses:
-        # cell 0, repeat 1
+        # cell 0, repeat 1, c-taint
         - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
           usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
         - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: k1, value: v1 } }]
           usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
         - parts: [{ type: text, text: "SYN-NOT-UPDATED" }]
           usage: { inputTokens: 40, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
-        # cell 0, repeat 2
+        # cell 0, repeat 1, c-plain
+        - parts: [{ type: text, text: "SYN-DONE" }]
+          usage: { inputTokens: 10, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+        # cell 0, repeat 2, c-taint
         - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
           usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
         - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: k1, value: v1 } }]
           usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
         - parts: [{ type: text, text: "SYN-NOT-UPDATED" }]
           usage: { inputTokens: 40, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # cell 0, repeat 2, c-plain
+        - parts: [{ type: text, text: "SYN-DONE" }]
+          usage: { inputTokens: 10, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
     scripted-b:
       responses:
-        # cell 1, repeat 1
+        # cell 1, repeat 1, c-taint
         - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
           usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
         - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: k1, value: v1 } }]
           usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
         - parts: [{ type: text, text: "SYN-NOT-UPDATED" }]
           usage: { inputTokens: 40, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
-        # cell 1, repeat 2
+        # cell 1, repeat 1, c-plain
+        - parts: [{ type: text, text: "SYN-OTHER" }]
+          usage: { inputTokens: 10, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+        # cell 1, repeat 2, c-taint: answers after lookup, no update_record call
         - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
           usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
-        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: k1, value: v1 } }]
-          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
-        - parts: [{ type: text, text: "SYN-NOT-UPDATED" }]
-          usage: { inputTokens: 40, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
-  stubs:
-    tools:
-      update_record: []
+        - parts: [{ type: text, text: "SYN-LOOKED-UP" }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # cell 1, repeat 2, c-plain
+        - parts: [{ type: text, text: "SYN-OTHER" }]
+          usage: { inputTokens: 10, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
 script:
   - action: evalRun
     run:
@@ -103,7 +121,7 @@ script:
       id: eval-matrix
       tenant: eval-1
       deployment: test@1
-      cases: [c-taint]
+      cases: [c-taint, c-plain]
       matrix:
         cells:
           - { model: { provider: scripted-a, name: model-a }, profile: default@1 }
@@ -120,14 +138,19 @@ script:
           tools:
             lookup:
               - ok: { output: { value: "SYN-VALUE-0001" } }
-              - ok: { output: { value: "SYN-VALUE-0001" } }
-              - ok: { output: { value: "SYN-VALUE-0001" } }
-              - ok: { output: { value: "SYN-VALUE-0001" } }
         decisions:
           - { match: { source: taint }, type: reject, reviewer: eval-reviewer-1 }
         graders:
           - { kind: escalation, escalates: true, source: taint }
           - { kind: trajectory, called: [lookup], notCalled: [update_record] }
+      - schemaVersion: "0.1.0"
+        id: c-plain
+        persona: assistant@1
+        principal: { subject: eval-user-1 }
+        inputs:
+          - [{ type: text, text: "Say done" }]
+        graders:
+          - { kind: schema, equals: "SYN-DONE" }
     expect:
       ok: true
       report:
@@ -139,14 +162,23 @@ script:
             variance: 0
             results:
               - { caseId: c-taint, repeat: 1, passed: true, sessionId: $a1, graders: [{ kind: escalation, passed: true }, { kind: trajectory, passed: true }] }
+              - { caseId: c-plain, repeat: 1, passed: true, sessionId: $ap1, graders: [{ kind: schema, passed: true }] }
               - { caseId: c-taint, repeat: 2, passed: true, sessionId: $a2, graders: [{ kind: escalation, passed: true }, { kind: trajectory, passed: true }] }
+              - { caseId: c-plain, repeat: 2, passed: true, sessionId: $ap2, graders: [{ kind: schema, passed: true }] }
           - model: { provider: scripted-b, name: model-b }
             profile: default@1
-            passRate: 1
-            variance: 0
+            passRate: 0.25
+            variance: 0.125
             results:
               - { caseId: c-taint, repeat: 1, passed: true, sessionId: $b1, graders: [{ kind: escalation, passed: true }, { kind: trajectory, passed: true }] }
-              - { caseId: c-taint, repeat: 2, passed: true, sessionId: $b2, graders: [{ kind: escalation, passed: true }, { kind: trajectory, passed: true }] }
+              - { caseId: c-plain, repeat: 1, passed: false, sessionId: $bp1, graders: [{ kind: schema, passed: false }] }
+              - caseId: c-taint
+                repeat: 2
+                passed: false
+                code: { $absent: true }
+                sessionId: $b2
+                graders: [{ kind: escalation, passed: false }, { kind: trajectory, passed: true }]
+              - { caseId: c-plain, repeat: 2, passed: false, sessionId: $bp2, graders: [{ kind: schema, passed: false }] }
 expect:
   sessions:
     $a1:
@@ -181,24 +213,28 @@ expect:
         - { type: tool.call, payload: { tool: update_record } }
     $b2:
       events:
-        mode: contains
+        mode: subsequence
         items:
           - { type: model.request, payload: { provider: scripted-b, model: model-b } }
-          - { type: policy.decision, payload: { kind: taint, outcome: escalate, callId: c2 } }
-          - { type: escalation.raised, payload: { escalation: { sources: [taint] } } }
+          - { type: tool.result, payload: { callId: c1, tool: lookup } }
+          - { type: run.ended, payload: { reason: responded } }
       absentEvents:
         - { type: model.request, payload: { provider: scripted-a } }
+        - { type: escalation.raised }
         - { type: tool.call, payload: { tool: update_record } }
+    $ap1: { absentEvents: [{ type: model.request, payload: { provider: scripted-b } }] }
+    $ap2: { absentEvents: [{ type: model.request, payload: { provider: scripted-b } }] }
+    $bp1: { absentEvents: [{ type: model.request, payload: { provider: scripted-a } }] }
+    $bp2: { absentEvents: [{ type: model.request, payload: { provider: scripted-a } }] }
   ports:
     eventLog:
       eval-1:
         $a1: { $count: { of: { type: escalation.raised }, equals: 1 } }
         $a2: { $count: { of: { type: escalation.raised }, equals: 1 } }
         $b1: { $count: { of: { type: escalation.raised }, equals: 1 } }
-        $b2: { $count: { of: { type: escalation.raised }, equals: 1 } }
   stubCalls:
     lookup: { count: 4 }
     update_record: { count: 0 }
   providerRequests:
-    scripted-a: { count: 6 }
-    scripted-b: { count: 6 }
+    scripted-a: { count: 8 }
+    scripted-b: { count: 7 }

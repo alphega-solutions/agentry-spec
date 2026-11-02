@@ -40,9 +40,9 @@ description: >-
   scripted-b 6. Stubs: none.
 
 
-  Gap: report divergences (EVAL-062, EVAL-063) are non-empty only for
-  replayed cases, which need a trace bundle (`case.replay`); this
-  fixture asserts the empty divergences of a live run only.
+  Report divergences (EVAL-062, EVAL-063) are non-empty only for
+  replayed cases; this fixture asserts the empty divergences of a live
+  run, and `eval/run-replay-divergences.yaml` the non-empty ones.
 requirements: [EVAL-080]
 contract: ">=0.1.0 <1.0.0"
 features: []

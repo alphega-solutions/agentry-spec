@@ -339,3 +339,4 @@ Schemas: `schemas/config/v1/hook.yaml` (`HookDefinition`); `schemas/core/v1/hook
 ## Amendment 2026-11-02 — from Phase 4 (Area 11)
 
 - **HOOK-060**: a `hook.decision` with result `rewrite` carries `replacementRef`, a BlobStore reference to the content as rewritten (a JSON array of parts with the provenance and labels the harness assigned, HOOK-021), so the rewrite can be reproduced from events and reused when replaying decisions (EVAL-063). The audit record's `details`, being the payload, carries the same reference. See the Area 11 amendment 2026-11-02.
+- **HOOK-062**: `inputHash` also excludes `principal.tenant`, which always equals the excluded `tenant`; identical views in different tenants therefore hash identically, so decisions recorded in one tenant are reused when replayed into an eval tenant (EVAL-040, EVAL-063).

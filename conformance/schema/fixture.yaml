@@ -858,6 +858,18 @@ $defs:
           returned array of escalation records.
 
   eventPattern:
+    description: >-
+      Event expectations for one session (EVAL-004); each item is a partial
+      match on an event's fields. `sequence`: the session's persisted
+      events, in log order, match the items one-to-one (same number, same
+      order). `unordered`: the same one-to-one match in any order (e.g.
+      parallel tool calls in one step). `subsequence`: the items match
+      distinct events in log order, with other events allowed in between.
+      `contains`: the items match distinct events in any order, with other
+      events allowed. In `sequence` and `unordered` mode, `checkpoint.saved`
+      events, whose number is implementation-defined, are left out before
+      matching unless an item has `type: checkpoint.saved`. Absence is
+      asserted with `absentEvents`.
     type: object
     additionalProperties: false
     required: [mode, items]

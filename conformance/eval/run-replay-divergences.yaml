@@ -1,0 +1,254 @@
+schemaVersion: "0.1.0"
+id: eval.run-replay-divergences
+title: An eval run that replays golden bundles against a candidate snapshot reports each cell's divergences — unrecorded calls and new hook decisions
+description: >-
+  Two eval runs in the dedicated tenant t1 (used by nothing else), each
+  with one cell (scripted-a/model-a, default@1), one repeat, and one case
+  that replays a golden bundle (`replay.bundle`, a path relative to
+  `conformance/`) with `replay.snapshot: candidate`. The replayed case
+  takes its persona, principal and input from the bundle; model calls are
+  answered with the recorded responses, so no provider is called and no
+  tool is dispatched. The fixture's configuration is the baseline with an
+  `eval` deployment and count_records@1 (as in the recording) added to
+  assistant@1's tools; the load before each run binds the candidate
+  snapshot hash, which the report states as its `snapshot` (EVAL-060).
+
+
+  - Run eval-replay-calls (`hookMode: reEvaluate`), case c-count, bundle
+    `golden/rewrite-canonical.yaml`. The recording's clamp@1 hook, which
+    rewrote both count_records calls to {prefix: a, limit: 10}, is not in
+    the candidate configuration, so the dispatched arguments are the
+    model's {prefix: a, limit: 50}, which match no recorded call. Each call
+    gets `agentry.eval.unrecorded_call` and the run continues to the
+    recorded final response (EVAL-062). The cell's `divergences` are
+    exactly two: `{caseId: c-count, repeat: 1, kind: unrecorded_call,
+    callId: c1, tool: count_records}` and the same for c2.
+
+  - Run eval-replay-hooks (`hookMode: replayDecisions`), after a load
+    that adds guard@1 (as recorded) to assistant@1's required hooks; case
+    c-guard, bundle `golden/hook-decisions.yaml`. guard's view of c1
+    (update_record) hashes as recorded, so the recorded `block` is reused
+    and guard is not invoked for it; c2 (lookup) has no recorded decision,
+    so guard is re-evaluated and, from the case's stub, answers `annotate`
+    — a non-`continue` result, so the cell's `divergences` are exactly one:
+    `{caseId: c-guard, repeat: 1, kind: hook_decision, hook: guard@1,
+    eventId}`, the replayed session's `hook.decision` for that annotate
+    (EVAL-063).
+
+
+  Divergences are matched as a set (their order within a cell is not
+  fixed). Each case's grader checks the recorded final text, which the
+  replay reproduces; whether a case with divergences passes is not
+  asserted. Hook behaviours come from each case's stubs (EVAL-041); guard
+  is invoked once in all, for c-guard's c2. guard is not in the candidate
+  of the first run, so a recorded decision of one hook is never matched
+  against another hook's view.
+requirements: [EVAL-044, EVAL-060, EVAL-062, EVAL-063, EVAL-080]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-04-01T00:00:00Z"
+  idSeed: 11
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: eval
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: Tool
+        id: count_records
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Count records whose key starts with a prefix.
+        input:
+          type: object
+          additionalProperties: false
+          required: [prefix, limit]
+          properties: { prefix: { type: string }, limit: { type: integer } }
+        effect: read
+        binding: { kind: native, handler: test.count_records }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, count_records@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a: { responses: [] }
+    scripted-b: { responses: [] }
+script:
+  - load: {}
+    bind: $candCalls
+    expect: { ok: true }
+  - action: evalRun
+    run:
+      schemaVersion: "0.1.0"
+      id: eval-replay-calls
+      tenant: t1
+      deployment: test@1
+      cases: [c-count]
+      matrix:
+        cells:
+          - { model: { provider: scripted-a, name: model-a }, profile: default@1 }
+      repeats: 1
+      replay: { snapshot: candidate, hookMode: reEvaluate }
+    cases:
+      - schemaVersion: "0.1.0"
+        id: c-count
+        replay: { bundle: golden/rewrite-canonical.yaml }
+        graders:
+          - { kind: schema, equals: "First count 3, then count 4." }
+    expect:
+      ok: true
+      report:
+        runId: eval-replay-calls
+        snapshot: $candCalls
+        cells:
+          - model: { provider: scripted-a, name: model-a }
+            profile: default@1
+            results:
+              - { caseId: c-count, repeat: 1, sessionId: $sCount, graders: [{ kind: schema, passed: true }] }
+            divergences:
+              $all:
+                - { $len: 2 }
+                - $contains:
+                    - { caseId: c-count, repeat: 1, kind: unrecorded_call, callId: c1, tool: count_records }
+                    - { caseId: c-count, repeat: 1, kind: unrecorded_call, callId: c2, tool: count_records }
+  - load:
+      artifacts:
+        - kind: Hook
+          id: guard
+          version: 1
+          schemaVersion: "0.1.0"
+          points: [beforeToolCall]
+          results: [block, annotate]
+          timeoutMs: 1000
+          purpose: guardrail
+          failureMode: failClosed
+          source: { kind: native, handler: test.hook.guard }
+        - kind: Persona
+          id: assistant
+          version: 1
+          schemaVersion: "0.1.0"
+          displayName: Test assistant
+          instructions: "You are a test assistant."
+          tools: [lookup@1, update_record@1, count_records@1]
+          fallbackMessage: "This request was blocked."
+          defaultProfile: default@1
+          allowedProfiles: [default@1, streamed@1]
+          requiredHooks: [guard@1]
+          model:
+            provider: scripted-a
+            name: model-a
+            fallbacks:
+              - { provider: scripted-b, name: model-b }
+    bind: $candHooks
+    expect: { ok: true }
+  - action: evalRun
+    run:
+      schemaVersion: "0.1.0"
+      id: eval-replay-hooks
+      tenant: t1
+      deployment: test@1
+      cases: [c-guard]
+      matrix:
+        cells:
+          - { model: { provider: scripted-a, name: model-a }, profile: default@1 }
+      repeats: 1
+      replay: { snapshot: candidate, hookMode: replayDecisions }
+    cases:
+      - schemaVersion: "0.1.0"
+        id: c-guard
+        replay: { bundle: golden/hook-decisions.yaml }
+        stubs:
+          nativeHooks:
+            guard:
+              # c2 (lookup) only; c1's recorded block is reused
+              - result: annotate
+                labels: [{ part: 0, labels: [pii] }]
+        graders:
+          - { kind: schema, equals: "Record k1 was not updated; it holds SYN-VALUE-0005." }
+    expect:
+      ok: true
+      report:
+        runId: eval-replay-hooks
+        snapshot: { $all: [$candHooks, { $not: $candCalls }] }
+        cells:
+          - model: { provider: scripted-a, name: model-a }
+            profile: default@1
+            results:
+              - { caseId: c-guard, repeat: 1, sessionId: $sGuard, graders: [{ kind: schema, passed: true }] }
+            divergences:
+              - { caseId: c-guard, repeat: 1, kind: hook_decision, hook: guard@1, eventId: $hdGuard }
+expect:
+  sessions:
+    $sCount:
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, snapshotHash: $candCalls }
+          - type: tool.result
+            step: 1
+            payload:
+              callId: c1
+              tool: count_records
+              result: { error: { code: agentry.eval.unrecorded_call, category: unavailable, retryable: false, source: harness } }
+          - type: tool.result
+            step: 2
+            payload:
+              callId: c2
+              tool: count_records
+              result: { error: { code: agentry.eval.unrecorded_call, category: unavailable, retryable: false, source: harness } }
+          - type: model.response
+            step: 3
+            payload: { message: { parts: [{ type: text, text: "First count 3, then count 4." }] } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: hook.decision }
+    $sGuard:
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, snapshotHash: $candHooks }
+          - { type: hook.decision, payload: { hook: guard@1, result: block, inputHash: "sha256:df98e4ee26967f3ec03b86d010581a56d52bbac12a2fe4ad2b6f397659ec1cb4" } }
+          - { type: tool.result, payload: { callId: c1, result: { error: { code: agentry.hook.blocked } } } }
+          - { type: hook.decision, eventId: $hdGuard, payload: { hook: guard@1, point: beforeToolCall, result: annotate } }
+          - { type: tool.result, payload: { callId: c2, tool: lookup, result: { ok: { output: { key: k1, value: SYN-VALUE-0005 } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+  stubCalls:
+    guard:
+      - { arguments: { sessionId: $sGuard, point: beforeToolCall, tool: { id: lookup }, call: { arguments: { key: k1 } } } }
+    count_records: { count: 0 }
+    lookup: { count: 0 }
+    update_record: { count: 0 }
+  providerRequests:
+    scripted-a: { count: 0 }
+    scripted-b: { count: 0 }

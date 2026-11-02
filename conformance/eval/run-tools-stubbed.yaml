@@ -29,7 +29,7 @@ description: >-
   continues (EVAL-044 reading), so the model answers once more. Scripted
   provider responses: scripted-a 4 (2 per case). Stubs: web_lookup 1 (in
   the case); rates/quote none.
-requirements: [EVAL-041]
+requirements: [EVAL-041, EVAL-050]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:

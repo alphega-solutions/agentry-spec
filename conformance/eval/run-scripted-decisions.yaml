@@ -27,7 +27,7 @@ description: >-
 
   Scripted provider responses: scripted-a 3 (c-approved 2, c-unmatched
   1). Stubs: set_status 1 (in the case); set_flag none.
-requirements: [EVAL-043]
+requirements: [EVAL-043, EVAL-050]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:
