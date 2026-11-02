@@ -176,3 +176,29 @@ All rules here are new; this is a Tier 3 area. Rules that affect approved areas 
 - **CLI first.** A command-line tool covers the scriptable needs: run conformance (`agentry test`), run evals (`agentry eval run`), compare runs (`agentry eval diff`), export and replay trace bundles, and convert traces (`agentry trace to-fixture`). It emits JSON and JUnit XML for CI. One TypeScript CLI can drive all three implementations through their conformance runners.
 - **Static HTML reports.** The CLI can write a self-contained report per run — trace viewer, run comparison — covering most review needs without a server or authentication.
 - **Web UI later.** A hosted UI earns its place when human graders or escalation reviewers need it. It reads the event and audit logs through their ports and eval reports as files; it does not run evals or keep its own copies.
+
+## Amendment 2026-11-02 — from Phase 4 (schemas and fixtures)
+
+Schemas: `schemas/eval/v1/bundle.yaml` (trace bundle), `case.yaml` (eval case and graders), `run.yaml` (eval run), `report.yaml` (eval report), `conformance-report.yaml` (runner report and claim). Fixture format: host actions `exportBundle`, `replay`, `convert` and `evalRun` with results `expect.bundle`, `expect.divergences`, `expect.draft` and `expect.report` (`conformance/schema/fixture.yaml`); golden trace bundles in `conformance/golden/`.
+
+**Bundles and replay**
+
+- EVAL-025: a bundle holds the session's events in sequence, every blob they reference with its bytes, its snapshot record, its audit records and, for a delegation chain, a bundle per child. It is exported unredacted, as stored (PORT-008), and is subject to the sensitivity policies of its content.
+- EVAL-060–063: `replay` creates a new session in the given tenant from the bundle's first principal input of each turn, using the recorded snapshot (`recorded`) or the current configuration (`candidate`). Model calls are answered with the recorded responses, in order; summaries and retrieved content are reused (EVAL-061); tool calls are matched per EVAL-062; recorded decisions on escalations are reapplied in order. A divergence is reported as `{kind: unrecorded_call, callId, tool}` (EVAL-062) or `{kind: hook_decision, hook, eventId}` (EVAL-063). A model call beyond the recording ends the replayed run `failed` (`agentry.eval.unrecorded_model_call`, `fatal`).
+
+**Eval runs**
+
+- EVAL-040: an eval run is refused (`configuration`, `agentry.eval.production_binding`) unless its deployment's `environment` is `eval`; its tenant is used for nothing else.
+- EVAL-041: in an eval run every tool, MCP server, HTTP endpoint, remote and native hook and vector store is answered from the case's stubs (or the replayed recording); a call with no stub behaviour fails the case (`unavailable`, `agentry.eval.unstubbed_call`), never reaching a real endpoint.
+- EVAL-044: each case runs once per matrix cell per repeat, as its own session, with governance in force: hooks, the taint rule, approval and routing apply. Scripted reviewer decisions answer escalations; an escalation no rule matches leaves the case failed with its session suspended.
+- EVAL-050: a case passes in a repeat when every grader passes. `schema` checks the final structured output, or the final output against `equals` after canonicalization; `trajectory` checks dispatched tool calls (`tool.call` events), in order when `ordered`; `policy` matches `hook.decision` and `policy.decision` events; `escalation` checks whether an escalation was raised and, if given, that every pending action has that source; `budget` checks the session's tokens and cost (latency only in live runs); `judge` asks its model for a score in [0, 1] and passes at or above `threshold`.
+- EVAL-051: a judge reads the final response and the case's inputs, through a model allowed for every label on that content; if none is allowed, the judge grader fails with `agentry.eval.judge_not_allowed` and receives nothing. Its usage is recorded on its grader result, not in the cell's tokens.
+- EVAL-080, EVAL-081: a cell's `passRate` is passing results over results; `variance` is the mean over cases of the variance of their 0/1 pass results across repeats. The gate fails if any case tagged `critical` fails in any cell, or a cell's pass rate is below `gate.minPassRate`.
+
+**Conversion**
+
+- EVAL-070–072: `convert` returns `{review: required, kind: case|fixture, content}`, where `content` is an eval case or a fixture draft with placeholders for identifying values and configuration referenced by `id@version`. If any labelled part would remain unredacted after the deployment's redaction and labelling hooks run, conversion is refused (`policy`, `agentry.eval.unredacted_content`) and returns nothing.
+
+**Verified elsewhere**
+
+- Requirements on the runner, the test-double kit and the spec repository itself are listed with how they are verified under `verifiedElsewhere` in `conformance/coverage.yaml`. The spec repository's own obligations (EVAL-002 placeholders, EVAL-010 coverage) are exercised by `tools/selftest.py` in spec CI.

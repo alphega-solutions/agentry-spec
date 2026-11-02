@@ -909,6 +909,11 @@ def main() -> int:
         for err in validator("https://alphega.io/agentry/schemas/conformance/adapter-manifest/v1.json").iter_errors(load_yaml(mf)):
             errors.append(f"{mf.relative_to(ROOT)}: {describe(err)}")
 
+    # 3c. Golden trace bundles validate against the bundle schema (EVAL-025, EVAL-026).
+    for gb in sorted((ROOT / "conformance" / "golden").glob("*.yaml")):
+        for err in validator("https://alphega.io/agentry/schemas/eval/bundle/v1.json").iter_errors(load_yaml(gb)):
+            errors.append(f"{gb.relative_to(ROOT)}: {describe(err)}")
+
     # 4. Shared configuration artifacts validate against their kind's schema.
     errors += check_shared_config(schemas, reg)
 

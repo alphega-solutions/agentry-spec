@@ -1,0 +1,39 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://alphega.io/agentry/schemas/eval/conformance-report/v1.json
+title: Conformance report
+description: >-
+  A conformance runner's JSON report and claim (EVAL-021, EVAL-023). The
+  JUnit XML report carries the same results: one test case per fixture,
+  named by fixture ID, with its requirement IDs as properties.
+type: object
+additionalProperties: false
+required: [schemaVersion, implementation, contract, unsupportedFeatures, results, conforms]
+properties:
+  schemaVersion: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/contractVersion" }
+  implementation: { type: string, minLength: 1 }
+  contract: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/contractVersion" }
+  unsupportedFeatures:
+    description: Optional features declared unsupported; the only legitimate reason to skip (EVAL-022).
+    type: array
+    uniqueItems: true
+    items: { type: string, pattern: "^[a-z0-9]+(\\.[a-z0-9_-]+)*$" }
+  results:
+    type: array
+    items:
+      type: object
+      additionalProperties: false
+      required: [fixture, requirements, status]
+      properties:
+        fixture: { type: string }
+        requirements: { type: array, items: { type: string } }
+        status: { enum: [pass, fail, skipped] }
+        skippedFor: { type: string, description: The unsupported feature that justified the skip. }
+        firstUnmet: { type: string, description: For failures, the first expectation not met. }
+      allOf:
+        - if: { properties: { status: { const: skipped } } }
+          then: { required: [skippedFor] }
+        - if: { properties: { status: { const: fail } } }
+          then: { required: [firstUnmet] }
+  conforms:
+    description: True if and only if no result failed and every skip is justified by a declared unsupported feature (EVAL-023).
+    type: boolean

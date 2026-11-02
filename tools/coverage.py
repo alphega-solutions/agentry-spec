@@ -11,6 +11,10 @@ from collections import defaultdict
 from common import ROOT, fixture_files, load_yaml, spec_requirements
 
 
+def fixture_docs() -> list[dict]:
+    return [load_yaml(fx) for fx in fixture_files()]
+
+
 def main() -> int:
     reqs = spec_requirements()
     config = load_yaml(ROOT / "conformance" / "coverage.yaml") or {}
@@ -22,8 +26,7 @@ def main() -> int:
         return 1
 
     covered: dict[str, list[str]] = defaultdict(list)
-    for fx in fixture_files():
-        doc = load_yaml(fx)
+    for doc in fixture_docs():
         for rid in doc.get("requirements", []):
             covered[rid].append(doc["id"])
 

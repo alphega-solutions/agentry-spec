@@ -1,0 +1,96 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://alphega.io/agentry/schemas/eval/report/v1.json
+title: Eval report
+description: >-
+  The report of an eval run (EVAL-080–082), redacted per the sensitivity
+  policies in force and free of secret values. A case passes in a repeat when
+  every grader passes; a cell's pass rate is passed results over results.
+type: object
+additionalProperties: false
+required: [schemaVersion, runId, snapshot, cells, gate]
+properties:
+  schemaVersion: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/contractVersion" }
+  runId: { type: string, minLength: 1 }
+  snapshot:
+    description: "`recorded`, or the candidate snapshot hash replayed against (EVAL-060); for live runs, the run's snapshot hash."
+    type: string
+  cells:
+    type: array
+    items:
+      type: object
+      additionalProperties: false
+      required: [model, profile, passRate, results, tokens, divergences]
+      properties:
+        model: { $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/modelSelection" }
+        profile: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/artifactRef" }
+        passRate: { type: number, minimum: 0, maximum: 1 }
+        variance:
+          description: Variance of the pass indicator across repeats, per case, averaged over cases.
+          type: number
+          minimum: 0
+        tokens: { type: integer, minimum: 0 }
+        cost: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/cost" }
+        latencyMs: { type: number, minimum: 0, description: Live runs only. }
+        results:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [caseId, repeat, passed, sessionId, graders]
+            properties:
+              caseId: { type: string }
+              repeat: { type: integer, minimum: 1 }
+              passed: { type: boolean }
+              sessionId: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+              graders:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [kind, passed, evidence]
+                  properties:
+                    kind: { enum: [schema, trajectory, policy, escalation, budget, judge] }
+                    passed: { type: boolean }
+                    score: { type: number, minimum: 0, maximum: 1 }
+                    evidence:
+                      description: Event IDs the grader used (EVAL-052).
+                      type: array
+                      items: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+                    usage: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/usage", description: "Judge usage, recorded separately (EVAL-051)." }
+        divergences:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [caseId, repeat, kind]
+            properties:
+              caseId: { type: string }
+              repeat: { type: integer, minimum: 1 }
+              kind: { enum: [unrecorded_call, hook_decision] }
+              callId: { type: string }
+              tool: { type: string }
+              hook: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/artifactRef" }
+              eventId: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+  baseline:
+    type: object
+    additionalProperties: false
+    required: [runId, passRateDelta]
+    properties:
+      runId: { type: string }
+      passRateDelta: { type: array, items: { type: number }, description: Per cell, this pass rate minus the baseline's. }
+  gate:
+    type: object
+    additionalProperties: false
+    required: [passed, failures]
+    properties:
+      passed: { type: boolean }
+      failures:
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [reason]
+          properties:
+            reason: { enum: [critical_case_failed, pass_rate_below_threshold] }
+            caseId: { type: string }
+            cell: { type: integer, minimum: 0 }
