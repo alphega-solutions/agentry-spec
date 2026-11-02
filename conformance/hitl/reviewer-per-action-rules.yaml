@@ -1,0 +1,201 @@
+schemaVersion: "0.1.0"
+id: hitl.reviewer-per-action-rules
+title: Reviewer rules are evaluated per pending action, with `escalation.source` and `escalation.reasonCode` the action's own; one refused decision refuses the whole batch
+description: >-
+  An untrusted lookup result taints the session at step 1 (the baseline
+  trusts no tools). At step 2 one model response requests c2 set_status
+  (`onTainted: allow`, `approval: always` → source `approval`, reason
+  `agentry.approval.always`) and c3 update_record (default `onTainted:
+  escalate` → source `taint`, reason `agentry.taint.mutating`), so one
+  escalation holds two actions, c2's first.
+
+  The bundle's reviewer rules read the action through the `escalation`
+  variable (HITL-021):
+
+  - `approval`: `escalation.reasonCode == 'agentry.approval.always' &&
+    'approver' in reviewer.roles`;
+  - `taint`: `escalation.source == 'taint' && 'security' in
+    reviewer.roles`.
+
+  Rules are evaluated per pending action, for that action's source, with
+  `escalation.source` and `escalation.reasonCode` the action's (Area 6
+  amendment 2026-11-01). Each action's reviewer requirements list only its
+  own source's rule.
+
+  - r-approver submits one decide() batch approving c2 then c3. The c2
+    decision satisfies the approval rule, but the c3 decision fails the
+    taint rule, so the batch is refused with `unauthorized`
+    (`agentry.hitl.reviewer_refused`), `details.decisionId` naming the c3
+    decision, and none of it is recorded — not even the c2 approval — and
+    no event is emitted.
+  - r-approver then approves c2 alone: accepted. r-security approves c3:
+    accepted. Each passes only because its action's own source and reason
+    code are used; neither decide() emits events.
+  - resume() completes the turn; `escalation.resolved` lists exactly the
+    two accepted decisions in recording order; both calls are dispatched.
+requirements: [HITL-021, HITL-022]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        reviewerRules:
+          approval: [{ rule: "escalation.reasonCode == 'agentry.approval.always' && 'approver' in reviewer.roles" }]
+          taint: [{ rule: "escalation.source == 'taint' && 'security' in reviewer.roles" }]
+        sensitivityPolicies:
+          pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+          phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+      - kind: Tool
+        id: set_status
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Set a record's status.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: mutating
+        idempotent: true
+        onTainted: allow
+        approval: always
+        binding: { kind: native, handler: test.set_status }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, set_status@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r-approver, subject: reviewer-approver, assurance: multi_factor, roles: [approver] }
+        - { id: r-security, subject: reviewer-security, assurance: multi_factor, roles: [security] }
+  providers:
+    scripted-a:
+      capabilities: { parallelToolCalls: true }
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts:
+            - { type: tool_call, callId: c2, tool: set_status, arguments: { key: k1 } }
+            - { type: tool_call, callId: c3, tool: update_record, arguments: { key: k2, value: v2 } }
+          usage: { inputTokens: 30, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Both done." }]
+          usage: { inputTokens: 50, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "synthetic untrusted value" } }
+      set_status:
+        - ok: { output: { status: set } }
+      update_record:
+        - ok: { output: { updated: true } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1, then set its status and update k2" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind:
+          payload.escalation.id: $esc
+          payload.escalation.pendingActions.0.id: $aApproval
+          payload.escalation.pendingActions.1.id: $aTaint
+    expect: { ok: true, endReason: escalated }
+  # One batch: the c2 decision passes the approval rule, the c3 decision fails the taint rule.
+  - action: decide
+    session: $s
+    reviewer: r-approver
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000281", pendingActionId: $aApproval, type: approve }
+      - { decisionId: "01900000-0000-7000-8000-000000000282", pendingActionId: $aTaint, type: approve }
+    expect:
+      ok: false
+      newEvents: 0
+      error: { category: unauthorized, code: agentry.hitl.reviewer_refused, details: { decisionId: "01900000-0000-7000-8000-000000000282" } }
+  - action: decide
+    session: $s
+    reviewer: r-approver
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000283", pendingActionId: $aApproval, type: approve }
+    expect: { ok: true, newEvents: 0 }
+  - action: decide
+    session: $s
+    reviewer: r-security
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000284", pendingActionId: $aTaint, type: approve }
+    expect: { ok: true, newEvents: 0 }
+  - action: resume
+    session: $s
+    reviewer: r-security
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            payload:
+              escalation:
+                id: $esc
+                sources: [approval, taint]
+                reasonCodes: [agentry.approval.always, agentry.taint.mutating]
+                pendingActions:
+                  - id: $aApproval
+                    callId: c2
+                    source: approval
+                    reasonCode: agentry.approval.always
+                    reviewerRequirements:
+                      requiredApprovals: 1
+                      selfApprovalAllowed: false
+                      rules: ["escalation.reasonCode == 'agentry.approval.always' && 'approver' in reviewer.roles"]
+                  - id: { $all: [$aTaint, { $not: $aApproval }] }
+                    callId: c3
+                    source: taint
+                    reasonCode: agentry.taint.mutating
+                    reviewerRequirements:
+                      requiredApprovals: 1
+                      selfApprovalAllowed: false
+                      rules: ["escalation.source == 'taint' && 'security' in reviewer.roles"]
+          - { type: run.ended, payload: { reason: escalated } }
+          - type: escalation.resolved
+            payload:
+              escalationId: $esc
+              decisions: ["01900000-0000-7000-8000-000000000283", "01900000-0000-7000-8000-000000000284"]
+          - { type: run.ended, payload: { reason: responded } }
+  stubCalls:
+    set_status: [{ arguments: { key: k1 } }]
+    update_record: [{ arguments: { key: k2, value: v2 } }]
+  ports:
+    auditLog:
+      t1:
+        $all:
+          - $count: { of: { type: decision }, equals: 2 }
+          - $count: { of: { type: decision, details: { id: { $regex: "^01900000-0000-7000-8000-00000000028[12]$" } } }, equals: 0 }
+          - $contains:
+              - { type: decision, sessionId: $s, reviewer: { subject: reviewer-approver, tenant: t1 }, details: { id: "01900000-0000-7000-8000-000000000283", pendingActionId: $aApproval, type: approve } }
+              - { type: decision, sessionId: $s, reviewer: { subject: reviewer-security, tenant: t1 }, details: { id: "01900000-0000-7000-8000-000000000284", pendingActionId: $aTaint, type: approve } }

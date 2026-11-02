@@ -69,7 +69,7 @@ script:
     reviewer: r1
     decisions:
       - { decisionId: "01900000-0000-7000-8000-000000000201", pendingActionId: $act, type: approve }
-    expect: { ok: true }
+    expect: { ok: true, newEvents: 0 }
   - action: resume
     session: $s
     reviewer: r2

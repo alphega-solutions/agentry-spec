@@ -6,17 +6,20 @@ description: >-
   `approval`). The bundle declares the approval reviewer rule `'approver'
   in reviewer.roles` and the persona declares `'finance' in
   reviewer.roles`; they merge by `union`, so the pending action's
-  reviewer requirements list both rules and a reviewer must satisfy each.
+  reviewer requirements list both rules, the bundle's first (layer order,
+  Area 6 amendment 2026-11-01), and a reviewer must satisfy each.
   A rule for source `hook` is also declared and does not apply.
 
-  Each of these decide() calls is refused with category `unauthorized`,
-  naming its decision in `details.decisionId`, and records nothing:
+  Each of these decide() calls is refused with category `unauthorized`
+  (`agentry.hitl.reviewer_refused`), naming its decision in
+  `details.decisionId`, and records nothing and emits no events:
   r-svc (holds both roles, but `human: false`); r-other (holds both roles,
   but belongs to tenant t2); r-bundle (satisfies only the bundle rule);
   r-persona (satisfies only the persona rule). A resume() with no
   decisions then still fails with `conflict` (`agentry.hitl.pending`):
   no refused decision decided the action. The control r-ok, a human of
-  t1 holding both roles, is accepted, and the turn completes. Exactly one
+  t1 holding both roles, is accepted by decide() (which emits no events),
+  and the turn completes. Exactly one
   decision is audited and `escalation.resolved` lists only it.
 requirements: [HITL-021, HITL-022]
 contract: ">=0.1.0 <1.0.0"
@@ -113,28 +116,28 @@ script:
     reviewer: r-svc
     decisions:
       - { decisionId: "01900000-0000-7000-8000-000000000221", pendingActionId: $act, type: approve }
-    expect: { ok: false, error: { category: unauthorized, details: { decisionId: "01900000-0000-7000-8000-000000000221" } }, newEvents: 0 }
+    expect: { ok: false, error: { category: unauthorized, code: agentry.hitl.reviewer_refused, details: { decisionId: "01900000-0000-7000-8000-000000000221" } }, newEvents: 0 }
   # Another tenant.
   - action: decide
     session: $s
     reviewer: r-other
     decisions:
       - { decisionId: "01900000-0000-7000-8000-000000000222", pendingActionId: $act, type: approve }
-    expect: { ok: false, error: { category: unauthorized, details: { decisionId: "01900000-0000-7000-8000-000000000222" } }, newEvents: 0 }
+    expect: { ok: false, error: { category: unauthorized, code: agentry.hitl.reviewer_refused, details: { decisionId: "01900000-0000-7000-8000-000000000222" } }, newEvents: 0 }
   # Satisfies the bundle rule only.
   - action: decide
     session: $s
     reviewer: r-bundle
     decisions:
       - { decisionId: "01900000-0000-7000-8000-000000000223", pendingActionId: $act, type: approve }
-    expect: { ok: false, error: { category: unauthorized, details: { decisionId: "01900000-0000-7000-8000-000000000223" } }, newEvents: 0 }
+    expect: { ok: false, error: { category: unauthorized, code: agentry.hitl.reviewer_refused, details: { decisionId: "01900000-0000-7000-8000-000000000223" } }, newEvents: 0 }
   # Satisfies the persona rule only.
   - action: decide
     session: $s
     reviewer: r-persona
     decisions:
       - { decisionId: "01900000-0000-7000-8000-000000000224", pendingActionId: $act, type: reject }
-    expect: { ok: false, error: { category: unauthorized, details: { decisionId: "01900000-0000-7000-8000-000000000224" } }, newEvents: 0 }
+    expect: { ok: false, error: { category: unauthorized, code: agentry.hitl.reviewer_refused, details: { decisionId: "01900000-0000-7000-8000-000000000224" } }, newEvents: 0 }
   # Nothing was recorded: the action is still undecided.
   - action: resume
     session: $s
@@ -146,7 +149,7 @@ script:
     reviewer: r-ok
     decisions:
       - { decisionId: "01900000-0000-7000-8000-000000000225", pendingActionId: $act, type: approve }
-    expect: { ok: true }
+    expect: { ok: true, newEvents: 0 }
   - action: resume
     session: $s
     reviewer: r-ok
@@ -168,7 +171,7 @@ expect:
                     source: approval
                     reviewerRequirements:
                       requiredApprovals: 1
-                      rules: { $all: [{ $contains: ["'approver' in reviewer.roles", "'finance' in reviewer.roles"] }, { $len: 2 }] }
+                      rules: ["'approver' in reviewer.roles", "'finance' in reviewer.roles"]
           - { type: run.ended, payload: { reason: escalated } }
           - { type: escalation.resolved, payload: { escalationId: $esc, decisions: ["01900000-0000-7000-8000-000000000225"] } }
           - { type: tool.call, payload: { callId: c1, arguments: { key: k1, value: v1 } } }

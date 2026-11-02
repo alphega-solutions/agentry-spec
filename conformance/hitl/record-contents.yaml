@@ -25,7 +25,8 @@ description: >-
     (`taint`) needs 2 approvals — the highest of the applicable rules
     (HITL-024), not the lower persona value — never allows
     self-approval, even though the bundle allows it for `approval`
-    (HITL-023), and lists both taint rules (in unspecified order); c4
+    (HITL-023), and lists both taint rules in layer order, the bundle's
+    then the persona's (Area 6 amendment 2026-11-01); c4
     (`approval`) needs 1, allows self-approval, and lists only the
     approval rule.
 requirements: [HITL-010]
@@ -190,7 +191,7 @@ expect:
                     reviewerRequirements:
                       requiredApprovals: 2
                       selfApprovalAllowed: false
-                      rules: { $all: [{ $len: 2 }, { $contains: ["'reviewer' in reviewer.roles", "reviewer.assurance == 'multi_factor'"] }] }
+                      rules: ["'reviewer' in reviewer.roles", "reviewer.assurance == 'multi_factor'"]
                   - callId: c4
                     source: approval
                     reviewerRequirements:

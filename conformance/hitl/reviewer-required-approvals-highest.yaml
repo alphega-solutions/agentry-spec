@@ -6,8 +6,10 @@ description: >-
   `approval` action: the bundle's (default `requiredApprovals`, 1) and the
   persona's (`requiredApprovals: 2`). A bundle rule for source `hook` with
   `requiredApprovals: 3` does not apply. The action's reviewer
-  requirements therefore say 2. After r1's approval the reviewer view
-  shows the action undecided and resume() fails with `conflict`
+  requirements therefore say 2, and list the two rules in layer order,
+  the bundle's then the persona's (Area 6 amendment 2026-11-01). After
+  r1's approval (decide(), no events) the reviewer view
+  (no events) shows the action undecided and resume() fails with `conflict`
   (`agentry.hitl.pending`) without dispatching; r2's approval decides it
   and the call is dispatched once.
 
@@ -106,13 +108,14 @@ script:
     reviewer: r1
     decisions:
       - { decisionId: "01900000-0000-7000-8000-000000000251", pendingActionId: $act, type: approve }
-    expect: { ok: true }
+    expect: { ok: true, newEvents: 0 }
   - action: getReviewerView
     session: $s
     tenant: t1
     reviewer: r2
     expect:
       ok: true
+      newEvents: 0
       view:
         actions:
           - pendingActionId: $act
@@ -179,7 +182,7 @@ expect:
                     source: approval
                     reviewerRequirements:
                       requiredApprovals: 2
-                      rules: { $all: [{ $contains: ["'approver' in reviewer.roles", "reviewer.subject != principal.subject"] }, { $len: 2 }] }
+                      rules: ["'approver' in reviewer.roles", "reviewer.subject != principal.subject"]
           - { type: run.ended, payload: { reason: escalated } }
           - type: escalation.resolved
             payload: { escalationId: $esc, decisions: ["01900000-0000-7000-8000-000000000251", "01900000-0000-7000-8000-000000000252"] }

@@ -7,9 +7,10 @@ description: >-
   kept) and the clock advances 48 hours, still within the PT72H
   `suspendedTtl`. The escalation is still retrievable (HITL-012):
 
-  - getReviewerView as t1 for reviewer r1 returns the same escalation and
-    its one action, undecided, with the call as its one `tool_call` part
-    (Area 6 amendment 2026-11-01), and persists no event;
+  - getReviewerView as t1 for reviewer r1 returns the same escalation
+    (its action without `arguments`, which the view's escalation never
+    carries) and its one action, undecided, with the call as its one
+    `tool_call` part (Area 6 amendment 2026-11-01), and persists no event;
   - listPendingEscalations for t1 returns it;
   - the checkpoint store holds it under t1.
 
@@ -78,7 +79,7 @@ script:
       ok: true
       newEvents: 0
       view:
-        escalation: { id: $esc, sessionId: $s, tenant: t1 }
+        escalation: { id: $esc, sessionId: $s, tenant: t1, pendingActions: [{ id: $act, kind: tool_call, arguments: { $absent: true } }] }
         actions:
           - pendingActionId: $act
             decided: false

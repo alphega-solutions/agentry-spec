@@ -9,8 +9,9 @@ description: >-
 
   - $sDefault, under the baseline bundle (no `allowSelfApproval`): the
     action's `selfApprovalAllowed` is false; a decision by the session
-    principal p1 is refused with `unauthorized` and recorded nowhere; the
-    control, reviewer r1, is accepted.
+    principal p1 is refused with `unauthorized`
+    (`agentry.hitl.reviewer_refused`) and recorded nowhere; the control,
+    reviewer r1, is accepted.
   - The bundle is then reloaded with `allowSelfApproval: { approval: true,
     hook: true }` (keys `taint` and `recovery` cannot be set at all, see
     cfg.self-approval-taint-recovery-rejected). Sessions created afterwards
@@ -20,16 +21,17 @@ description: >-
     call is dispatched.
   - $sTaint: the `taint` action has `selfApprovalAllowed: false` although
     the bundle allows self-approval for other sources; p1 is refused with
-    `unauthorized`; r1 is accepted.
+    `unauthorized` (`agentry.hitl.reviewer_refused`); r1 is accepted.
   - $sRec: a crash at `after_started_record`, a restart and a clock advance
     past the run lease; a resume() by r1 with no decisions performs
     recovery (HITL-092), which raises the `recovery` escalation, and then
     fails with `conflict` because its action is undecided. The `recovery`
     action has `selfApprovalAllowed: false`; p1's `confirm` is refused with
-    `unauthorized`; r1's is accepted.
+    `unauthorized` (`agentry.hitl.reviewer_refused`); r1's is accepted.
 
-  Exactly one decision is audited per session, and only in $sSelf is the
-  session principal the reviewer.
+  Neither refused nor accepted decide() calls emit events. Exactly one
+  decision is audited per session, and only in $sSelf is the session
+  principal the reviewer.
 requirements: [HITL-023]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -118,13 +120,13 @@ script:
     reviewer: p1
     decisions:
       - { decisionId: "01900000-0000-7000-8000-000000000231", pendingActionId: $actDefault, type: approve }
-    expect: { ok: false, error: { category: unauthorized, details: { decisionId: "01900000-0000-7000-8000-000000000231" } }, newEvents: 0 }
+    expect: { ok: false, error: { category: unauthorized, code: agentry.hitl.reviewer_refused, details: { decisionId: "01900000-0000-7000-8000-000000000231" } }, newEvents: 0 }
   - action: decide
     session: $sDefault
     reviewer: r1
     decisions:
       - { decisionId: "01900000-0000-7000-8000-000000000232", pendingActionId: $actDefault, type: approve }
-    expect: { ok: true }
+    expect: { ok: true, newEvents: 0 }
   # Allow self-approval for `approval` (and `hook`).
   - load:
       artifacts:
@@ -172,13 +174,13 @@ script:
     reviewer: p1
     decisions:
       - { decisionId: "01900000-0000-7000-8000-000000000234", pendingActionId: $actTaint, type: approve }
-    expect: { ok: false, error: { category: unauthorized, details: { decisionId: "01900000-0000-7000-8000-000000000234" } }, newEvents: 0 }
+    expect: { ok: false, error: { category: unauthorized, code: agentry.hitl.reviewer_refused, details: { decisionId: "01900000-0000-7000-8000-000000000234" } }, newEvents: 0 }
   - action: decide
     session: $sTaint
     reviewer: r1
     decisions:
       - { decisionId: "01900000-0000-7000-8000-000000000235", pendingActionId: $actTaint, type: reject }
-    expect: { ok: true }
+    expect: { ok: true, newEvents: 0 }
   # $sRec: self-approval never applies to recovery.
   - action: run
     bind: $sRec
@@ -200,19 +202,19 @@ script:
     capture:
       - event: { type: escalation.raised }
         bind: { payload.escalation.pendingActions.0.id: $actRec }
-    expect: { ok: false, error: { category: conflict } }
+    expect: { ok: false, error: { category: conflict, code: agentry.hitl.pending } }
   - action: decide
     session: $sRec
     reviewer: p1
     decisions:
       - { decisionId: "01900000-0000-7000-8000-000000000236", pendingActionId: $actRec, type: confirm, outcome: failed }
-    expect: { ok: false, error: { category: unauthorized, details: { decisionId: "01900000-0000-7000-8000-000000000236" } }, newEvents: 0 }
+    expect: { ok: false, error: { category: unauthorized, code: agentry.hitl.reviewer_refused, details: { decisionId: "01900000-0000-7000-8000-000000000236" } }, newEvents: 0 }
   - action: decide
     session: $sRec
     reviewer: r1
     decisions:
       - { decisionId: "01900000-0000-7000-8000-000000000237", pendingActionId: $actRec, type: confirm, outcome: failed }
-    expect: { ok: true }
+    expect: { ok: true, newEvents: 0 }
 expect:
   sessions:
     $sDefault:

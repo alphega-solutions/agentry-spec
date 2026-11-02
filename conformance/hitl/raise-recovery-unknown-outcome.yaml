@@ -18,7 +18,8 @@ description: >-
   allowing only `confirm` (HITL-011), with one required approval and no
   self-approval (never for `recovery`, HITL-023). It carries no hook and
   no content point. An `approve` is refused with `invalid_input`
-  (HITL-043); a `confirm` is accepted by decide(). The stub has a single
+  (`agentry.hitl.decision_not_allowed`, HITL-043); a `confirm` is
+  accepted by decide(), which emits no events (HITL-040). The stub has a single
   behaviour, so a re-dispatch would fail the test.
 requirements: [HITL-001, HITL-010, HITL-011]
 contract: ">=0.1.0 <1.0.0"
@@ -63,13 +64,13 @@ script:
     reviewer: r1
     decisions:
       - { decisionId: "01900000-0000-7000-8000-0000000000a1", pendingActionId: $act, type: approve }
-    expect: { ok: false, error: { category: invalid_input, details: { decisionId: "01900000-0000-7000-8000-0000000000a1" } } }
+    expect: { ok: false, error: { category: invalid_input, code: agentry.hitl.decision_not_allowed, details: { decisionId: "01900000-0000-7000-8000-0000000000a1" } } }
   - action: decide
     session: $s
     reviewer: r1
     decisions:
       - { decisionId: "01900000-0000-7000-8000-0000000000a2", pendingActionId: $act, type: confirm, outcome: failed }
-    expect: { ok: true }
+    expect: { ok: true, newEvents: 0 }
 expect:
   sessions:
     $s:

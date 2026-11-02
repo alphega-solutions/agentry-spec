@@ -7,22 +7,26 @@ description: >-
   `onExpiry: close`; `rejecting@1` is the same with `onExpiry: reject`, so
   a session using it stays `suspended` after its TTL elapses (HITL-082).
 
-  At 2026-01-01T00:00Z, in t1: $a (default@1) and $aRej (rejecting@1)
-  escalate; $d escalates and is resumed with an approval (resolved, idle).
-  Two days later (2026-01-03T00:00Z): $b escalates in t1 and $c in t2.
+  At 2026-01-01T00:00Z $a (default@1) escalates in t1; one minute later
+  $aRej (rejecting@1) escalates, and $d escalates and is resumed with an
+  approval (resolved, idle). Two days later (2026-01-03T00:01Z): $b
+  escalates in t1 and $c in t2.
 
-  - At 2026-01-03T00:00Z the t1 list is exactly {$a, $aRej, $b} — not
-    $d's resolved escalation, not t2's — and the t2 list is exactly [$c].
-    Listing persists no event.
-  - At 2026-01-04T01:00Z the TTL of $a and $aRej has elapsed. The t1 list
+  - At 2026-01-03T00:01Z the t1 list is exactly [$a, $aRej, $b] — oldest
+    `createdAt` first (Area 6 amendment 2026-11-01; the one-minute step
+    keeps the createdAt values distinct, so no tie-break by ID is
+    involved) — not $d's resolved escalation, not t2's; the t2 list is
+    exactly [$c]. Listing persists no event.
+  - At 2026-01-04T01:01Z the TTL of $a and $aRej has elapsed. The t1 list
     is exactly [$b]: $a's session has closed `expired`, and $aRej's is
     still `suspended` but its `suspendedTtl` has elapsed, so it is
-    excluded too (HITL-100). The t2 list is still [$c].
+    excluded too (HITL-100). The t2 list is still [$c], and persists no
+    event, since no expiry is due in t2.
 
-  The list's order is not specified, so lists of more than one record are
-  matched as sets. No event count is asserted for the list after expiry,
-  because an implementation may process expiry lazily when it is next
-  accessed.
+  No event count is asserted for the t1 list after expiry: the list
+  performs any due expiry processing first ($a's `session.closed`), but
+  an implementation may already have processed it when the clock
+  advanced.
 requirements: [HITL-100]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -119,6 +123,7 @@ script:
       - event: { type: escalation.raised }
         bind: { payload.escalation.id: $escA }
     expect: { ok: true, endReason: escalated }
+  - clock: { advance: PT1M }
   - action: run
     bind: $aRej
     tenant: t1
@@ -173,13 +178,9 @@ script:
       ok: true
       newEvents: 0
       escalations:
-        $all:
-          - { $len: 3 }
-          - $contains:
-              - { id: $escA, sessionId: $a, tenant: t1 }
-              - { id: $escARej, sessionId: $aRej, tenant: t1 }
-              - { id: $escB, sessionId: $b, tenant: t1 }
-          - $count: { of: { id: $escD }, equals: 0 }
+        - { id: $escA, sessionId: $a, tenant: t1, createdAt: { $regex: "^2026-01-01T00:00:00(\\.0+)?Z$" } }
+        - { id: $escARej, sessionId: $aRej, tenant: t1, createdAt: { $regex: "^2026-01-01T00:01:00(\\.0+)?Z$" } }
+        - { id: $escB, sessionId: $b, tenant: t1, createdAt: { $regex: "^2026-01-03T00:01:00(\\.0+)?Z$" } }
   - action: listPendingEscalations
     tenant: t2
     expect: { ok: true, newEvents: 0, escalations: [{ id: $escC, sessionId: $c, tenant: t2 }] }
@@ -189,7 +190,7 @@ script:
     expect: { ok: true, escalations: [{ id: $escB, sessionId: $b, tenant: t1 }] }
   - action: listPendingEscalations
     tenant: t2
-    expect: { ok: true, escalations: [{ id: $escC, sessionId: $c, tenant: t2 }] }
+    expect: { ok: true, newEvents: 0, escalations: [{ id: $escC, sessionId: $c, tenant: t2 }] }
 expect:
   sessions:
     $a:

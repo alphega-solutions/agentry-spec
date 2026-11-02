@@ -11,12 +11,13 @@ description: >-
   - the run escalates (update_record has `approval: always`);
   - listPendingEscalations returns exactly the record carried by
     `escalation.raised` (deep equality with the captured record);
-  - decide() records the reviewer's approval without resuming; the
+  - decide() records the reviewer's approval without resuming and emits
+    no events; the
     escalation stays listed, since the session is still `suspended`;
   - resume() with no further decisions continues the turn; the call is
     dispatched and the run responds; `escalation.resolved` lists the
     decision;
-  - the list is then empty.
+  - the list is then empty. No list emits events (no expiry is due).
 requirements: [HITL-101]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -69,16 +70,16 @@ script:
     expect: { ok: true, endReason: escalated }
   - action: listPendingEscalations
     tenant: t1
-    expect: { ok: true, escalations: [$record] }
+    expect: { ok: true, newEvents: 0, escalations: [$record] }
   - action: decide
     session: $s
     reviewer: r1
     decisions:
       - { decisionId: "01900000-0000-7000-8000-000000000001", pendingActionId: $act, type: approve }
-    expect: { ok: true }
+    expect: { ok: true, newEvents: 0 }
   - action: listPendingEscalations
     tenant: t1
-    expect: { ok: true, escalations: [{ id: $esc, sessionId: $s }] }
+    expect: { ok: true, newEvents: 0, escalations: [{ id: $esc, sessionId: $s }] }
   - action: resume
     session: $s
     reviewer: r1
@@ -86,7 +87,7 @@ script:
     expect: { ok: true, endReason: responded }
   - action: listPendingEscalations
     tenant: t1
-    expect: { ok: true, escalations: [] }
+    expect: { ok: true, newEvents: 0, escalations: [] }
 expect:
   sessions:
     $s:

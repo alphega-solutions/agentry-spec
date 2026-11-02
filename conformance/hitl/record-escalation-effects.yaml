@@ -5,24 +5,23 @@ description: >-
   update_record has `approval: always`. Its call escalates (HITL-001), and
   the implementation must (HITL-003):
 
-  - save a checkpoint holding the open escalation: a `checkpoint.saved`
-    event follows `escalation.raised` in the escalating run (a checkpoint
-    holding the escalation cannot be saved before the event that records
-    it is in the log, PORT-035), and the checkpoint store holds the session
-    as `suspended` with that escalation;
   - emit `escalation.raised` carrying the record (its schema validity is
     implied by `schemaValid`);
+  - save a checkpoint holding the open escalation, and the checkpoint
+    store holds the session as `suspended` with that escalation;
   - write an audit record of type `escalation`, linked to that event, with
-    the session's tenant, principal and snapshot hash (PORT-071);
+    the session's tenant, principal and snapshot hash (PORT-071), whose
+    `details` equal the escalation carried by `escalation.raised` (deep
+    equality with the bound record);
   - end the run `escalated`, without completing the turn (CORE-080: a turn
     does not end while the session is `suspended`), and leave the session
     `suspended`.
 
-  The relative order of `checkpoint.saved` and `run.ended` is not
-  specified, so the event pattern orders escalation.raised →
-  checkpoint.saved, and the event log is checked for exactly one
-  `run.ended` (`escalated`) in the run. The `details` of an `escalation` audit record are not specified,
-  so they are not asserted. Nothing is dispatched.
+  The events are, in order, `escalation.raised`, `checkpoint.saved`,
+  `run.ended` (`escalated`) (Area 6 amendment 2026-11-01; the checkpoint
+  never runs ahead of the event log, PORT-035), asserted in one
+  subsequence; the event log holds exactly one `run.ended`. Nothing is
+  dispatched.
 requirements: [HITL-003]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -83,14 +82,17 @@ expect:
             snapshotHash: $h
             payload:
               escalation:
-                id: $esc
-                sessionId: $s
-                runId: $r1
-                tenant: t1
-                snapshotHash: $h
-                sources: [approval]
-                pendingActions: [{ id: $act, kind: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+                $all:
+                  - $escRecord
+                  - id: $esc
+                    sessionId: $s
+                    runId: $r1
+                    tenant: t1
+                    snapshotHash: $h
+                    sources: [approval]
+                    pendingActions: [{ id: $act, kind: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
           - { type: checkpoint.saved, runId: $r1 }
+          - { type: run.ended, runId: $r1, payload: { reason: escalated } }
       absentEvents:
         - { type: turn.completed }
         - { type: tool.call }
@@ -100,7 +102,6 @@ expect:
         $s:
           $all:
             - $count: { of: { type: escalation.raised }, equals: 1 }
-            - $count: { of: { type: run.ended, runId: $r1, payload: { reason: escalated } }, equals: 1 }
             - $count: { of: { type: run.ended }, equals: 1 }
     checkpointStore:
       t1:
@@ -121,5 +122,6 @@ expect:
                 principalRef: $pRef
                 snapshotHash: $h
                 eventIds: { $contains: [$evRaised] }
+                details: $escRecord
   stubCalls:
     update_record: { count: 0 }

@@ -22,17 +22,23 @@ description: >-
   - $sAfter: model-gate and tool-gate continue, lookup is dispatched,
     after-gate escalates its result with `test.gate.result` → one
     `content` action at `afterToolCall` (not a `tool_call` action: only
-    beforeToolCall raises those), allowing exactly approve and reject.
+    beforeToolCall raises those), allowing exactly approve and reject. While
+    the action is undecided no `tool.result` is appended for c1 (stage 11
+    follows stage 10).
+
+  Each content action's `contentRef` is a blob of media type
+  `application/json` (Area 6 amendment 2026-11-01). `allowedDecisions` is
+  matched as an exact array, in the order approve, reject, edit.
 
   The allowed sets are then exercised with decide(), which records
-  without resuming (HITL-040): a `confirm` on the tool_call action and an
-  `edit` on the beforeModelCall action are refused with `invalid_input`
-  (HITL-043), naming the refused decision; an `edit` on the tool_call
+  without resuming and emits no events (HITL-040): a `confirm` on the
+  tool_call action and an `edit` on the beforeModelCall action are
+  refused with `invalid_input` (`agentry.hitl.decision_not_allowed`,
+  HITL-043), naming the refused decision; an `edit` on the tool_call
   action and on the beforeResponse action is accepted. Only the two
-  accepted decisions are audited. The order of `allowedDecisions` is not
-  specified, so it is matched as a set. The persona allows only the
-  buffered profile, since a beforeResponse hook able to escalate rules
-  out `streamed` (HOOK-040).
+  accepted decisions are audited. The persona allows only the buffered
+  profile, since a beforeResponse hook able to escalate rules out
+  `streamed` (HOOK-040, CFG-042).
 requirements: [HITL-001, HITL-011]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -168,25 +174,25 @@ script:
     reviewer: r1
     decisions:
       - { decisionId: "01900000-0000-7000-8000-0000000000a1", pendingActionId: $actTool, type: confirm, outcome: succeeded }
-    expect: { ok: false, error: { category: invalid_input, details: { decisionId: "01900000-0000-7000-8000-0000000000a1" } } }
+    expect: { ok: false, error: { category: invalid_input, code: agentry.hitl.decision_not_allowed, details: { decisionId: "01900000-0000-7000-8000-0000000000a1" } } }
   - action: decide
     session: $sTool
     reviewer: r1
     decisions:
       - { decisionId: "01900000-0000-7000-8000-0000000000a2", pendingActionId: $actTool, type: edit, replacement: { key: k1, value: v2 } }
-    expect: { ok: true }
+    expect: { ok: true, newEvents: 0 }
   - action: decide
     session: $sModel
     reviewer: r1
     decisions:
       - { decisionId: "01900000-0000-7000-8000-0000000000b1", pendingActionId: $actModel, type: edit, replacement: [{ type: text, text: "Tell me about k3" }] }
-    expect: { ok: false, error: { category: invalid_input, details: { decisionId: "01900000-0000-7000-8000-0000000000b1" } } }
+    expect: { ok: false, error: { category: invalid_input, code: agentry.hitl.decision_not_allowed, details: { decisionId: "01900000-0000-7000-8000-0000000000b1" } } }
   - action: decide
     session: $sResp
     reviewer: r1
     decisions:
       - { decisionId: "01900000-0000-7000-8000-0000000000c1", pendingActionId: $actResp, type: edit, replacement: [{ type: text, text: "Edited reply SYN-0002." }] }
-    expect: { ok: true }
+    expect: { ok: true, newEvents: 0 }
 expect:
   sessions:
     $sTool:
@@ -212,7 +218,7 @@ expect:
                     arguments: { key: k1, value: v1 }
                     point: { $absent: true }
                     contentRef: { $absent: true }
-                    allowedDecisions: { $all: [{ $len: 3 }, { $contains: [approve, reject, edit] }] }
+                    allowedDecisions: [approve, reject, edit]
                     reviewerRequirements: { requiredApprovals: 1, selfApprovalAllowed: false, rules: [] }
           - { type: run.ended, payload: { reason: escalated } }
       absentEvents:
@@ -235,10 +241,10 @@ expect:
                     hook: model-gate@1
                     reasonCode: test.gate.model
                     point: beforeModelCall
-                    contentRef: { $any: true }
+                    contentRef: { mediaType: application/json }
                     callId: { $absent: true }
                     arguments: { $absent: true }
-                    allowedDecisions: { $all: [{ $len: 2 }, { $contains: [approve, reject] }] }
+                    allowedDecisions: [approve, reject]
                     reviewerRequirements: { requiredApprovals: 1, selfApprovalAllowed: false, rules: [] }
           - { type: run.ended, payload: { reason: escalated } }
       absentEvents:
@@ -262,9 +268,9 @@ expect:
                     hook: resp-gate@1
                     reasonCode: test.gate.response
                     point: beforeResponse
-                    contentRef: { $any: true }
+                    contentRef: { mediaType: application/json }
                     callId: { $absent: true }
-                    allowedDecisions: { $all: [{ $len: 3 }, { $contains: [approve, reject, edit] }] }
+                    allowedDecisions: [approve, reject, edit]
                     reviewerRequirements: { requiredApprovals: 1, selfApprovalAllowed: false, rules: [] }
           - { type: run.ended, payload: { reason: escalated } }
     $sAfter:
@@ -285,12 +291,13 @@ expect:
                     hook: after-gate@1
                     reasonCode: test.gate.result
                     point: afterToolCall
-                    contentRef: { $any: true }
+                    contentRef: { mediaType: application/json }
                     callId: { $absent: true }
-                    allowedDecisions: { $all: [{ $len: 2 }, { $contains: [approve, reject] }] }
+                    allowedDecisions: [approve, reject]
           - { type: run.ended, payload: { reason: escalated } }
       absentEvents:
         - { type: model.request, step: 2 }
+        - { type: tool.result, payload: { callId: c1 } }
   stubCalls:
     model-gate: { count: 4 }
     tool-gate: { count: 2 }

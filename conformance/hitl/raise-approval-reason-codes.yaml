@@ -25,8 +25,10 @@ description: >-
     (HOOK-131).
 
   Each escalation has one `tool_call` action from source `approval`,
-  allowing exactly approve, reject and edit (HITL-011), with the default
-  reviewer requirements (no reviewer rules, self-approval not enabled).
+  allowing exactly approve, reject and edit (HITL-011), as the exact array
+  [approve, reject, edit] (the order set by the Area 6 amendment
+  2026-11-01), with the default reviewer requirements (no reviewer rules,
+  self-approval not enabled).
 requirements: [HITL-001, HITL-010, HITL-011]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -183,7 +185,7 @@ expect:
                     callId: c1
                     tool: set_status
                     arguments: { key: k1 }
-                    allowedDecisions: { $all: [{ $len: 3 }, { $contains: [approve, reject, edit] }] }
+                    allowedDecisions: [approve, reject, edit]
                     reviewerRequirements: { requiredApprovals: 1, selfApprovalAllowed: false, rules: [] }
           - { type: run.ended, payload: { reason: escalated } }
       absentEvents:
@@ -206,7 +208,7 @@ expect:
                     callId: c1
                     tool: set_flag
                     arguments: { key: k1, flag: "on" }
-                    allowedDecisions: { $all: [{ $len: 3 }, { $contains: [approve, reject, edit] }] }
+                    allowedDecisions: [approve, reject, edit]
                     reviewerRequirements: { requiredApprovals: 1, selfApprovalAllowed: false, rules: [] }
           - { type: run.ended, payload: { reason: escalated } }
       absentEvents:
@@ -228,7 +230,7 @@ expect:
                     callId: c1
                     tool: set_flag
                     arguments: { key: k1 }
-                    allowedDecisions: { $all: [{ $len: 3 }, { $contains: [approve, reject, edit] }] }
+                    allowedDecisions: [approve, reject, edit]
           - { type: run.ended, payload: { reason: escalated } }
       absentEvents:
         - { type: tool.call }
@@ -258,7 +260,7 @@ expect:
                     callId: c1
                     tool: set_flag
                     arguments: { key: k1, flag: "off" }
-                    allowedDecisions: { $all: [{ $len: 3 }, { $contains: [approve, reject, edit] }] }
+                    allowedDecisions: [approve, reject, edit]
           - { type: run.ended, payload: { reason: escalated } }
       absentEvents:
         - { type: tool.call }

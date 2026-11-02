@@ -11,7 +11,10 @@ description: >-
   tool.pipeline-rewrite-after-approval-reescalates) in the same turn and
   step. The second escalation E2 is a new record (new ID, the resume run's
   ID, same turn and step), raised only after `escalation.resolved` for E1
-  (HITL-002). While E2 is open, listPendingEscalations shows exactly E2,
+  (HITL-002). Whatever the first action's source (here `hook`), the new
+  action has source `approval` and reason code
+  `agentry.approval.rewritten`, and its arguments are the rewritten ones
+  (Area 6 amendment 2026-11-01). While E2 is open, listPendingEscalations shows exactly E2,
   not E1. On approval of E2 the call is dispatched once with the
   rewritten arguments and the list is empty.
 requirements: [HITL-002]
@@ -111,7 +114,7 @@ script:
     expect: { ok: true, endReason: responded }
   - action: listPendingEscalations
     tenant: t1
-    expect: { ok: true, escalations: [] }
+    expect: { ok: true, newEvents: 0, escalations: [] }
 expect:
   sessions:
     $s:
@@ -121,14 +124,29 @@ expect:
         items:
           - type: escalation.raised
             runId: $r1
-            payload: { escalation: { id: $e1, runId: $r1, turn: 1, step: 1, sources: [hook], pendingActions: [{ callId: c1, arguments: { key: k1, value: v1 } }] } }
+            payload: { escalation: { id: $e1, runId: $r1, turn: 1, step: 1, sources: [hook], pendingActions: [{ source: hook, hook: gate@1, reasonCode: test.gate.review, callId: c1, arguments: { key: k1, value: v1 } }] } }
           - { type: run.ended, runId: $r1, payload: { reason: escalated } }
           - { type: run.started, runId: $r2, payload: { kind: resume } }
           - { type: escalation.resolved, runId: $r2, payload: { escalationId: $e1 } }
           - { type: hook.decision, runId: $r2, payload: { hook: normalise@1, result: rewrite } }
           - type: escalation.raised
             runId: $r2
-            payload: { escalation: { id: $e2, runId: $r2, turn: 1, step: 1, pendingActions: [{ id: { $not: $act1 }, callId: c1, arguments: { key: k1, value: V1-NORMALISED } }] } }
+            payload:
+              escalation:
+                id: $e2
+                runId: $r2
+                turn: 1
+                step: 1
+                sources: [approval]
+                reasonCodes: [agentry.approval.rewritten]
+                pendingActions:
+                  - id: { $not: $act1 }
+                    kind: tool_call
+                    source: approval
+                    reasonCode: agentry.approval.rewritten
+                    hook: { $absent: true }
+                    callId: c1
+                    arguments: { key: k1, value: V1-NORMALISED }
           - { type: run.ended, runId: $r2, payload: { reason: escalated } }
           - { type: escalation.resolved, runId: $r3, payload: { escalationId: $e2 } }
           - { type: tool.call, runId: $r3, payload: { callId: c1, arguments: { key: k1, value: V1-NORMALISED } } }

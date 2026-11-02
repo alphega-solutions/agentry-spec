@@ -7,7 +7,8 @@ description: >-
   `stricter` value (order `false` → `true`) and the load fails with
   category configuration naming dept@1, the field and the layer (CFG-032);
   the previous snapshot stays in force, so a session created afterwards
-  still refuses self-approval. A dept restating `approval: false` loads.
+  still refuses self-approval (`unauthorized`,
+  `agentry.hitl.reviewer_refused`, no events). A dept restating `approval: false` loads.
 
   Control: with org reloaded without the key, the same dept `approval:
   true` loads (a lower layer may add a key that no higher layer set, CFG-030
@@ -112,7 +113,7 @@ script:
     reviewer: p1
     decisions:
       - { decisionId: "01900000-0000-7000-8000-000000000241", pendingActionId: $actStrict, type: approve }
-    expect: { ok: false, error: { category: unauthorized } }
+    expect: { ok: false, error: { category: unauthorized, code: agentry.hitl.reviewer_refused }, newEvents: 0 }
   # Restating false is accepted.
   - load:
       artifacts:

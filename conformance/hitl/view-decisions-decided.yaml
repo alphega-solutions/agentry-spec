@@ -16,7 +16,9 @@ description: >-
 
   Each listed decision is the decision record: ID, escalation, pending
   action, type, `decidedBy: reviewer` and the reviewer. The view is called
-  by r3, who decides nothing. resume() then completes the turn: c1 is
+  by r3, who decides nothing; neither decide() nor any view emits events.
+  The view's escalation carries no action `arguments`; each call appears
+  only as its action's `tool_call` part. resume() then completes the turn: c1 is
   dispatched, c2 is not.
 requirements: [HITL-030]
 contract: ">=0.1.0 <1.0.0"
@@ -93,8 +95,9 @@ script:
     reviewer: r3
     expect:
       ok: true
+      newEvents: 0
       view:
-        escalation: { id: $esc, pendingActions: [{ id: $a1, callId: c1 }, { id: $a2, callId: c2 }] }
+        escalation: { id: $esc, pendingActions: [{ id: $a1, callId: c1, arguments: { $absent: true } }, { id: $a2, callId: c2, arguments: { $absent: true } }] }
         actions:
           - { pendingActionId: $a1, decisions: [], decided: false, content: [{ type: tool_call, callId: c1, arguments: { key: k1, value: v1 } }] }
           - { pendingActionId: $a2, decisions: [], decided: false, content: [{ type: tool_call, callId: c2, arguments: { key: k2, value: v2 } }] }
@@ -105,13 +108,14 @@ script:
     decisions:
       - { decisionId: "01900000-0000-7000-8000-0000000002d1", pendingActionId: $a1, type: approve }
       - { decisionId: "01900000-0000-7000-8000-0000000002d2", pendingActionId: $a2, type: reject }
-    expect: { ok: true }
+    expect: { ok: true, newEvents: 0 }
   - action: getReviewerView
     session: $s
     tenant: t1
     reviewer: r3
     expect:
       ok: true
+      newEvents: 0
       view:
         actions:
           - pendingActionId: $a1
@@ -128,13 +132,14 @@ script:
     reviewer: r2
     decisions:
       - { decisionId: "01900000-0000-7000-8000-0000000002d3", pendingActionId: $a1, type: approve }
-    expect: { ok: true }
+    expect: { ok: true, newEvents: 0 }
   - action: getReviewerView
     session: $s
     tenant: t1
     reviewer: r3
     expect:
       ok: true
+      newEvents: 0
       view:
         actions:
           - pendingActionId: $a1

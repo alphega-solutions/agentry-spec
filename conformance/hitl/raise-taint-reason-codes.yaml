@@ -22,8 +22,9 @@ description: >-
   tool:fetch_external, never the trusted tool:read_contact) and, with no
   reviewer rules configured, the default reviewer requirements: one
   approval, no self-approval (never for `taint`, HITL-023), no rules. No
-  call is dispatched (the stubs' empty lists fail on any call). The order
-  of `allowedDecisions` is not specified, so it is matched as a set.
+  call is dispatched (the stubs' empty lists fail on any call).
+  `allowedDecisions` is matched as an exact array, in the order approve,
+  reject, edit (Area 6 amendment 2026-11-01).
 requirements: [HITL-001, HITL-010, HITL-011]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -198,7 +199,7 @@ expect:
                     callId: c2
                     tool: update_record
                     arguments: { key: k1, value: v1 }
-                    allowedDecisions: { $all: [{ $len: 3 }, { $contains: [approve, reject, edit] }] }
+                    allowedDecisions: [approve, reject, edit]
                     reviewerRequirements: { requiredApprovals: 1, selfApprovalAllowed: false, rules: [] }
                     hook: { $absent: true }
                     point: { $absent: true }
@@ -224,7 +225,7 @@ expect:
                     callId: c3
                     tool: send_note
                     arguments: { text: "SYN-NOTE-0001" }
-                    allowedDecisions: { $all: [{ $len: 3 }, { $contains: [approve, reject, edit] }] }
+                    allowedDecisions: [approve, reject, edit]
                     reviewerRequirements: { requiredApprovals: 1, selfApprovalAllowed: false, rules: [] }
           - { type: run.ended, payload: { reason: escalated } }
       absentEvents:
@@ -247,7 +248,7 @@ expect:
                     reasonCode: agentry.taint.mutating
                     callId: c3
                     tool: push_record
-                    allowedDecisions: { $all: [{ $len: 3 }, { $contains: [approve, reject, edit] }] }
+                    allowedDecisions: [approve, reject, edit]
                     reviewerRequirements: { requiredApprovals: 1, selfApprovalAllowed: false, rules: [] }
           - { type: run.ended, payload: { reason: escalated } }
       absentEvents:
