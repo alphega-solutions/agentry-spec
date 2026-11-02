@@ -1,0 +1,113 @@
+schemaVersion: "0.1.0"
+id: hook.exec-first-block-stops-chain
+title: "The first `block` at a point stops the chain: later hooks at that point are not invoked"
+description: >-
+  gate-first and gate-later are native beforeToolCall hooks, in that
+  order. In $sBlock gate-first blocks, so gate-later is never invoked and
+  the tool is not called. In $sPass (control) gate-first continues, so
+  gate-later is invoked. gate-later is invoked exactly once in all, in
+  $sPass.
+requirements: [HOOK-033]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Hook
+        id: gate-first
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [block]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.gate-first }
+      - kind: Hook
+        id: gate-later
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [block]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.gate-later }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [gate-first@1, gate-later@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Not updated." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+    nativeHooks:
+      gate-first:
+        - result: block
+          reasonCode: test.guard.first
+        - result: continue
+      gate-later:
+        - result: continue
+script:
+  - action: run
+    bind: $sBlock
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sPass
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sBlock:
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: gate-first@1, point: beforeToolCall, result: block } }
+          - { type: tool.result, payload: { callId: c1, result: { error: { category: policy } } } }
+      absentEvents:
+        - { type: tool.call }
+        - { type: hook.decision, payload: { hook: gate-later@1 } }
+    $sPass:
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1 } }
+      absentEvents:
+        - { type: hook.decision }
+  stubCalls:
+    gate-first: { count: 2 }
+    gate-later:
+      - arguments: { sessionId: $sPass, point: beforeToolCall }
+    update_record: { count: 1 }

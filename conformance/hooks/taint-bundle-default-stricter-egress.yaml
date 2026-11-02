@@ -1,0 +1,180 @@
+schemaVersion: "0.1.0"
+id: hook.taint-bundle-default-stricter-egress
+title: For an egress call, a bundle `toolTaintDefaults` entry stricter than the tool's `onTaintedEgress` applies; a looser one does not
+description: >-
+  Both egress tools declare `onTaintedEgress: escalate`. The bundle sets
+  `block` for `send_note` and `allow` for `send_memo`. Each session is
+  tainted (untrusted fetch_external) and has `pii`-labelled content in
+  context (trusted read_contact), so the egress condition holds.
+
+  - $sNote: effective outcome = stricter(escalate, block) = block: the
+    call is stopped with a `policy` error and the turn continues.
+  - $sMemo: effective outcome = stricter(escalate, allow) = escalate.
+
+  The mutating side (`onTainted`) is covered at run time by
+  cfg.taint-outcome-stricter-of-tool-and-bundle.
+requirements: [HOOK-123]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        trustedTools: [read_contact@1]
+        toolTaintDefaults: { send_note@1: block, send_memo@1: allow }
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+      - kind: Tool
+        id: fetch_external
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Fetch a record from an external source.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        binding: { kind: native, handler: test.fetch_external }
+      - kind: Tool
+        id: read_contact
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Read a contact.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        sensitivity: [pii]
+        binding: { kind: native, handler: test.read_contact }
+      - kind: Tool
+        id: send_note
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Send a note to an external address.
+        input:
+          type: object
+          additionalProperties: false
+          required: [text]
+          properties: { text: { type: string } }
+        effect: read
+        egress: true
+        onTaintedEgress: escalate
+        binding: { kind: native, handler: test.send_note }
+      - kind: Tool
+        id: send_memo
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Send a memo to an external address.
+        input:
+          type: object
+          additionalProperties: false
+          required: [text]
+          properties: { text: { type: string } }
+        effect: read
+        egress: true
+        onTaintedEgress: escalate
+        binding: { kind: native, handler: test.send_memo }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [fetch_external@1, read_contact@1, send_note@1, send_memo@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # $sNote
+        - parts: [{ type: tool_call, callId: c1, tool: fetch_external, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: read_contact, arguments: { key: k1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c3, tool: send_note, arguments: { text: "SYN-NOTE-0001" } }]
+          usage: { inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "The note could not be sent." }]
+          usage: { inputTokens: 50, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sMemo
+        - parts: [{ type: tool_call, callId: c1, tool: fetch_external, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: read_contact, arguments: { key: k1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c3, tool: send_memo, arguments: { text: "SYN-MEMO-0001" } }]
+          usage: { inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      fetch_external:
+        - ok: { output: { value: "SYN-UNTRUSTED-0001" } }
+        - ok: { output: { value: "SYN-UNTRUSTED-0001" } }
+      read_contact:
+        - ok: { output: { contact: "SYN-CONTACT-0001" } }
+        - ok: { output: { contact: "SYN-CONTACT-0001" } }
+      send_note: []
+      send_memo: []
+script:
+  - action: run
+    bind: $sNote
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Fetch k1, read contact k1, send a note" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sMemo
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Fetch k1, read contact k1, send a memo" }]
+    expect: { ok: true, endReason: escalated }
+expect:
+  sessions:
+    $sNote:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: policy.decision, payload: { kind: taint, outcome: block, callId: c3, tool: send_note } }
+          - { type: tool.result, payload: { callId: c3, result: { error: { category: policy } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: escalation.raised }
+        - { type: tool.call, payload: { callId: c3 } }
+    $sMemo:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - { type: policy.decision, payload: { kind: taint, outcome: escalate, callId: c3, tool: send_memo } }
+          - { type: escalation.raised, payload: { escalation: { sources: [taint], pendingActions: [{ callId: c3, source: taint }] } } }
+          - { type: run.ended, payload: { reason: escalated } }
+      absentEvents:
+        - { type: tool.call, payload: { callId: c3 } }
+  stubCalls:
+    send_note: { count: 0 }
+    send_memo: { count: 0 }

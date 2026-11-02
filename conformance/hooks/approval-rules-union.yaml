@@ -1,0 +1,185 @@
+schemaVersion: "0.1.0"
+id: hook.approval-rules-union
+title: "For `approval: policy`, a call escalates when any bundle or persona approval rule is true and continues when all are false"
+description: >-
+  `update_record` has `approval: policy`. The bundle declares one approval
+  rule (value is `bundle-flag`), the persona another (value is
+  `persona-flag`); the effective rule set is their union. No untrusted
+  content enters any session, so the taint rule does not act and only the
+  approval stage decides.
+
+  - $sFalse: value v1 → every rule is false → dispatched, no escalation.
+  - $sBundle: value bundle-flag → the bundle's rule is true → escalation
+    from source `approval`, not dispatched.
+  - $sPersona: value persona-flag → the persona's rule is true (it is not
+    replaced by the bundle's) → escalation from source `approval`.
+  - $sNever: `note` (approval never) with value bundle-flag → dispatched:
+    rules apply only where the effective approval is `policy`.
+requirements: [HOOK-130, HOOK-131]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        approvalRules: ["call.arguments.value == 'bundle-flag'"]
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: policy
+        binding: { kind: native, handler: test.update_record }
+      - kind: Tool
+        id: note
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Record a note.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: true
+        approval: never
+        binding: { kind: native, handler: test.note }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [update_record@1, note@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        approvalRules: ["call.arguments.value == 'persona-flag'"]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # $sFalse
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sBundle
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: bundle-flag } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sPersona
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: persona-flag } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sNever
+        - parts: [{ type: tool_call, callId: c1, tool: note, arguments: { key: k1, value: bundle-flag } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Noted." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+      note:
+        - ok: { output: { noted: true } }
+script:
+  - action: run
+    bind: $sFalse
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sBundle
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to bundle-flag" }]
+    expect: { ok: true, endReason: escalated }
+  - action: run
+    bind: $sPersona
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to persona-flag" }]
+    expect: { ok: true, endReason: escalated }
+  - action: run
+    bind: $sNever
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Note bundle-flag on k1" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sFalse:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: update_record } }
+          - { type: tool.result, payload: { callId: c1, result: { ok: { output: { updated: true } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: escalation.raised }
+    $sBundle:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - { type: escalation.raised, payload: { escalation: { sources: [approval], pendingActions: [{ callId: c1, source: approval }] } } }
+          - { type: run.ended, payload: { reason: escalated } }
+      absentEvents:
+        - { type: tool.call }
+        - { type: policy.decision, payload: { kind: taint } }
+    $sPersona:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - { type: escalation.raised, payload: { escalation: { sources: [approval], pendingActions: [{ callId: c1, source: approval }] } } }
+          - { type: run.ended, payload: { reason: escalated } }
+      absentEvents:
+        - { type: tool.call }
+        - { type: policy.decision, payload: { kind: taint } }
+    $sNever:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: note } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: escalation.raised }
+  stubCalls:
+    update_record: [{ arguments: { key: k1, value: v1 } }]
+    note: [{ arguments: { key: k1, value: bundle-flag } }]

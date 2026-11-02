@@ -1,0 +1,166 @@
+schemaVersion: "0.1.0"
+id: hook.taint-decision-audited
+title: Every taint evaluation where a condition holds emits a `policy.decision` and an audit record, including an outcome of `allow`
+description: >-
+  Each session is tainted by an untrusted lookup result (baseline bundle:
+  no trusted tools).
+
+  - $sAllow: `set_status` is mutating with `onTainted: allow`. The call is
+    dispatched, and the taint rule still emits a `policy.decision` (kind
+    taint, outcome allow) and a `policy_decision` audit record linked to
+    that event.
+  - $sEscalate: `update_record` (default escalate) → `policy.decision`
+    (escalate) and a linked `policy_decision` audit record.
+  - $sNone: a second lookup in the tainted session; no condition holds, so
+    there is neither a taint decision nor a `policy_decision` audit record
+    for that session.
+requirements: [HOOK-124]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: set_status
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Set a record's status.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: mutating
+        idempotent: true
+        onTainted: allow
+        binding: { kind: native, handler: test.set_status }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, set_status@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # $sAllow
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: set_status, arguments: { key: k1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Status set." }]
+          usage: { inputTokens: 40, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sEscalate
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sNone
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: lookup, arguments: { key: k2 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Found both." }]
+          usage: { inputTokens: 40, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "SYN-UNTRUSTED-0001" } }
+        - ok: { output: { value: "SYN-UNTRUSTED-0001" } }
+        - ok: { output: { value: "SYN-UNTRUSTED-0001" } }
+        - ok: { output: { value: "SYN-UNTRUSTED-0002" } }
+      set_status:
+        - ok: { output: { status: set } }
+      update_record: []
+script:
+  - load: {}
+    bind: $h
+    expect: { ok: true }
+  - action: run
+    bind: $sAllow
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1 then set its status" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sEscalate
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1 then set it to v1" }]
+    expect: { ok: true, endReason: escalated }
+  - action: run
+    bind: $sNone
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1 and k2" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sAllow:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: policy.decision, eventId: $eAllow, payload: { kind: taint, outcome: allow, callId: c2, tool: set_status } }
+          - { type: tool.call, payload: { callId: c2, tool: set_status } }
+          - { type: tool.result, payload: { callId: c2, result: { ok: { output: { status: set } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: escalation.raised }
+    $sEscalate:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - { type: policy.decision, eventId: $eEscalate, payload: { kind: taint, outcome: escalate, callId: c2, tool: update_record } }
+          - { type: escalation.raised, payload: { escalation: { sources: [taint] } } }
+      absentEvents:
+        - { type: tool.call, payload: { callId: c2 } }
+    $sNone:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c2, tool: lookup } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: policy.decision, payload: { kind: taint } }
+  ports:
+    auditLog:
+      t1:
+        $all:
+          - $contains:
+              - tenant: t1
+                sessionId: $sAllow
+                snapshotHash: $h
+                principalRef: { subject: user-1, tenant: t1 }
+                type: policy_decision
+                eventIds: { $contains: [$eAllow] }
+              - tenant: t1
+                sessionId: $sEscalate
+                snapshotHash: $h
+                principalRef: { subject: user-1, tenant: t1 }
+                type: policy_decision
+                eventIds: { $contains: [$eEscalate] }
+          - $count: { of: { sessionId: $sNone, type: policy_decision }, equals: 0 }
+  stubCalls:
+    set_status: [{ arguments: { key: k1 } }]
+    update_record: { count: 0 }

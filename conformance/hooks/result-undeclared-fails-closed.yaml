@@ -1,0 +1,143 @@
+schemaVersion: "0.1.0"
+id: hook.result-undeclared-fails-closed
+title: A hook that returns a result it did not declare has failed; a fail-closed hook's failure is a block with an `error` event
+description: >-
+  gate is a remote beforeModelCall guardrail that declares only `block`
+  and no failureMode (so failClosed). $sRewrite: it returns a well-formed
+  `rewrite` it did not declare; $sAnnotate: a well-formed `annotate` it did
+  not declare. Each is a failure (HOOK-020): the undeclared result is not
+  applied (no rewrite or annotate decision), an `error` event with source
+  hook is emitted, and the failure is treated as block: no model call, run
+  `blocked`, fallback delivered. $sControl: a declared-compatible
+  `continue` reaches the model.
+requirements: [HOOK-020, HOOK-050, HOOK-051]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        remoteHooks:
+          - { id: gate, endpoint: "memory://hook-gate", region: test-region }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: Hook
+        id: gate
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeModelCall]
+        results: [block]
+        timeoutMs: 1000
+        source: { kind: remote, endpoint: gate }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [gate@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b: { responses: [] }
+  stubs:
+    remoteHooks:
+      gate:
+        - result: rewrite
+          parts: [{ type: text, text: "SYN-REWRITTEN-0020" }]
+        - result: annotate
+          labels: [{ part: 0, labels: [pii] }]
+        - result: continue
+script:
+  - action: run
+    bind: $sRewrite
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: blocked }
+  - action: run
+    bind: $sAnnotate
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: blocked }
+  - action: run
+    bind: $sControl
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sRewrite:
+      events:
+        mode: subsequence
+        items:
+          - { type: error, payload: { error: { source: hook } } }
+          - { type: run.ended, payload: { reason: blocked } }
+      absentEvents:
+        - { type: model.request }
+        - { type: hook.decision, payload: { result: { $not: block } } }
+    $sAnnotate:
+      events:
+        mode: subsequence
+        items:
+          - { type: error, payload: { error: { source: hook } } }
+          - { type: run.ended, payload: { reason: blocked } }
+      absentEvents:
+        - { type: model.request }
+        - { type: hook.decision, payload: { result: { $not: block } } }
+    $sControl:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: error }
+  stubCalls:
+    gate: { count: 3 }
+  providerRequests:
+    scripted-a: { count: 1 }
+    scripted-b: { count: 0 }
+  delivered:
+    $sRewrite: { text: "This request was blocked.", fallback: true }
+    $sAnnotate: { text: "This request was blocked.", fallback: true }
+    $sControl: { text: "Hello.", fallback: false }
+  noPersistedContent: ["SYN-REWRITTEN-0020"]

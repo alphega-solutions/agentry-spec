@@ -1,0 +1,143 @@
+schemaVersion: "0.1.0"
+id: hook.taint-sticky-escalation-resume
+title: Taint survives an escalation, its approval and resume, and later turns with only trusted content
+description: >-
+  The bundle trusts `lookup@1`; `fetch_external` is untrusted.
+
+  Turn 1 ($r1): an untrusted fetch_external result taints the session; the
+  mutating update_record call (c2) escalates at stage 5. The session is
+  suspended and checkpointed. A reviewer approves, and the resumed run
+  ($r2) dispatches c2 and responds.
+
+  Turn 2 ($r3): only a trusted lookup result enters context. The mutating
+  call c4 is still stopped by the taint rule: the session stayed tainted
+  across the checkpoint, the resume and the turn boundary, and the decision
+  still names the provenance that first tainted it (tool:fetch_external)
+  and no other. The checkpoint still records the taint.
+requirements: [HOOK-121, HOOK-126]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        trustedTools: [lookup@1]
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+      - kind: Tool
+        id: fetch_external
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Fetch a record from an external source.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        binding: { kind: native, handler: test.fetch_external }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, fetch_external@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        # Turn 1
+        - parts: [{ type: tool_call, callId: c1, tool: fetch_external, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # Turn 1, after resume
+        - parts: [{ type: text, text: "Updated." }]
+          usage: { inputTokens: 40, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # Turn 2
+        - parts: [{ type: tool_call, callId: c3, tool: lookup, arguments: { key: k2 } }]
+          usage: { inputTokens: 50, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c4, tool: update_record, arguments: { key: k2, value: v2 } }]
+          usage: { inputTokens: 60, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      fetch_external:
+        - ok: { output: { value: "SYN-UNTRUSTED-0001" } }
+      lookup:
+        - ok: { output: { value: "SYN-TRUSTED-0002" } }
+      update_record:
+        - ok: { output: { updated: true } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Fetch k1 then set it to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000001", pendingActionId: $act, type: approve }
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Look up k2 then set it to v2" }]
+    expect: { ok: true, endReason: escalated }
+expect:
+  sessions:
+    $s:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - { type: policy.decision, runId: $r1, payload: { kind: taint, outcome: escalate, callId: c2, provenances: ["tool:fetch_external"] } }
+          - { type: escalation.raised, runId: $r1, payload: { escalation: { sources: [taint] } } }
+          - { type: run.ended, runId: $r1, payload: { reason: escalated } }
+          - { type: run.started, runId: $r2, payload: { kind: resume } }
+          - { type: tool.call, runId: $r2, payload: { callId: c2, tool: update_record } }
+          - { type: run.ended, runId: $r2, payload: { reason: responded } }
+          - { type: turn.started, runId: $r3, turn: 2 }
+          - { type: tool.result, runId: $r3, payload: { callId: c3, tool: lookup } }
+          - { type: policy.decision, runId: $r3, payload: { kind: taint, outcome: escalate, callId: c4, tool: update_record, provenances: ["tool:fetch_external"] } }
+          - { type: escalation.raised, runId: $r3, payload: { escalation: { sources: [taint], pendingActions: [{ callId: c4, source: taint }] } } }
+          - { type: run.ended, runId: $r3, payload: { reason: escalated } }
+      absentEvents:
+        - { type: tool.call, payload: { callId: c4 } }
+      checkpoint:
+        taint: { tainted: true, provenances: ["tool:fetch_external"] }
+  stubCalls:
+    update_record: [{ arguments: { key: k1, value: v1 } }]
+    lookup: { count: 1 }
+    fetch_external: { count: 1 }

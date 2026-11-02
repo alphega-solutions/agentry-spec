@@ -1,0 +1,199 @@
+schemaVersion: "0.1.0"
+id: hook.exec-order-bundle-persona-profile
+title: Hooks at a point run bundle by bundle in stack order, then the persona's, then the profile's, each layer in declared order
+description: >-
+  Two policy bundles are stacked (org@1, then team@1). org requires
+  org-z then org-a (declared in that order, the reverse of alphabetical),
+  team requires team-h, the persona persona-m and the profile profile-b, all
+  native annotate hooks at sessionStart. Each annotates the principal's text
+  part (index 0) with its own custom label and continues the chain, so all
+  five run and their order is observable twice: the hook.decision events
+  appear in the order org-z, org-a, team-h, persona-m, profile-b, and each
+  hook's HookRequest shows exactly the labels added by the hooks before it
+  (annotations accumulate, HOOK-032). Supersedes for ordering the
+  union-only check in conformance/config/merge-union-required-hooks.yaml,
+  whose blocking hooks never run together.
+requirements: [HOOK-030, HOOK-032]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1, team@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: Hook
+        id: org-z
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [sessionStart]
+        results: [annotate]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.org-z }
+      - kind: Hook
+        id: org-a
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [sessionStart]
+        results: [annotate]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.org-a }
+      - kind: Hook
+        id: team-h
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [sessionStart]
+        results: [annotate]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.team-h }
+      - kind: Hook
+        id: persona-m
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [sessionStart]
+        results: [annotate]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.persona-m }
+      - kind: Hook
+        id: profile-b
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [sessionStart]
+        results: [annotate]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.profile-b }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        requiredHooks: [org-z@1, org-a@1]
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+          io.example:org-z:
+            allowedProviders: [scripted-a, scripted-b]
+          io.example:org-a:
+            allowedProviders: [scripted-a, scripted-b]
+          io.example:team-h:
+            allowedProviders: [scripted-a, scripted-b]
+          io.example:persona-m:
+            allowedProviders: [scripted-a, scripted-b]
+          io.example:profile-b:
+            allowedProviders: [scripted-a, scripted-b]
+      - kind: PolicyBundle
+        id: team
+        version: 1
+        schemaVersion: "0.1.0"
+        requiredHooks: [team-h@1]
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [persona-m@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+        requiredHooks: [profile-b@1]
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    nativeHooks:
+      org-z:
+        - result: annotate
+          labels: [{ part: 0, labels: ["io.example:org-z"] }]
+      org-a:
+        - result: annotate
+          labels: [{ part: 0, labels: ["io.example:org-a"] }]
+      team-h:
+        - result: annotate
+          labels: [{ part: 0, labels: ["io.example:team-h"] }]
+      persona-m:
+        - result: annotate
+          labels: [{ part: 0, labels: ["io.example:persona-m"] }]
+      profile-b:
+        - result: annotate
+          labels: [{ part: 0, labels: ["io.example:profile-b"] }]
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: org-z@1, point: sessionStart, result: annotate } }
+          - { type: hook.decision, payload: { hook: org-a@1, point: sessionStart, result: annotate } }
+          - { type: hook.decision, payload: { hook: team-h@1, point: sessionStart, result: annotate } }
+          - { type: hook.decision, payload: { hook: persona-m@1, point: sessionStart, result: annotate } }
+          - { type: hook.decision, payload: { hook: profile-b@1, point: sessionStart, result: annotate } }
+          - { type: model.request }
+  stubCalls:
+    org-z:
+      - arguments: { content: [{ type: text, text: "Hi", labels: [] }] }
+    org-a:
+      - arguments: { content: [{ type: text, text: "Hi", labels: ["io.example:org-z"] }] }
+    team-h:
+      - arguments: { content: [{ type: text, text: "Hi", labels: { $all: [{ $contains: ["io.example:org-z", "io.example:org-a"] }, { $len: 2 }] } }] }
+    persona-m:
+      - arguments: { content: [{ type: text, text: "Hi", labels: { $all: [{ $contains: ["io.example:org-z", "io.example:org-a", "io.example:team-h"] }, { $len: 3 }] } }] }
+    profile-b:
+      - arguments: { content: [{ type: text, text: "Hi", labels: { $all: [{ $contains: ["io.example:org-z", "io.example:org-a", "io.example:team-h", "io.example:persona-m"] }, { $len: 4 }] } }] }

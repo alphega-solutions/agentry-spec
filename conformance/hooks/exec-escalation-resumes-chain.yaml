@@ -1,0 +1,169 @@
+schemaVersion: "0.1.0"
+id: hook.exec-escalation-resumes-chain
+title: An approved hook escalation resumes the hook chain at the next hook, on the approved content; no required hook is skipped
+description: >-
+  Three native beforeToolCall hooks run in layer order: pre-rewrite
+  (bundle) rewrites the update_record value v1 → v2; review-gate (persona)
+  escalates; post-check (profile) continues. While the escalation is open,
+  post-check does not run and the tool is not called. The reviewer
+  approves the pending tool_call action (which holds the arguments as
+  rewritten, v2). The chain resumes at post-check, in the resume run, on
+  the approved arguments: post-check is invoked once, with v2; pre-rewrite
+  and review-gate are not invoked again; then the call is dispatched with
+  v2. The escalation's hook.decision and its audit record carry the reason
+  code.
+requirements: [HOOK-033, HOOK-034, HOOK-060]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Hook
+        id: pre-rewrite
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [rewrite]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.pre-rewrite }
+      - kind: Hook
+        id: review-gate
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [escalate]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.review-gate }
+      - kind: Hook
+        id: post-check
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [block]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.post-check }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        requiredHooks: [pre-rewrite@1]
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [review-gate@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+        requiredHooks: [post-check@1]
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+    nativeHooks:
+      pre-rewrite:
+        - result: rewrite
+          parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v2 } }]
+      review-gate:
+        - result: escalate
+          reasonCode: test.hook.review
+      post-check:
+        - result: continue
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000034", pendingActionId: $act, type: approve }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, runId: $r1, payload: { hook: pre-rewrite@1, point: beforeToolCall, result: rewrite } }
+          - { type: hook.decision, eventId: $escDecision, runId: $r1, payload: { hook: review-gate@1, point: beforeToolCall, result: escalate, reasonCode: test.hook.review } }
+          - type: escalation.raised
+            runId: $r1
+            payload:
+              escalation:
+                sources: [hook]
+                pendingActions:
+                  - { kind: tool_call, source: hook, callId: c1, tool: update_record, reasonCode: test.hook.review, arguments: { key: k1, value: v2 } }
+          - { type: run.ended, runId: $r1, payload: { reason: escalated } }
+          - { type: escalation.resolved, runId: $r2 }
+          - { type: tool.call, runId: $r2, payload: { callId: c1, arguments: { key: k1, value: v2 } } }
+          - { type: tool.result, runId: $r2, payload: { callId: c1, result: { ok: { output: { updated: true } } } } }
+          - { type: run.ended, runId: $r2, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call, runId: $r1 }
+        - { type: hook.decision, runId: $r2 }
+  stubCalls:
+    pre-rewrite: { count: 1 }
+    review-gate: { count: 1 }
+    post-check:
+      - arguments: { runId: $r2, point: beforeToolCall, call: { arguments: { key: k1, value: v2 } } }
+    update_record: [{ arguments: { key: k1, value: v2 } }]
+  ports:
+    auditLog:
+      t1:
+        $contains:
+          - { type: hook_decision, sessionId: $s, eventIds: { $contains: [$escDecision] } }

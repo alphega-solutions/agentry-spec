@@ -1,0 +1,138 @@
+schemaVersion: "0.1.0"
+id: hook.taint-tool-result-trust
+title: A result from a tool not in `trustedTools` taints the session; a result from a trusted tool does not
+description: >-
+  The bundle lists `lookup@1` in `trustedTools`; `fetch_external` is not
+  listed. Taint is observed through a later mutating call (`update_record`,
+  default `onTainted: escalate`) and through the checkpoint `taint` field.
+
+  - $sTrusted: a trusted lookup result enters context; the mutating call
+    is dispatched with no taint decision and the checkpoint is not tainted.
+  - $sUntrusted: an untrusted fetch_external result enters context; the
+    mutating call is stopped at stage 5 with a taint decision whose
+    provenances are exactly the tainting tool's, and the checkpoint records
+    the taint and that provenance.
+requirements: [HOOK-120]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        trustedTools: [lookup@1]
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+      - kind: Tool
+        id: fetch_external
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Fetch a record from an external source.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        binding: { kind: native, handler: test.fetch_external }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, fetch_external@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # $sTrusted
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated." }]
+          usage: { inputTokens: 40, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sUntrusted
+        - parts: [{ type: tool_call, callId: c1, tool: fetch_external, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: k1, value: v2 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "SYN-TRUSTED-0001" } }
+      fetch_external:
+        - ok: { output: { value: "SYN-UNTRUSTED-0001" } }
+      update_record:
+        - ok: { output: { updated: true } }
+script:
+  - action: run
+    bind: $sTrusted
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1 then set it to v1" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sUntrusted
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Fetch k1 then set it to v2" }]
+    expect: { ok: true, endReason: escalated }
+expect:
+  sessions:
+    $sTrusted:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: c1, tool: lookup } }
+          - { type: tool.call, payload: { callId: c2, tool: update_record } }
+          - { type: tool.result, payload: { callId: c2, result: { ok: { output: { updated: true } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: policy.decision, payload: { kind: taint } }
+        - { type: escalation.raised }
+      checkpoint:
+        taint: { tainted: false }
+    $sUntrusted:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: c1, tool: fetch_external } }
+          - { type: policy.decision, payload: { kind: taint, outcome: escalate, callId: c2, tool: update_record, provenances: ["tool:fetch_external"] } }
+          - { type: escalation.raised, payload: { escalation: { sources: [taint], pendingActions: [{ callId: c2, source: taint }] } } }
+          - { type: run.ended, payload: { reason: escalated } }
+      absentEvents:
+        - { type: tool.call, payload: { callId: c2 } }
+      checkpoint:
+        taint: { tainted: true, provenances: ["tool:fetch_external"] }
+  stubCalls:
+    lookup: { count: 1 }
+    fetch_external: { count: 1 }
+    update_record: [{ arguments: { key: k1, value: v1 } }]
