@@ -1,0 +1,52 @@
+schemaVersion: "0.1.0"
+id: port.eventlog.transient-unavailable
+title: A transient event log failure is reported as unavailable and retryable, stores nothing, and the retry succeeds
+description: >-
+  The test hook `failNext` makes the next `append` fail transiently. That
+  append fails with `unavailable`, `retryable: true`, source `port`
+  (PORT-004, Area 1 error model), and stores nothing: a read of the
+  session fails `not_found` exactly as for a session that never existed
+  ($missingCode, bound by a read of …063f). Retrying the same append,
+  with the same `expectedSeq` and lease, succeeds, and the event is read
+  back once. Then `failNext` on `read`: the read fails the same way and
+  its retry returns the event.
+requirements: [PORT-004]
+port: eventLog
+clock: "2026-03-01T09:00:00Z"
+steps:
+  - op: read
+    args: { tenant: t1, session: 01900000-0000-7000-8000-00000000063f, fromSeq: 1, toSeq: 1 }
+    expect: { ok: false, error: { category: not_found, code: $missingCode } }
+  - op: failNext
+    args: { op: append }
+    expect: { ok: true }
+  - op: append
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000630
+      expectedSeq: 1
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T09:05:00Z" }
+      events:
+        - { schemaVersion: "0.1.0", eventId: 01900000-0000-7000-8000-000000000631, sessionId: 01900000-0000-7000-8000-000000000630, seq: 1, type: session.created, timestamp: "2026-03-01T09:00:00Z", tenantId: t1, principalRef: { subject: user-1, tenant: t1 }, snapshotHash: "sha256:1111111111111111111111111111111111111111111111111111111111111111", traceContext: { traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" }, payload: { persona: assistant@1, profile: default@1 } }
+    expect: { ok: false, error: { category: unavailable, retryable: true, source: port } }
+  - op: read
+    args: { tenant: t1, session: 01900000-0000-7000-8000-000000000630, fromSeq: 1, toSeq: 1 }
+    expect: { ok: false, error: { category: not_found, code: $missingCode } }
+  - op: append
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000630
+      expectedSeq: 1
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T09:05:00Z" }
+      events:
+        - { schemaVersion: "0.1.0", eventId: 01900000-0000-7000-8000-000000000631, sessionId: 01900000-0000-7000-8000-000000000630, seq: 1, type: session.created, timestamp: "2026-03-01T09:00:00Z", tenantId: t1, principalRef: { subject: user-1, tenant: t1 }, snapshotHash: "sha256:1111111111111111111111111111111111111111111111111111111111111111", traceContext: { traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" }, payload: { persona: assistant@1, profile: default@1 } }
+    expect: { ok: true }
+  - op: failNext
+    args: { op: read }
+    expect: { ok: true }
+  - op: read
+    args: { tenant: t1, session: 01900000-0000-7000-8000-000000000630, fromSeq: 1, toSeq: 1 }
+    expect: { ok: false, error: { category: unavailable, retryable: true, source: port } }
+  - op: read
+    args: { tenant: t1, session: 01900000-0000-7000-8000-000000000630, fromSeq: 1, toSeq: 1 }
+    expect: { ok: true, result: [{ eventId: 01900000-0000-7000-8000-000000000631, seq: 1 }] }

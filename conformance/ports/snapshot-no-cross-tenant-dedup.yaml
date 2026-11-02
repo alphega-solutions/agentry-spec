@@ -1,0 +1,80 @@
+schemaVersion: "0.1.0"
+id: port.snapshot.no-cross-tenant-dedup
+title: The same configuration snapshotted by two tenants is two records
+description: >-
+  t1 and t2 store snapshots with identical artifacts, so the same snapshot
+  hash; snapshots are keyed by tenant and hash (PORT-050), so these are two
+  records, not one shared by content (PORT-003). Each tenant gets its own
+  record (its own `tenant` and `createdAt`). t2's put succeeds exactly as
+  t1's did, so t2 learns nothing of t1's record. Deleting t1's leaves
+  t2's: t1 then gets `not_found` while t2 still gets its record.
+requirements: [PORT-003]
+port: snapshotStore
+steps:
+  - op: put
+    args:
+      tenant: t1
+      snapshot:
+        schemaVersion: "0.1.0"
+        tenant: t1
+        hash: "sha256:81d672be2910c8230dafacee35a705837c8fe843c68f04832bedc7598e8860ab"
+        createdAt: "2026-01-01T00:00:00Z"
+        artifacts:
+          Persona:
+            - kind: Persona
+              id: assistant
+              version: 1
+              schemaVersion: "0.1.0"
+              displayName: Test assistant
+              instructions: "You are a test assistant."
+              tools: [lookup@1]
+              fallbackMessage: "This request was blocked."
+              defaultProfile: default@1
+              allowedProfiles: [default@1]
+              model: { provider: scripted-a, name: model-a }
+    expect: { ok: true }
+  - op: put
+    args:
+      tenant: t2
+      snapshot:
+        schemaVersion: "0.1.0"
+        tenant: t2
+        hash: "sha256:81d672be2910c8230dafacee35a705837c8fe843c68f04832bedc7598e8860ab"
+        createdAt: "2026-01-01T00:10:00Z"
+        artifacts:
+          Persona:
+            - kind: Persona
+              id: assistant
+              version: 1
+              schemaVersion: "0.1.0"
+              displayName: Test assistant
+              instructions: "You are a test assistant."
+              tools: [lookup@1]
+              fallbackMessage: "This request was blocked."
+              defaultProfile: default@1
+              allowedProfiles: [default@1]
+              model: { provider: scripted-a, name: model-a }
+    expect: { ok: true }
+  - op: get
+    args: { tenant: t1, hash: "sha256:81d672be2910c8230dafacee35a705837c8fe843c68f04832bedc7598e8860ab" }
+    expect: { ok: true, result: { tenant: t1, hash: "sha256:81d672be2910c8230dafacee35a705837c8fe843c68f04832bedc7598e8860ab", createdAt: "2026-01-01T00:00:00Z" } }
+  - op: get
+    args: { tenant: t2, hash: "sha256:81d672be2910c8230dafacee35a705837c8fe843c68f04832bedc7598e8860ab" }
+    expect: { ok: true, result: { tenant: t2, hash: "sha256:81d672be2910c8230dafacee35a705837c8fe843c68f04832bedc7598e8860ab", createdAt: "2026-01-01T00:10:00Z" } }
+  - op: delete
+    args: { tenant: t1, hash: "sha256:81d672be2910c8230dafacee35a705837c8fe843c68f04832bedc7598e8860ab" }
+    expect: { ok: true }
+  - op: get
+    args: { tenant: t1, hash: "sha256:81d672be2910c8230dafacee35a705837c8fe843c68f04832bedc7598e8860ab" }
+    expect: { ok: false, error: { category: not_found } }
+  - op: get
+    args: { tenant: t2, hash: "sha256:81d672be2910c8230dafacee35a705837c8fe843c68f04832bedc7598e8860ab" }
+    expect:
+      ok: true
+      result:
+        tenant: t2
+        hash: "sha256:81d672be2910c8230dafacee35a705837c8fe843c68f04832bedc7598e8860ab"
+        createdAt: "2026-01-01T00:10:00Z"
+        artifacts:
+          Persona:
+            - { kind: Persona, id: assistant, version: 1 }

@@ -1,0 +1,95 @@
+schemaVersion: "0.1.0"
+id: port.idempotency.complete-once
+title: complete records the outcome once; a second completion with a different outcome fails with conflict
+description: >-
+  Session S (…00c0) in tenant t1, lease token 1. A `get` of a key never
+  started (K9) gives `not_found`, binding $missingCode.
+
+  - K1 is started, then completed at 10:00:30 with outcome A (an `ok`
+    result). `get` shows state `completed`, outcome A, and a
+    `completedAt`, which binds $completedAt. `complete` takes no time
+    argument, so the value is the adapter's clock; it is not pinned.
+  - A second completion with the same outcome A, 30 seconds later,
+    succeeds and changes nothing: `completedAt` is still $completedAt.
+    Reading taken: PORT-041 forbids only a second completion with a
+    *different* outcome, and records the outcome "once"; a repeat of the
+    identical outcome is an idempotent no-op, so a harness that retries a
+    lost `complete` acknowledgement does not fail.
+  - A completion with a different outcome — an `error` result, or an `ok`
+    result with different output — fails `conflict`; the stored outcome
+    is still A.
+  - `complete` of a key that was never started fails `not_found` (PORT-004:
+    missing records) with the same code, and creates nothing.
+requirements: [PORT-041, PORT-004]
+port: idempotencyStore
+clock: "2026-03-01T10:00:00Z"
+steps:
+  - op: get
+    args:
+      tenant: t1
+      key: 01900000-0000-7000-8000-0000000000c0/call_9
+    expect: { error: { category: not_found, code: $missingCode } }
+  - op: start
+    args:
+      tenant: t1
+      key: 01900000-0000-7000-8000-0000000000c0/call_1
+      record: { schemaVersion: "0.1.0", tenant: t1, key: 01900000-0000-7000-8000-0000000000c0/call_1, sessionId: 01900000-0000-7000-8000-0000000000c0, callId: call_1, tool: update_record, state: started, createdAt: "2026-03-01T10:00:00Z" }
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }
+    expect: { result: { key: 01900000-0000-7000-8000-0000000000c0/call_1, state: started } }
+  - clock: { advance: PT30S }
+  - op: complete
+    args:
+      tenant: t1
+      key: 01900000-0000-7000-8000-0000000000c0/call_1
+      outcome: { ok: { output: { recordId: r-17, updated: true } } }
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }
+    expect: { ok: true }
+  - op: get
+    args:
+      tenant: t1
+      key: 01900000-0000-7000-8000-0000000000c0/call_1
+    expect: { result: { schemaVersion: "0.1.0", tenant: t1, key: 01900000-0000-7000-8000-0000000000c0/call_1, sessionId: 01900000-0000-7000-8000-0000000000c0, callId: call_1, tool: update_record, state: completed, outcome: { ok: { output: { recordId: r-17, updated: true } } }, createdAt: "2026-03-01T10:00:00Z", completedAt: $completedAt } }
+  - clock: { advance: PT30S }
+  - op: complete
+    args:
+      tenant: t1
+      key: 01900000-0000-7000-8000-0000000000c0/call_1
+      outcome: { ok: { output: { recordId: r-17, updated: true } } }
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }
+    expect: { ok: true }
+  - op: get
+    args:
+      tenant: t1
+      key: 01900000-0000-7000-8000-0000000000c0/call_1
+    expect: { result: { state: completed, outcome: { ok: { output: { recordId: r-17, updated: true } } }, completedAt: $completedAt } }
+  - op: complete
+    args:
+      tenant: t1
+      key: 01900000-0000-7000-8000-0000000000c0/call_1
+      outcome: { error: { code: crm.update.rejected, category: invalid_input, retryable: false, source: tool, message: Value rejected. } }
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }
+    expect: { error: { category: conflict } }
+  - op: complete
+    args:
+      tenant: t1
+      key: 01900000-0000-7000-8000-0000000000c0/call_1
+      outcome: { ok: { output: { recordId: r-18, updated: true } } }
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }
+    expect: { error: { category: conflict } }
+  - op: get
+    args:
+      tenant: t1
+      key: 01900000-0000-7000-8000-0000000000c0/call_1
+    expect: { result: { state: completed, outcome: { ok: { output: { recordId: r-17, updated: true } } }, completedAt: $completedAt } }
+  - op: complete
+    args:
+      tenant: t1
+      key: 01900000-0000-7000-8000-0000000000c0/call_9
+      outcome: { ok: { output: { recordId: r-17, updated: true } } }
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }
+    expect: { error: { category: not_found, code: $missingCode } }
+  - op: get
+    args:
+      tenant: t1
+      key: 01900000-0000-7000-8000-0000000000c0/call_9
+    expect: { error: { category: not_found, code: $missingCode } }

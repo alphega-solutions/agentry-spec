@@ -1,0 +1,128 @@
+schemaVersion: "0.1.0"
+id: port.checkpoint.list-pending-escalations
+title: listPendingEscalations returns one tenant's root escalations only, oldest first, excluding chains whose earliest TTL has elapsed
+description: >-
+  Checkpoints at 2026-03-01T10:00Z (escalation IDs in brackets):
+
+  - t1 R1 (…0070) [E1 …0073]: a suspended root whose escalation mirrors
+    its child C1's action (`delegated`, `chain` [C1]). Its `expiresAt` is
+    the chain's earliest expiry, 2026-03-02T08:00Z — C1's 24-hour
+    `suspendedTtl` — not R1's own (ORCH-065; Area 6 schema: in a chain,
+    `expiresAt` is the earliest).
+  - t1 C1 (…0071) [E1c …0074]: the suspended child holding the original
+    escalation, same expiry. Not a root, so never listed (ORCH-063).
+  - t1 R2 (…0072) [E2 …0075]: a suspended root, created 10 minutes after
+    E1, expiring 2026-03-04T08:10Z.
+  - t1 R3 (…0076): idle (idle TTL expiring 11:00), no escalation.
+  - t1 R4 (…0077) [E4 …0078]: suspended, but its `suspendedTtl` elapsed
+    on 2026-02-28 (a session that stays suspended under `onExpiry:
+    reject`, HITL-082). Never listed (HITL-100, Area 6 amendment).
+  - t2 R5 (…0079) [E5 …007a]: suspended root, expiring
+    2026-03-04T08:05Z.
+
+  Each suspended checkpoint's `expiresAt` is its escalation's
+  `expiresAt` — for R1, the chain's earliest expiry — as
+  schemas/ports/v1/records.yaml requires while `suspended`; a port may
+  use either to exclude elapsed chains. Listing uses the case clock as
+  `now`. Results are escalation records,
+  oldest `createdAt` first, ties broken by escalation `id` (Area 6
+  amendment 2026-11-01); arrays match exactly, so order and absence are
+  both asserted.
+
+  - 10:00Z: t1 → [E1, E2]; t2 → [E5].
+  - One minute before the chain's expiry (2026-03-02T07:59Z): t1 → [E1, E2].
+  - At the chain's expiry (2026-03-02T08:00Z — a TTL has elapsed when the
+    time equals its expiry, Area 6 amendment): t1 → [E2]; t2 → [E5].
+  - 2026-03-04T08:10Z: t1 → [] and t2 → [] (E2 and E5 both elapsed).
+
+  The port only reads checkpoints here; expiry processing that would
+  close sessions is the implementation's, not the port's.
+requirements: [PORT-032, PORT-033]
+port: checkpointStore
+clock: "2026-03-01T10:00:00Z"
+steps:
+  - op: save
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000070
+      expectedVersion: 0
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-000000000070, version: 1, lastSeq: 9, state: suspended, expiresAt: "2026-03-02T08:00:00Z", principalRef: { subject: user-1, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:9999999999999999999999999999999999999999999999999999999999999999", taint: { tainted: false, provenances: [] }, budget: { tokens: 50000 }, counters: { sessionSize: 512 }, escalation: { id: 01900000-0000-7000-8000-000000000073, sessionId: 01900000-0000-7000-8000-000000000070, runId: 01900000-0000-7000-8000-00000000007b, turn: 1, step: 1, tenant: t1, snapshotHash: "sha256:9999999999999999999999999999999999999999999999999999999999999999", sources: [approval], reasonCodes: [agentry.approval.always], pendingActions: [{ id: pa-1, kind: tool_call, source: approval, reasonCode: agentry.approval.always, delegated: true, chain: [01900000-0000-7000-8000-000000000071], callId: call_1, tool: update_record, arguments: { key: k1, value: v1 }, labels: [], allowedDecisions: [approve, reject, edit], reviewerRequirements: { requiredApprovals: 1, selfApprovalAllowed: false, rules: [] } }], createdAt: "2026-03-01T08:00:00Z", expiresAt: "2026-03-02T08:00:00Z", decisions: [] }, childSessionIds: [01900000-0000-7000-8000-000000000071] }
+    expect: { ok: true }
+  - op: save
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000071
+      expectedVersion: 0
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-000000000071, version: 1, lastSeq: 6, state: suspended, expiresAt: "2026-03-02T08:00:00Z", principalRef: { subject: user-1, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:9999999999999999999999999999999999999999999999999999999999999999", taint: { tainted: false, provenances: [] }, budget: { tokens: 50000 }, counters: { sessionSize: 512 }, escalation: { id: 01900000-0000-7000-8000-000000000074, sessionId: 01900000-0000-7000-8000-000000000071, runId: 01900000-0000-7000-8000-00000000007c, turn: 1, step: 1, tenant: t1, snapshotHash: "sha256:9999999999999999999999999999999999999999999999999999999999999999", sources: [approval], reasonCodes: [agentry.approval.always], pendingActions: [{ id: pa-1, kind: tool_call, source: approval, reasonCode: agentry.approval.always, callId: call_1, tool: update_record, arguments: { key: k1, value: v1 }, labels: [], allowedDecisions: [approve, reject, edit], reviewerRequirements: { requiredApprovals: 1, selfApprovalAllowed: false, rules: [] } }], createdAt: "2026-03-01T08:00:00Z", expiresAt: "2026-03-02T08:00:00Z", decisions: [] }, parentSessionId: 01900000-0000-7000-8000-000000000070 }
+    expect: { ok: true }
+  - op: save
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000072
+      expectedVersion: 0
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-000000000072, version: 1, lastSeq: 7, state: suspended, expiresAt: "2026-03-04T08:10:00Z", principalRef: { subject: user-2, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:9999999999999999999999999999999999999999999999999999999999999999", taint: { tainted: false, provenances: [] }, budget: { tokens: 50000 }, counters: { sessionSize: 512 }, escalation: { id: 01900000-0000-7000-8000-000000000075, sessionId: 01900000-0000-7000-8000-000000000072, runId: 01900000-0000-7000-8000-00000000007d, turn: 1, step: 1, tenant: t1, snapshotHash: "sha256:9999999999999999999999999999999999999999999999999999999999999999", sources: [approval], reasonCodes: [agentry.approval.always], pendingActions: [{ id: pa-1, kind: tool_call, source: approval, reasonCode: agentry.approval.always, callId: call_1, tool: update_record, arguments: { key: k1, value: v1 }, labels: [], allowedDecisions: [approve, reject, edit], reviewerRequirements: { requiredApprovals: 1, selfApprovalAllowed: false, rules: [] } }], createdAt: "2026-03-01T08:10:00Z", expiresAt: "2026-03-04T08:10:00Z", decisions: [] } }
+    expect: { ok: true }
+  - op: save
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000076
+      expectedVersion: 0
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-000000000076, version: 1, lastSeq: 4, state: idle, expiresAt: "2026-03-01T11:00:00Z", principalRef: { subject: user-2, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:9999999999999999999999999999999999999999999999999999999999999999", taint: { tainted: false, provenances: [] }, budget: { tokens: 50000 }, counters: { sessionSize: 512 } }
+    expect: { ok: true }
+  - op: save
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000077
+      expectedVersion: 0
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-000000000077, version: 1, lastSeq: 7, state: suspended, expiresAt: "2026-02-28T08:00:00Z", principalRef: { subject: user-3, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:9999999999999999999999999999999999999999999999999999999999999999", taint: { tainted: false, provenances: [] }, budget: { tokens: 50000 }, counters: { sessionSize: 512 }, escalation: { id: 01900000-0000-7000-8000-000000000078, sessionId: 01900000-0000-7000-8000-000000000077, runId: 01900000-0000-7000-8000-00000000007e, turn: 1, step: 1, tenant: t1, snapshotHash: "sha256:9999999999999999999999999999999999999999999999999999999999999999", sources: [approval], reasonCodes: [agentry.approval.always], pendingActions: [{ id: pa-1, kind: tool_call, source: approval, reasonCode: agentry.approval.always, callId: call_1, tool: update_record, arguments: { key: k1, value: v1 }, labels: [], allowedDecisions: [approve, reject, edit], reviewerRequirements: { requiredApprovals: 1, selfApprovalAllowed: false, rules: [] } }], createdAt: "2026-02-25T08:00:00Z", expiresAt: "2026-02-28T08:00:00Z", decisions: [] } }
+    expect: { ok: true }
+  - op: save
+    args:
+      tenant: t2
+      session: 01900000-0000-7000-8000-000000000079
+      expectedVersion: 0
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t2, sessionId: 01900000-0000-7000-8000-000000000079, version: 1, lastSeq: 7, state: suspended, expiresAt: "2026-03-04T08:05:00Z", principalRef: { subject: user-9, tenant: t2 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:9999999999999999999999999999999999999999999999999999999999999999", taint: { tainted: false, provenances: [] }, budget: { tokens: 50000 }, counters: { sessionSize: 512 }, escalation: { id: 01900000-0000-7000-8000-00000000007a, sessionId: 01900000-0000-7000-8000-000000000079, runId: 01900000-0000-7000-8000-00000000007f, turn: 1, step: 1, tenant: t2, snapshotHash: "sha256:9999999999999999999999999999999999999999999999999999999999999999", sources: [approval], reasonCodes: [agentry.approval.always], pendingActions: [{ id: pa-1, kind: tool_call, source: approval, reasonCode: agentry.approval.always, callId: call_1, tool: update_record, arguments: { key: k1, value: v1 }, labels: [], allowedDecisions: [approve, reject, edit], reviewerRequirements: { requiredApprovals: 1, selfApprovalAllowed: false, rules: [] } }], createdAt: "2026-03-01T08:05:00Z", expiresAt: "2026-03-04T08:05:00Z", decisions: [] } }
+    expect: { ok: true }
+
+  - op: listPendingEscalations
+    args: { tenant: t1, now: $now }
+    expect:
+      result:
+        - { id: 01900000-0000-7000-8000-000000000073, sessionId: 01900000-0000-7000-8000-000000000070, tenant: t1, expiresAt: "2026-03-02T08:00:00Z", pendingActions: [{ id: pa-1, delegated: true, chain: [01900000-0000-7000-8000-000000000071] }] }
+        - { id: 01900000-0000-7000-8000-000000000075, sessionId: 01900000-0000-7000-8000-000000000072, tenant: t1 }
+  - op: listPendingEscalations
+    args: { tenant: t2, now: $now }
+    expect:
+      result:
+        - { id: 01900000-0000-7000-8000-00000000007a, sessionId: 01900000-0000-7000-8000-000000000079, tenant: t2 }
+  - clock: { advance: PT21H59M }
+  - op: listPendingEscalations
+    args: { tenant: t1, now: $now }
+    expect:
+      result:
+        - { id: 01900000-0000-7000-8000-000000000073 }
+        - { id: 01900000-0000-7000-8000-000000000075 }
+  - clock: { advance: PT1M }
+  - op: listPendingEscalations
+    args: { tenant: t1, now: $now }
+    expect:
+      result:
+        - { id: 01900000-0000-7000-8000-000000000075, sessionId: 01900000-0000-7000-8000-000000000072 }
+  - op: listPendingEscalations
+    args: { tenant: t2, now: $now }
+    expect:
+      result:
+        - { id: 01900000-0000-7000-8000-00000000007a }
+  - clock: { advance: P2DT10M }
+  - op: listPendingEscalations
+    args: { tenant: t1, now: $now }
+    expect: { result: [] }
+  - op: listPendingEscalations
+    args: { tenant: t2, now: $now }
+    expect: { result: [] }

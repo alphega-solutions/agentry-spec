@@ -1,0 +1,90 @@
+schemaVersion: "0.1.0"
+id: port.idempotency.tenant-isolation
+title: Another tenant's idempotency record behaves exactly as if it did not exist, for get, start, complete, fencing and delete
+description: >-
+  Key K (session …00e0) is started in tenant t1 under token 3. A `get` in
+  t1 of a key never started gives `not_found`, binding $missingCode.
+
+  - t2's `get` of K and t2's `complete` of K fail exactly as for a
+    missing key (same category and code; CORE-193). t1's record is
+    untouched (still `started`, no outcome).
+  - t2's `start` of K, with token 1 (lower than t1's), creates and returns
+    t2's own record — not t1's existing one, and not `conflict`: records
+    and fencing tokens are per tenant (PORT-002, PORT-003). An adapter
+    keying by key or session alone would return t1's record or reject
+    the token, leaking that K exists in t1.
+  - t2 completes and then deletes its record; t1's record is unchanged
+    throughout, and t2's `get` is then `not_found` (same code).
+requirements: [PORT-002, PORT-003, PORT-033, PORT-004]
+port: idempotencyStore
+clock: "2026-03-01T10:00:00Z"
+steps:
+  - op: get
+    args:
+      tenant: t1
+      key: 01900000-0000-7000-8000-0000000000e0/call_9
+    expect: { error: { category: not_found, code: $missingCode } }
+  - op: start
+    args:
+      tenant: t1
+      key: 01900000-0000-7000-8000-0000000000e0/call_1
+      record: { schemaVersion: "0.1.0", tenant: t1, key: 01900000-0000-7000-8000-0000000000e0/call_1, sessionId: 01900000-0000-7000-8000-0000000000e0, callId: call_1, tool: update_record, state: started, createdAt: "2026-03-01T10:00:00Z" }
+      lease: { holder: worker-t1, token: 3, expiresAt: "2026-03-01T10:05:00Z" }
+    expect: { result: { tenant: t1, key: 01900000-0000-7000-8000-0000000000e0/call_1, state: started } }
+  - op: get
+    args:
+      tenant: t2
+      key: 01900000-0000-7000-8000-0000000000e0/call_1
+    expect: { error: { category: not_found, code: $missingCode } }
+  - op: complete
+    args:
+      tenant: t2
+      key: 01900000-0000-7000-8000-0000000000e0/call_1
+      outcome: { ok: { output: { recordId: r-17, updated: true } } }
+      lease: { holder: worker-t2, token: 1, expiresAt: "2026-03-01T10:05:00Z" }
+    expect: { error: { category: not_found, code: $missingCode } }
+  - op: get
+    args:
+      tenant: t1
+      key: 01900000-0000-7000-8000-0000000000e0/call_1
+    expect: { result: { tenant: t1, state: started, outcome: { $absent: true } } }
+  - clock: { advance: PT1M }
+  - op: start
+    args:
+      tenant: t2
+      key: 01900000-0000-7000-8000-0000000000e0/call_1
+      record: { schemaVersion: "0.1.0", tenant: t2, key: 01900000-0000-7000-8000-0000000000e0/call_1, sessionId: 01900000-0000-7000-8000-0000000000e0, callId: call_7, tool: lookup, state: started, createdAt: "2026-03-01T10:01:00Z" }
+      lease: { holder: worker-t2, token: 1, expiresAt: "2026-03-01T10:05:00Z" }
+    expect: { result: { schemaVersion: "0.1.0", tenant: t2, key: 01900000-0000-7000-8000-0000000000e0/call_1, callId: call_7, tool: lookup, state: started, createdAt: "2026-03-01T10:01:00Z" } }
+  - op: complete
+    args:
+      tenant: t2
+      key: 01900000-0000-7000-8000-0000000000e0/call_1
+      outcome: { ok: { output: { recordId: r-17, updated: true } } }
+      lease: { holder: worker-t2, token: 1, expiresAt: "2026-03-01T10:05:00Z" }
+    expect: { ok: true }
+  - op: get
+    args:
+      tenant: t2
+      key: 01900000-0000-7000-8000-0000000000e0/call_1
+    expect: { result: { tenant: t2, callId: call_7, state: completed, outcome: { ok: { output: { recordId: r-17, updated: true } } } } }
+  - op: get
+    args:
+      tenant: t1
+      key: 01900000-0000-7000-8000-0000000000e0/call_1
+    expect: { result: { tenant: t1, callId: call_1, tool: update_record, state: started, outcome: { $absent: true }, createdAt: "2026-03-01T10:00:00Z" } }
+  - op: delete
+    args:
+      tenant: t2
+      key: 01900000-0000-7000-8000-0000000000e0/call_1
+    expect: { ok: true }
+  - op: get
+    args:
+      tenant: t2
+      key: 01900000-0000-7000-8000-0000000000e0/call_1
+    expect: { error: { category: not_found, code: $missingCode } }
+  - op: get
+    args:
+      tenant: t1
+      key: 01900000-0000-7000-8000-0000000000e0/call_1
+    expect: { result: { tenant: t1, callId: call_1, state: started } }

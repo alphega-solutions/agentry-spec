@@ -15,6 +15,7 @@ from common import ROOT, fixture_files, load_schemas, load_yaml, registry, spec_
 FIXTURE_ID = "https://alphega.io/agentry/schemas/conformance/fixture/v1.json"
 CEL_ID = "https://alphega.io/agentry/schemas/conformance/cel-fixture/v1.json"
 ADAPTER_ID = "https://alphega.io/agentry/schemas/conformance/adapter-case/v1.json"
+PORT_CASE_ID = "https://alphega.io/agentry/schemas/conformance/port-case/v1.json"
 
 
 PLACEHOLDER = re.compile(r"^\$[A-Za-z_][A-Za-z0-9_]*$")
@@ -587,6 +588,40 @@ MATCHERS = {"$any", "$absent", "$regex", "$len", "$contains", "$not", "$every",
             "$gte", "$lte", "$all", "$count", "$selfProvider"}
 
 
+HOOK_OPS = {"describe", "records", "failNext"}
+PORT_OPS = {
+    "eventLog": {"append", "read", "fence", "deleteSession"},
+    "checkpointStore": {"save", "load", "listPendingEscalations", "due", "children", "delete"},
+    "idempotencyStore": {"fence", "start", "complete", "get", "delete"},
+    "snapshotStore": {"put", "get", "delete"},
+    "blobStore": {"put", "get", "delete", "corrupt"},
+    "auditLog": {"append", "get", "query", "deleteBefore", "verify", "tamper"},
+    "vectorStore": {"seed", "query"},
+    "secrets": {"seed", "resolve"},
+    "configSource": {"seed", "beginLoad", "change", "list", "read"},
+}
+
+
+def check_port_case(doc: dict) -> list[str]:
+    """Port cases: each op belongs to the case's port (port-case.yaml), and a
+    placeholder used in a step's args or expect is bound by an earlier step's
+    `bind` or by an `expect` earlier in the same step order (`$now` is
+    built in)."""
+    problems: list[str] = []
+    allowed = PORT_OPS.get(doc.get("port"), set()) | HOOK_OPS
+    bound: set[str] = {"$now"}
+    for i, step in enumerate(doc.get("steps") or []):
+        if not isinstance(step, dict) or "op" not in step:
+            continue
+        if step["op"] not in allowed:
+            problems.append(f"steps[{i}]: op {step['op']!r} is not an operation of port {doc.get('port')!r}")
+        for ph in sorted(_placeholders(step.get("args")) - bound):
+            problems.append(f"steps[{i}].args: placeholder {ph} used before it is bound")
+        bound |= _placeholders(step.get("expect"))
+        bound |= set((step.get("bind") or {}).values())
+    return problems
+
+
 def _self_provider_as_string(value):
     """Adapter cases: `{"$selfProvider": true}` stands for the adapter's
     declared provider ID; check it as the string it will become."""
@@ -843,8 +878,9 @@ def main() -> int:
         doc = load_yaml(fx)
         rel = fx.relative_to(ROOT / "conformance").parts
         target = (CEL_ID if rel[0] == "cel"
-                  else ADAPTER_ID if rel[:2] == ("adapters", "cases") else FIXTURE_ID)
-        prefix = {CEL_ID: "cel.", ADAPTER_ID: "adapter."}.get(target)
+                  else ADAPTER_ID if rel[:2] == ("adapters", "cases")
+                  else PORT_CASE_ID if rel[0] == "ports" else FIXTURE_ID)
+        prefix = {CEL_ID: "cel.", ADAPTER_ID: "adapter.", PORT_CASE_ID: "port."}.get(target)
         if prefix and not str(doc.get("id", "")).startswith(prefix):
             errors.append(f"{fx.relative_to(ROOT)}: id must start with {prefix!r}")
         checked = _self_provider_as_string(doc) if target == ADAPTER_ID else doc
@@ -857,6 +893,8 @@ def main() -> int:
         for rid in doc.get("requirements", []):
             if rid not in reqs:
                 errors.append(f"{fx.relative_to(ROOT)}: unknown requirement {rid}")
+        if target == PORT_CASE_ID:
+            errors += [f"{fx.relative_to(ROOT)}: {e}" for e in check_port_case(doc)]
         if target == FIXTURE_ID:
             errors += [f"{fx.relative_to(ROOT)}: {e}" for e in check_placeholders(doc)]
             errors += [f"{fx.relative_to(ROOT)}: {e}" for e in check_inline_config(doc, schemas, reg)]

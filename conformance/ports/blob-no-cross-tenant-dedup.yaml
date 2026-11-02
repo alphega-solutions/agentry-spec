@@ -1,0 +1,46 @@
+schemaVersion: "0.1.0"
+id: port.blob.no-cross-tenant-dedup
+title: Identical bytes stored by two tenants are two blobs with distinct IDs
+description: >-
+  t1 and t2 store the same bytes with different labels. Both references
+  carry the same content hash and size, but the IDs differ: no
+  content-addressed deduplication across tenants (PORT-003). Each tenant
+  gets its own labels, and neither can read the other's blob by ID. t2's
+  put returns a fresh reference exactly as t1's did, so it learns nothing
+  of t1's blob. Deleting t1's blob leaves t2's readable.
+requirements: [PORT-003]
+port: blobStore
+steps:
+  - op: put
+    args: { tenant: t1, data: "SYN-BLOB-SHARED-0003", mediaType: text/plain, labels: [pii] }
+    bind: { ref: $r1, ref.id: $id1 }
+    expect:
+      ok: true
+      result:
+        ref: { hash: "sha256:931d64ebab045e4cb044f8b15745cdff7c2b68396928e1580944ae5a796d7458", size: 20 }
+  - op: put
+    args: { tenant: t2, data: "SYN-BLOB-SHARED-0003", mediaType: text/plain, labels: [] }
+    bind: { ref: $r2 }
+    expect:
+      ok: true
+      result:
+        ref: { id: { $not: $id1 }, hash: "sha256:931d64ebab045e4cb044f8b15745cdff7c2b68396928e1580944ae5a796d7458", size: 20 }
+        labels: { $len: 0 }
+  - op: get
+    args: { tenant: t2, ref: $r1 }
+    expect: { ok: false, error: { category: not_found } }
+  - op: get
+    args: { tenant: t1, ref: $r2 }
+    expect: { ok: false, error: { category: not_found } }
+  - op: get
+    args: { tenant: t1, ref: $r1 }
+    expect: { ok: true, result: { data: "SYN-BLOB-SHARED-0003", labels: [pii] } }
+  - op: delete
+    args: { tenant: t1, ref: $r1 }
+    expect: { ok: true }
+  - op: get
+    args: { tenant: t1, ref: $r1 }
+    expect: { ok: false, error: { category: not_found } }
+  - op: get
+    args: { tenant: t2, ref: $r2 }
+    expect: { ok: true, result: { data: "SYN-BLOB-SHARED-0003", labels: { $len: 0 } } }

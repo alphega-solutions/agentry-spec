@@ -1,0 +1,125 @@
+schemaVersion: "0.1.0"
+id: port.checkpoint.children
+title: The children query returns a session's direct child sessions within one tenant; another tenant's session behaves as missing
+description: >-
+  t1 holds a delegation tree: root P (…0090) with children C1 (…0091) and
+  C2 (…0092); C1 has child G (…0093). t2 holds Q (…0094) with child D
+  (…0095). Parent and child checkpoints agree (`childSessionIds` and
+  `parentSessionId`). Result order is not specified, so multi-element
+  results are matched with `$len` plus `$contains`.
+
+  - children(P) → exactly {C1, C2} — direct children only, not the
+    grandchild G; children(C1) → [G]; children(C2) and children(G) → [].
+  - A session that never existed (…009f) gives `not_found`, binding
+    $missingCode. Reading taken: `children` of a session with no checkpoint
+    is `not_found` (PORT-004 "missing records"), not an empty list —
+    otherwise a missing session and a childless one would be
+    indistinguishable to the caller.
+  - children(P) asked by t2, and children(Q) asked by t1, fail exactly as
+    for the missing session (same category and code, CORE-193), and
+    t2's children(Q) → [D].
+  - After C3 (…0096) is created under P and P is saved as v2 listing it,
+    children(P) → {C1, C2, C3}: the query reflects the current version.
+requirements: [PORT-032, PORT-033, PORT-002]
+port: checkpointStore
+clock: "2026-03-01T10:00:00Z"
+steps:
+  - op: save
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000090
+      expectedVersion: 0
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-000000000090, version: 1, lastSeq: 3, state: active, lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }, principalRef: { subject: user-1, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:9999999999999999999999999999999999999999999999999999999999999999", taint: { tainted: false, provenances: [] }, budget: { tokens: 50000 }, counters: { sessionSize: 512 }, childSessionIds: [01900000-0000-7000-8000-000000000091, 01900000-0000-7000-8000-000000000092] }
+    expect: { ok: true }
+  - op: save
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000091
+      expectedVersion: 0
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-000000000091, version: 1, lastSeq: 3, state: active, lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }, principalRef: { subject: user-1, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:9999999999999999999999999999999999999999999999999999999999999999", taint: { tainted: false, provenances: [] }, budget: { tokens: 50000 }, counters: { sessionSize: 512 }, parentSessionId: 01900000-0000-7000-8000-000000000090, childSessionIds: [01900000-0000-7000-8000-000000000093] }
+    expect: { ok: true }
+  - op: save
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000092
+      expectedVersion: 0
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-000000000092, version: 1, lastSeq: 3, state: idle, expiresAt: "2026-03-01T11:00:00Z", principalRef: { subject: user-1, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:9999999999999999999999999999999999999999999999999999999999999999", taint: { tainted: false, provenances: [] }, budget: { tokens: 50000 }, counters: { sessionSize: 512 }, parentSessionId: 01900000-0000-7000-8000-000000000090 }
+    expect: { ok: true }
+  - op: save
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000093
+      expectedVersion: 0
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-000000000093, version: 1, lastSeq: 3, state: active, lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }, principalRef: { subject: user-1, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:9999999999999999999999999999999999999999999999999999999999999999", taint: { tainted: false, provenances: [] }, budget: { tokens: 50000 }, counters: { sessionSize: 512 }, parentSessionId: 01900000-0000-7000-8000-000000000091 }
+    expect: { ok: true }
+  - op: save
+    args:
+      tenant: t2
+      session: 01900000-0000-7000-8000-000000000094
+      expectedVersion: 0
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t2, sessionId: 01900000-0000-7000-8000-000000000094, version: 1, lastSeq: 3, state: active, lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }, principalRef: { subject: user-9, tenant: t2 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:9999999999999999999999999999999999999999999999999999999999999999", taint: { tainted: false, provenances: [] }, budget: { tokens: 50000 }, counters: { sessionSize: 512 }, childSessionIds: [01900000-0000-7000-8000-000000000095] }
+    expect: { ok: true }
+  - op: save
+    args:
+      tenant: t2
+      session: 01900000-0000-7000-8000-000000000095
+      expectedVersion: 0
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t2, sessionId: 01900000-0000-7000-8000-000000000095, version: 1, lastSeq: 3, state: active, lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }, principalRef: { subject: user-9, tenant: t2 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:9999999999999999999999999999999999999999999999999999999999999999", taint: { tainted: false, provenances: [] }, budget: { tokens: 50000 }, counters: { sessionSize: 512 }, parentSessionId: 01900000-0000-7000-8000-000000000094 }
+    expect: { ok: true }
+  - op: children
+    args: { tenant: t1, session: 01900000-0000-7000-8000-000000000090 }
+    expect:
+      result:
+        $all:
+          - { $len: 2 }
+          - { $contains: [01900000-0000-7000-8000-000000000091, 01900000-0000-7000-8000-000000000092] }
+  - op: children
+    args: { tenant: t1, session: 01900000-0000-7000-8000-000000000091 }
+    expect: { result: [01900000-0000-7000-8000-000000000093] }
+  - op: children
+    args: { tenant: t1, session: 01900000-0000-7000-8000-000000000092 }
+    expect: { result: [] }
+  - op: children
+    args: { tenant: t1, session: 01900000-0000-7000-8000-000000000093 }
+    expect: { result: [] }
+  - op: children
+    args: { tenant: t1, session: 01900000-0000-7000-8000-00000000009f }
+    expect: { error: { category: not_found, code: $missingCode } }
+  - op: children
+    args: { tenant: t2, session: 01900000-0000-7000-8000-000000000090 }
+    expect: { error: { category: not_found, code: $missingCode } }
+  - op: children
+    args: { tenant: t1, session: 01900000-0000-7000-8000-000000000094 }
+    expect: { error: { category: not_found, code: $missingCode } }
+  - op: children
+    args: { tenant: t2, session: 01900000-0000-7000-8000-000000000094 }
+    expect: { result: [01900000-0000-7000-8000-000000000095] }
+  - op: save
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000096
+      expectedVersion: 0
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-000000000096, version: 1, lastSeq: 3, state: active, lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }, principalRef: { subject: user-1, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:9999999999999999999999999999999999999999999999999999999999999999", taint: { tainted: false, provenances: [] }, budget: { tokens: 50000 }, counters: { sessionSize: 512 }, parentSessionId: 01900000-0000-7000-8000-000000000090 }
+    expect: { ok: true }
+  - op: save
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000090
+      expectedVersion: 1
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-000000000090, version: 2, lastSeq: 8, state: active, lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }, principalRef: { subject: user-1, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:9999999999999999999999999999999999999999999999999999999999999999", taint: { tainted: false, provenances: [] }, budget: { tokens: 50000 }, counters: { sessionSize: 512 }, childSessionIds: [01900000-0000-7000-8000-000000000091, 01900000-0000-7000-8000-000000000092, 01900000-0000-7000-8000-000000000096] }
+    expect: { ok: true }
+  - op: children
+    args: { tenant: t1, session: 01900000-0000-7000-8000-000000000090 }
+    expect:
+      result:
+        $all:
+          - { $len: 3 }
+          - { $contains: [01900000-0000-7000-8000-000000000091, 01900000-0000-7000-8000-000000000092, 01900000-0000-7000-8000-000000000096] }

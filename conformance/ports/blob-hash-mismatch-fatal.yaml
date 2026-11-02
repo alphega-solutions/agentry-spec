@@ -1,0 +1,32 @@
+schemaVersion: "0.1.0"
+id: port.blob.hash-mismatch-fatal
+title: A blob whose stored bytes no longer match its hash fails with fatal on get
+description: >-
+  Two blobs are stored and both read back intact. The test hook `corrupt`
+  alters the first one's stored bytes; `get` of it then fails with
+  `fatal`, because `get` verifies the content hash (PORT-061), rather than
+  returning altered bytes. Control: the second blob, untouched, is still
+  returned.
+requirements: [PORT-061]
+port: blobStore
+steps:
+  - op: put
+    args: { tenant: t1, data: "SYN-BLOB-CONTENT-0001", mediaType: text/plain, labels: [] }
+    bind: { ref: $a }
+    expect: { ok: true }
+  - op: put
+    args: { tenant: t1, data: "SYN-BLOB-CONTENT-0002", mediaType: text/plain, labels: [] }
+    bind: { ref: $b }
+    expect: { ok: true }
+  - op: get
+    args: { tenant: t1, ref: $a }
+    expect: { ok: true, result: { data: "SYN-BLOB-CONTENT-0001" } }
+  - op: corrupt
+    args: { tenant: t1, ref: $a }
+    expect: { ok: true }
+  - op: get
+    args: { tenant: t1, ref: $a }
+    expect: { ok: false, error: { category: fatal } }
+  - op: get
+    args: { tenant: t1, ref: $b }
+    expect: { ok: true, result: { data: "SYN-BLOB-CONTENT-0002" } }

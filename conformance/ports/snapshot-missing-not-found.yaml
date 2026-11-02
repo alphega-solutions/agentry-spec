@@ -1,0 +1,47 @@
+schemaVersion: "0.1.0"
+id: port.snapshot.missing-not-found
+title: Getting a snapshot that is not stored, or no longer stored, fails with not_found
+description: >-
+  The store-level part of PORT-051: `get` of a hash that was never stored
+  fails with `not_found` (which is what makes `resume()` fail, CORE-055,
+  verified by the harness fixture core.resume-snapshot-unavailable), and so
+  does `get` after `delete`. Control: a stored hash is returned before the
+  delete. Retention of snapshots while sessions are open or referenced is
+  harness-level (storage fixtures), not checked here.
+requirements: [PORT-051]
+port: snapshotStore
+steps:
+  - op: get
+    args: { tenant: t1, hash: "sha256:0000000000000000000000000000000000000000000000000000000000000001" }
+    expect: { ok: false, error: { category: not_found } }
+  - op: put
+    args:
+      tenant: t1
+      snapshot:
+        schemaVersion: "0.1.0"
+        tenant: t1
+        hash: "sha256:81d672be2910c8230dafacee35a705837c8fe843c68f04832bedc7598e8860ab"
+        createdAt: "2026-01-01T00:00:00Z"
+        artifacts:
+          Persona:
+            - kind: Persona
+              id: assistant
+              version: 1
+              schemaVersion: "0.1.0"
+              displayName: Test assistant
+              instructions: "You are a test assistant."
+              tools: [lookup@1]
+              fallbackMessage: "This request was blocked."
+              defaultProfile: default@1
+              allowedProfiles: [default@1]
+              model: { provider: scripted-a, name: model-a }
+    expect: { ok: true }
+  - op: get
+    args: { tenant: t1, hash: "sha256:81d672be2910c8230dafacee35a705837c8fe843c68f04832bedc7598e8860ab" }
+    expect: { ok: true, result: { tenant: t1, hash: "sha256:81d672be2910c8230dafacee35a705837c8fe843c68f04832bedc7598e8860ab" } }
+  - op: delete
+    args: { tenant: t1, hash: "sha256:81d672be2910c8230dafacee35a705837c8fe843c68f04832bedc7598e8860ab" }
+    expect: { ok: true }
+  - op: get
+    args: { tenant: t1, hash: "sha256:81d672be2910c8230dafacee35a705837c8fe843c68f04832bedc7598e8860ab" }
+    expect: { ok: false, error: { category: not_found } }

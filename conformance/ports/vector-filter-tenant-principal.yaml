@@ -1,0 +1,65 @@
+schemaVersion: "0.1.0"
+id: port.vector.filter-tenant-principal
+title: Vector queries return only the querying tenant's records that the principal may access
+description: >-
+  The test hook `seed` loads source `kb` without any filtering: one t2
+  record and five t1 records, all mentioning "plan notes". Access rules as
+  in the fixture format's vector store stubs: a record with `access` is
+  readable by a principal whose subject is in `subjects` or who holds a
+  role in `roles`; one without `access` by any principal of its tenant.
+  Queries pass the principal's subject, tenant and roles (PORT-080 as
+  amended), with a limit (10) above every possible result count, so only
+  filtering decides the results:
+
+  - p1 (user-1, role analyst) gets exactly a2 (role analyst) and a4, a5
+    (open);
+
+  - p2 (user-2, no roles) gets exactly a3 (subject user-2) and a4, a5;
+
+  - user-3 of t2 gets exactly x1.
+
+  a1 (subject user-9 only) reaches nobody, and no t1 query returns x1 or a
+  t2 query a t1 record (PORT-002). Filtering happens inside the port
+  (PORT-080, CTX-041). Result order is the backend's ranking and is not
+  asserted.
+requirements: [PORT-080, PORT-002]
+port: vectorStore
+steps:
+  - op: seed
+    args:
+      source: kb
+      records:
+        - { id: x1, text: "SYN-PLAN-NOTES-OTHER-TENANT-0081", tenant: t2 }
+        - { id: a1, text: "SYN-PLAN-NOTES-NO-ACCESS-0081", tenant: t1, access: { subjects: [user-9] } }
+        - { id: a2, text: "SYN-PLAN-NOTES-ROLE-ANALYST-0081", tenant: t1, access: { roles: [analyst] } }
+        - { id: a3, text: "SYN-PLAN-NOTES-SUBJECT-USER2-0081", tenant: t1, access: { subjects: [user-2] } }
+        - { id: a4, text: "SYN-PLAN-NOTES-OPEN-0081", tenant: t1 }
+        - { id: a5, text: "SYN-PLAN-NOTES-OPEN-0082", tenant: t1 }
+    expect: { ok: true }
+  - op: query
+    args: { tenant: t1, principal: { subject: user-1, tenant: t1, roles: [analyst] }, source: kb, text: "plan notes", limit: 10 }
+    expect:
+      ok: true
+      result:
+        $all:
+          - $len: 3
+          - $contains:
+              - { id: a2, text: "SYN-PLAN-NOTES-ROLE-ANALYST-0081" }
+              - { id: a4, text: "SYN-PLAN-NOTES-OPEN-0081" }
+              - { id: a5, text: "SYN-PLAN-NOTES-OPEN-0082" }
+  - op: query
+    args: { tenant: t1, principal: { subject: user-2, tenant: t1, roles: [] }, source: kb, text: "plan notes", limit: 10 }
+    expect:
+      ok: true
+      result:
+        $all:
+          - $len: 3
+          - $contains:
+              - { id: a3, text: "SYN-PLAN-NOTES-SUBJECT-USER2-0081" }
+              - { id: a4 }
+              - { id: a5 }
+  - op: query
+    args: { tenant: t2, principal: { subject: user-3, tenant: t2, roles: [] }, source: kb, text: "plan notes", limit: 10 }
+    expect:
+      ok: true
+      result: [{ id: x1, text: "SYN-PLAN-NOTES-OTHER-TENANT-0081" }]

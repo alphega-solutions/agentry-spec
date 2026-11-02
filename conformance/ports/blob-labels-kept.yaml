@@ -1,0 +1,33 @@
+schemaVersion: "0.1.0"
+id: port.blob.labels-kept
+title: A blob keeps the sensitivity labels it was stored with
+description: >-
+  One blob is stored with a well-known and a custom label, another with
+  none. `put` and `get` return each blob's labels as stored (PORT-062), as
+  a set (order is not significant): the labelled blob has exactly its two
+  labels, the unlabelled one none, so labels neither leak between blobs nor
+  are dropped.
+requirements: [PORT-062]
+port: blobStore
+steps:
+  - op: put
+    args: { tenant: t1, data: "SYN-BLOB-LABELLED-0004", mediaType: text/plain, labels: [pii, "com.example:internal"] }
+    bind: { ref: $labelled }
+    expect:
+      ok: true
+      result:
+        labels: { $all: [{ $len: 2 }, { $contains: [pii, "com.example:internal"] }] }
+  - op: put
+    args: { tenant: t1, data: "SYN-BLOB-UNLABELLED-0005", mediaType: text/plain, labels: [] }
+    bind: { ref: $plain }
+    expect: { ok: true, result: { labels: { $len: 0 } } }
+  - op: get
+    args: { tenant: t1, ref: $labelled }
+    expect:
+      ok: true
+      result:
+        data: "SYN-BLOB-LABELLED-0004"
+        labels: { $all: [{ $len: 2 }, { $contains: [pii, "com.example:internal"] }] }
+  - op: get
+    args: { tenant: t1, ref: $plain }
+    expect: { ok: true, result: { data: "SYN-BLOB-UNLABELLED-0005", labels: { $len: 0 } } }

@@ -143,19 +143,21 @@ $defs:
       (HITL-002). `escalation.raised`, `listPendingEscalations` and the
       `escalation` audit record carry it in the event-redacted form
       (CORE-154, PORT-074).
+    unevaluatedProperties: false
     allOf:
       - $ref: "#/$defs/escalationBase"
       - properties: { pendingActions: { items: { $ref: "#/$defs/pendingAction" } } }
 
   viewEscalation:
     description: The escalation record as the reviewer view embeds it, with no action arguments (HITL-030, HITL-031).
+    unevaluatedProperties: false
     allOf:
       - $ref: "#/$defs/escalationBase"
       - properties: { pendingActions: { items: { $ref: "#/$defs/viewPendingAction" } } }
 
   escalationBase:
+    description: Fields of every escalation record; closed by `escalation`, `viewEscalation` and the checkpoint's escalation, each adding its own fields.
     type: object
-    additionalProperties: false
     required: [id, sessionId, runId, turn, step, tenant, snapshotHash, sources, reasonCodes, pendingActions, createdAt, expiresAt]
     properties:
       id: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }

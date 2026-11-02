@@ -21,6 +21,7 @@ schemas/<area>/v<major>/<name>.yaml
 | `config/v1/tool.yaml` | Tool (TOOL-001–004, bindings per Area 4 §4 as amended by Area 7); not a behavioural layer, so no merge annotations |
 | `config/v1/hook.yaml` | Hook (HOOK-001–004, sources per Area 5 §8); not a behavioural layer, so no merge annotations |
 | `core/v1/hitl.yaml` | Escalation record, pending actions, decision records, reviewer view (Area 6) |
+| `ports/v1/records.yaml` | Stored records: checkpoint, idempotency record, snapshot, blob metadata, audit record, lease (Area 10) |
 | `core/v1/hook.yaml` | `HookRequest`, `HookResult`, and the per-point view of the session that hooks and CEL rules see (Area 5 §5, §8, §9.1) |
 
 Areas 6–11 add theirs in later Phase 4 pull requests.

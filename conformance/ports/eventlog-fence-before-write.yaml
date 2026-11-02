@@ -1,0 +1,80 @@
+schemaVersion: "0.1.0"
+id: port.eventlog.fence-before-write
+title: A lease fenced at the event log rejects writes under a lower token before its holder has written anything
+description: >-
+  Session S (…0400) in tenant t1. worker-a holds the run lease with
+  fencing token 1 and appends seq 1. worker-b then takes a new lease
+  (token 2) and fences it at the event log with `fence` before writing
+  anything (Area 10 amendment 2026-11-02, "Further readings settled in
+  review": a new lease is fenced at every port that takes leases before
+  its holder reads state for recovery or dispatches anything).
+
+  - worker-a's append at the correct next number (2) with token 1 now
+    fails `conflict`, although token 2 has not written to the log: the
+    fence alone raised the session's highest accepted token (PORT-020,
+    PORT-004). Nothing of the rejected batch is stored: the log still
+    reads exactly seq 1.
+  - Control: worker-b's own append at seq 2 with token 2 succeeds, and the
+    log reads seq 1–2 with worker-b's event at 2.
+  - Control: fencing is per session. Session B (…0401), never fenced,
+    accepts an append with token 1.
+requirements: [PORT-020, PORT-004]
+port: eventLog
+clock: "2026-03-01T09:00:00Z"
+steps:
+  - op: append
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000400
+      expectedSeq: 1
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T09:05:00Z" }
+      events:
+        - { schemaVersion: "0.1.0", eventId: 01900000-0000-7000-8000-000000000403, sessionId: 01900000-0000-7000-8000-000000000400, seq: 1, type: session.created, timestamp: "2026-03-01T09:00:00Z", tenantId: t1, principalRef: { subject: user-1, tenant: t1 }, snapshotHash: "sha256:1111111111111111111111111111111111111111111111111111111111111111", traceContext: { traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" }, payload: { persona: assistant@1, profile: default@1 } }
+    expect: { ok: true }
+  - clock: { advance: PT5M }
+  - op: fence
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000400
+      lease: { holder: worker-b, token: 2, expiresAt: "2026-03-01T09:10:00Z" }
+    expect: { ok: true }
+  - op: append
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000400
+      expectedSeq: 2
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T09:05:00Z" }
+      events:
+        - { schemaVersion: "0.1.0", eventId: 01900000-0000-7000-8000-000000000404, sessionId: 01900000-0000-7000-8000-000000000400, runId: 01900000-0000-7000-8000-000000000402, seq: 2, type: run.started, timestamp: "2026-03-01T09:05:00Z", tenantId: t1, principalRef: { subject: user-1, tenant: t1 }, snapshotHash: "sha256:1111111111111111111111111111111111111111111111111111111111111111", traceContext: { traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" }, payload: { kind: run } }
+    expect: { ok: false, error: { category: conflict } }
+  - op: read
+    args: { tenant: t1, session: 01900000-0000-7000-8000-000000000400, fromSeq: 1, toSeq: 2 }
+    expect:
+      ok: true
+      result:
+        - { eventId: 01900000-0000-7000-8000-000000000403, seq: 1 }
+  - op: append
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000400
+      expectedSeq: 2
+      lease: { holder: worker-b, token: 2, expiresAt: "2026-03-01T09:10:00Z" }
+      events:
+        - { schemaVersion: "0.1.0", eventId: 01900000-0000-7000-8000-000000000405, sessionId: 01900000-0000-7000-8000-000000000400, runId: 01900000-0000-7000-8000-000000000402, seq: 2, type: run.started, timestamp: "2026-03-01T09:05:00Z", tenantId: t1, principalRef: { subject: user-1, tenant: t1 }, snapshotHash: "sha256:1111111111111111111111111111111111111111111111111111111111111111", traceContext: { traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" }, payload: { kind: run } }
+    expect: { ok: true }
+  - op: read
+    args: { tenant: t1, session: 01900000-0000-7000-8000-000000000400, fromSeq: 1, toSeq: 2 }
+    expect:
+      ok: true
+      result:
+        - { eventId: 01900000-0000-7000-8000-000000000403, seq: 1 }
+        - { eventId: 01900000-0000-7000-8000-000000000405, seq: 2 }
+  - op: append
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000401
+      expectedSeq: 1
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T09:10:00Z" }
+      events:
+        - { schemaVersion: "0.1.0", eventId: 01900000-0000-7000-8000-000000000406, sessionId: 01900000-0000-7000-8000-000000000401, seq: 1, type: session.created, timestamp: "2026-03-01T09:05:00Z", tenantId: t1, principalRef: { subject: user-1, tenant: t1 }, snapshotHash: "sha256:1111111111111111111111111111111111111111111111111111111111111111", traceContext: { traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" }, payload: { persona: assistant@1, profile: default@1 } }
+    expect: { ok: true }

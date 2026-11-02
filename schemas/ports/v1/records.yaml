@@ -1,0 +1,207 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://alphega.io/agentry/schemas/ports/records/v1.json
+title: Stored records
+description: >-
+  Records the storage ports hold (Area 10). Every record carries
+  `schemaVersion` (PORT-007) and its tenant (PORT-002). Events are the
+  `Event` schema (`core/v1/event.yaml`); blobs are bytes with a `blobRef`
+  (`core/v1/content.yaml`) and labels. Adapters store these records as they
+  are given and return them as stored (PORT-008); redaction happens at the
+  boundary, except for audit records (PORT-074). `extensions` holds
+  implementation-specific state, which no other implementation reads.
+$defs:
+  lease:
+    description: >-
+      A run lease (HITL-090). `holder` identifies the process or run holding
+      it. `token` is a fencing token, strictly greater for each new lease of
+      the session (a renewal keeps it): a port that takes a lease rejects,
+      with `conflict`, a write whose token is lower than the highest it has
+      accepted for that session (PORT-020, PORT-031, PORT-040), so a lapsed
+      holder can never write after a newer one.
+    type: object
+    additionalProperties: false
+    required: [holder, token, expiresAt]
+    properties:
+      holder: { type: string, minLength: 1 }
+      token: { type: integer, minimum: 1 }
+      expiresAt: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/timestamp" }
+
+  checkpoint:
+    title: Checkpoint
+    description: >-
+      A session's resumable state (PORT-030, as amended). `version` increases
+      by one on every save, including lease renewals (PORT-031); `lastSeq` is
+      the last event sequence number the checkpoint accounts for, never
+      beyond the event log (PORT-034, PORT-035).
+    type: object
+    additionalProperties: false
+    required: [schemaVersion, tenant, sessionId, version, lastSeq, state, principalRef, persona, profile, snapshotHash, taint, budget, counters]
+    properties:
+      schemaVersion: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/contractVersion" }
+      tenant: { type: string, minLength: 1 }
+      sessionId: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+      version: { type: integer, minimum: 1 }
+      lastSeq: { type: integer, minimum: 0 }
+      state: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/sessionState" }
+      closeReason: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/closeReason" }
+      principalRef: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/principalRef" }
+      persona: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/artifactRef" }
+      profile: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/artifactRef" }
+      snapshotHash: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/sha256" }
+      turn: { type: integer, minimum: 0 }
+      step: { type: integer, minimum: 0 }
+      taint:
+        description: Taint state and every tainting provenance, in order of first entry (HOOK-121, HOOK-126).
+        type: object
+        additionalProperties: false
+        required: [tainted, provenances]
+        properties:
+          tainted: { type: boolean }
+          provenances: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/provenances" }
+      budget:
+        description: Remaining budget of the current turn (CFG-091, ORCH-041); absent fields are unlimited.
+        type: object
+        additionalProperties: false
+        properties:
+          tokens: { type: integer, minimum: 0 }
+          cost: { type: number, minimum: 0 }
+      counters:
+        description: Content-size counters (CORE-115).
+        type: object
+        additionalProperties: false
+        required: [sessionSize]
+        properties:
+          sessionSize: { type: integer, minimum: 0 }
+      reasoning:
+        description: Every reasoning part (CORE-140, PORT-030 as amended).
+        type: array
+        items: { $ref: "https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/reasoningPart" }
+      escalation:
+        description: >-
+          The open escalation, unredacted (HITL-012), with its recorded
+          decisions in recording order (HITL-041, HITL-051).
+        allOf:
+          - $ref: "https://alphega.io/agentry/schemas/core/hitl/v1.json#/$defs/escalationBase"
+        unevaluatedProperties: false
+        properties:
+          pendingActions: { items: { $ref: "https://alphega.io/agentry/schemas/core/hitl/v1.json#/$defs/pendingAction" } }
+          decisions:
+            type: array
+            items: { $ref: "https://alphega.io/agentry/schemas/core/hitl/v1.json#/$defs/decision" }
+        required: [decisions]
+      heldResults:
+        description: Tool results held while suspended, in request order (HITL-072, TOOL-033).
+        type: array
+        items: { $ref: "https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/toolResultPart" }
+      lease: { $ref: "#/$defs/lease" }
+      expiresAt:
+        description: >-
+          When the session's current TTL elapses: last activity plus
+          `idleTtl` while `idle`, the escalation's `expiresAt` while
+          `suspended` (CORE-040, ORCH-065); absent while `active` or
+          `closed`. Lets the port answer expiry queries (PORT-032).
+        $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/timestamp"
+      parentSessionId: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+      childSessionIds:
+        type: array
+        uniqueItems: true
+        items: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+      extensions: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/extensions" }
+    allOf:
+      - if: { properties: { state: { enum: [idle, suspended] } } }
+        then: { required: [expiresAt] }
+      - if: { properties: { state: { const: closed } } }
+        then: { required: [closeReason] }
+        else: { not: { required: [closeReason] } }
+      - if: { properties: { state: { const: active } } }
+        then: { required: [lease] }
+
+  idempotencyRecord:
+    title: IdempotencyRecord
+    description: >-
+      A tool call's idempotency record (TOOL-060–062, PORT-040–042). `outcome`
+      is the raw tool result (Area 4 amendment); `childSessionId` is set for
+      agent calls (ORCH-002).
+    type: object
+    additionalProperties: false
+    required: [schemaVersion, tenant, key, sessionId, callId, tool, state, createdAt]
+    properties:
+      schemaVersion: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/contractVersion" }
+      tenant: { type: string, minLength: 1 }
+      key: { type: string, minLength: 1 }
+      sessionId: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+      callId: { type: string, minLength: 1 }
+      tool: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/toolId" }
+      state: { enum: [started, completed] }
+      outcome: { $ref: "https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/toolResult" }
+      childSessionId: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+      createdAt: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/timestamp" }
+      completedAt: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/timestamp" }
+    if: { properties: { state: { const: completed } } }
+    then: { required: [outcome, completedAt] }
+    else: { not: { anyOf: [{ required: [outcome] }, { required: [completedAt] }] } }
+
+  snapshotRecord:
+    title: SnapshotRecord
+    description: An effective configuration snapshot, keyed by tenant and hash (CFG-050, PORT-050). It never holds secret values (PORT-052).
+    type: object
+    additionalProperties: false
+    required: [schemaVersion, tenant, hash, createdAt, artifacts]
+    properties:
+      schemaVersion: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/contractVersion" }
+      tenant: { type: string, minLength: 1 }
+      hash: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/sha256" }
+      createdAt: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/timestamp" }
+      artifacts:
+        description: The snapshot's artifacts, grouped by kind as hashed (CFG-050).
+        type: object
+
+  blobRecord:
+    title: BlobRecord
+    description: A stored blob's metadata (PORT-060–062); its bytes are stored alongside.
+    type: object
+    additionalProperties: false
+    required: [schemaVersion, tenant, ref, labels, createdAt]
+    properties:
+      schemaVersion: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/contractVersion" }
+      tenant: { type: string, minLength: 1 }
+      ref: { $ref: "https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/blobRef" }
+      labels: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/labels" }
+      createdAt: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/timestamp" }
+
+  auditRecord:
+    title: AuditRecord
+    description: >-
+      One audit record (PORT-071). `details` per `type`: the `hook.decision`
+      payload (HOOK-060); the `policy.decision` payload; the escalation record
+      (HITL-003); the decision record, with `original` for an edit (HITL-044);
+      `{callId, tool, arguments, outcome}` for a mutating tool call
+      (TOOL-074). Redacted per the sensitivity policies in force and free of
+      secret values (PORT-074). `hash` and `prevHash` are present when the
+      log is tamper-evident (PORT-073): `hash` is the SHA-256 of the RFC 8785
+      canonical JSON of the record without `hash`, and `prevHash` the
+      previous record's `hash` in the tenant's log (after retention, the hash
+      of the last deleted record).
+    type: object
+    additionalProperties: false
+    required: [schemaVersion, id, timestamp, tenant, sessionId, principalRef, snapshotHash, type, eventIds, details]
+    properties:
+      schemaVersion: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/contractVersion" }
+      id: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+      timestamp: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/timestamp" }
+      tenant: { type: string, minLength: 1 }
+      sessionId: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+      principalRef: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/principalRef" }
+      snapshotHash: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/sha256" }
+      type: { enum: [hook_decision, policy_decision, escalation, decision, tool_call] }
+      reviewer: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/principalRef" }
+      eventIds:
+        type: array
+        items: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+      details: { type: object }
+      prevHash: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/sha256" }
+      hash: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/sha256" }
+    allOf:
+      - if: { properties: { type: { const: decision } }, required: [type] }
+        then: { if: { properties: { details: { properties: { decidedBy: { const: reviewer } } } } }, then: { required: [reviewer] } }
+      - dependentRequired: { prevHash: [hash] }

@@ -1,0 +1,101 @@
+schemaVersion: "0.1.0"
+id: port.idempotency.stale-lease
+title: Idempotency writes under a stale fencing token fail with conflict and change nothing
+description: >-
+  Session S (…00d0) in tenant t1. worker-b holds the current lease
+  (token 2); worker-a's lease (token 1) is stale. The session a write
+  belongs to is the record's `sessionId` (for `start`) or the stored
+  record's (for `complete`); tokens are compared per session (Area 10
+  amendment 2026-11-02).
+
+  - worker-b starts K1 with token 2.
+  - worker-a's `start` of a new key K2 with token 1 fails `conflict` and
+    creates nothing: `get` of K2 is `not_found` before and after, with the
+    same code ($missingCode).
+  - worker-a's `start` of the existing K1 with token 1 also fails
+    `conflict`. Reading taken: PORT-040's "or fails with conflict if the
+    lease is stale" applies whether or not a record exists, so a stale
+    holder never learns the existing record.
+  - worker-a's `complete` of K1 with token 1 fails `conflict`; K1 is still
+    `started` with no outcome. worker-b's completion with token 2
+    succeeds.
+  - Control: session S2 (…00d1) accepts token 1, since fencing is per
+    session.
+
+  The raw stored records (test hook `records`) are exactly the two
+  started records, each with `schemaVersion` 0.1.0 (PORT-007); the
+  rejected starts stored nothing.
+requirements: [PORT-040, PORT-041, PORT-004, PORT-007]
+port: idempotencyStore
+clock: "2026-03-01T10:00:00Z"
+steps:
+  - op: get
+    args:
+      tenant: t1
+      key: 01900000-0000-7000-8000-0000000000d0/call_2
+    expect: { error: { category: not_found, code: $missingCode } }
+  - op: start
+    args:
+      tenant: t1
+      key: 01900000-0000-7000-8000-0000000000d0/call_1
+      record: { schemaVersion: "0.1.0", tenant: t1, key: 01900000-0000-7000-8000-0000000000d0/call_1, sessionId: 01900000-0000-7000-8000-0000000000d0, callId: call_1, tool: update_record, state: started, createdAt: "2026-03-01T10:00:00Z" }
+      lease: { holder: worker-b, token: 2, expiresAt: "2026-03-01T10:10:00Z" }
+    expect: { result: { key: 01900000-0000-7000-8000-0000000000d0/call_1, state: started } }
+  - op: start
+    args:
+      tenant: t1
+      key: 01900000-0000-7000-8000-0000000000d0/call_2
+      record: { schemaVersion: "0.1.0", tenant: t1, key: 01900000-0000-7000-8000-0000000000d0/call_2, sessionId: 01900000-0000-7000-8000-0000000000d0, callId: call_2, tool: update_record, state: started, createdAt: "2026-03-01T10:00:00Z" }
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }
+    expect: { error: { category: conflict } }
+  - op: get
+    args:
+      tenant: t1
+      key: 01900000-0000-7000-8000-0000000000d0/call_2
+    expect: { error: { category: not_found, code: $missingCode } }
+  - op: start
+    args:
+      tenant: t1
+      key: 01900000-0000-7000-8000-0000000000d0/call_1
+      record: { schemaVersion: "0.1.0", tenant: t1, key: 01900000-0000-7000-8000-0000000000d0/call_1, sessionId: 01900000-0000-7000-8000-0000000000d0, callId: call_1, tool: update_record, state: started, createdAt: "2026-03-01T10:00:00Z" }
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }
+    expect: { error: { category: conflict } }
+  - op: complete
+    args:
+      tenant: t1
+      key: 01900000-0000-7000-8000-0000000000d0/call_1
+      outcome: { ok: { output: { recordId: r-17, updated: true } } }
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }
+    expect: { error: { category: conflict } }
+  - op: get
+    args:
+      tenant: t1
+      key: 01900000-0000-7000-8000-0000000000d0/call_1
+    expect: { result: { key: 01900000-0000-7000-8000-0000000000d0/call_1, state: started, outcome: { $absent: true }, completedAt: { $absent: true } } }
+  - op: complete
+    args:
+      tenant: t1
+      key: 01900000-0000-7000-8000-0000000000d0/call_1
+      outcome: { ok: { output: { recordId: r-17, updated: true } } }
+      lease: { holder: worker-b, token: 2, expiresAt: "2026-03-01T10:10:00Z" }
+    expect: { ok: true }
+  - op: get
+    args:
+      tenant: t1
+      key: 01900000-0000-7000-8000-0000000000d0/call_1
+    expect: { result: { key: 01900000-0000-7000-8000-0000000000d0/call_1, state: completed, outcome: { ok: { output: { recordId: r-17, updated: true } } } } }
+  - op: start
+    args:
+      tenant: t1
+      key: 01900000-0000-7000-8000-0000000000d1/call_1
+      record: { schemaVersion: "0.1.0", tenant: t1, key: 01900000-0000-7000-8000-0000000000d1/call_1, sessionId: 01900000-0000-7000-8000-0000000000d1, callId: call_1, tool: update_record, state: started, createdAt: "2026-03-01T10:00:00Z" }
+      lease: { holder: worker-a, token: 1, expiresAt: "2026-03-01T10:05:00Z" }
+    expect: { result: { key: 01900000-0000-7000-8000-0000000000d1/call_1, sessionId: 01900000-0000-7000-8000-0000000000d1, state: started } }
+  - op: records
+    args: { tenant: t1 }
+    expect:
+      ok: true
+      result:
+        $all:
+          - { $len: 2 }
+          - $every: { schemaVersion: "0.1.0", tenant: t1 }

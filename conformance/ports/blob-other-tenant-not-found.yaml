@@ -1,0 +1,42 @@
+schemaVersion: "0.1.0"
+id: port.blob.other-tenant-not-found
+title: Another tenant's blob behaves exactly as a missing one
+description: >-
+  t1 stores two blobs and deletes one ($gone). Controls on the deleted
+  blob bind the codes a missing record gives: `get` → `not_found`
+  ($missingCode) and a second `delete` → `not_found` ($missingDeleteCode).
+
+  For t2, `get` with t1's live reference fails exactly as the control
+  `get` (same category and code), never with `fatal` or any error that
+  would confirm the blob exists (PORT-002, CORE-193). t2's `delete` of it
+  fails exactly as deleting a missing blob (same category and code), so
+  the result reveals nothing, and has no effect: t1 still gets its blob.
+requirements: [PORT-002]
+port: blobStore
+steps:
+  - op: put
+    args: { tenant: t1, data: "SYN-BLOB-CONTENT-0001", mediaType: text/plain, labels: [pii] }
+    bind: { ref: $kept }
+    expect: { ok: true }
+  - op: put
+    args: { tenant: t1, data: "SYN-BLOB-OTHER-0006", mediaType: text/plain, labels: [] }
+    bind: { ref: $gone }
+    expect: { ok: true }
+  - op: delete
+    args: { tenant: t1, ref: $gone }
+    expect: { ok: true }
+  - op: get
+    args: { tenant: t1, ref: $gone }
+    expect: { ok: false, error: { category: not_found, code: $missingCode } }
+  - op: delete
+    args: { tenant: t1, ref: $gone }
+    expect: { ok: false, error: { category: not_found, code: $missingDeleteCode } }
+  - op: get
+    args: { tenant: t2, ref: $kept }
+    expect: { ok: false, error: { category: not_found, code: $missingCode } }
+  - op: delete
+    args: { tenant: t2, ref: $kept }
+    expect: { ok: false, error: { category: not_found, code: $missingDeleteCode } }
+  - op: get
+    args: { tenant: t1, ref: $kept }
+    expect: { ok: true, result: { data: "SYN-BLOB-CONTENT-0001", labels: [pii] } }

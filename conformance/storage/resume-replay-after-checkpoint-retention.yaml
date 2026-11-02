@@ -1,0 +1,154 @@
+schemaVersion: "0.1.0"
+id: storage.resume-replay-after-checkpoint-retention
+title: A replayed resume() returns the original outcome while the closed session's checkpoint is retained, and `not_found` once retention has deleted it; the decision stays audited
+description: >-
+  Retention: checkpoints PT1H; events, audit, blobs, snapshots and
+  idempotency records P30D. update_record has `approval: always`. The
+  session escalates, reviewer r1 approves with decision D
+  (…0115), the call is dispatched, the turn responds, and the session is
+  closed.
+
+  - Replaying resume() with D on the closed session returns the original
+    outcome and persists nothing (CORE-053, CORE-022): step 4 equals
+    step 1.
+  - P1D later retention deletes the closed session's checkpoint; its
+    events are kept (their period has not passed).
+  - Replaying resume() with D again now fails with `not_found`
+    (`agentry.session.not_found`, Area 10 amendment 2026-11-02) and
+    persists nothing (PORT-115: the replay guarantee holds only while the
+    checkpoint is retained). The approved call is not dispatched again.
+  - The decision is still in the audit log, with its reviewer.
+requirements: [PORT-115]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: PT1H, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P30D }
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.update_record }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b: { responses: [] }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+script:
+  # 0
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  # 1
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000115", pendingActionId: $act, type: approve }
+    expect: { ok: true, endReason: responded }
+  # 2
+  - action: close
+    session: $s
+    expect: { ok: true }
+  # 3
+  - clock: { advance: PT1M }
+  # 4: replay while the checkpoint is retained
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000115", pendingActionId: $act, type: approve }
+    expect: { sameAs: 1, newEvents: 0 }
+  # 5
+  - clock: { advance: P1D }
+  # 6
+  - retention: {}
+  # 7: replay after the checkpoint was deleted
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000115", pendingActionId: $act, type: approve }
+    expect: { ok: false, error: { category: not_found, code: agentry.session.not_found }, newEvents: 0 }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: escalation.raised }
+          - { type: run.started, payload: { kind: resume } }
+          - { type: tool.result, payload: { callId: c1, result: { ok: { output: { updated: true } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+          - { type: session.closed, payload: { reason: completed } }
+  ports:
+    checkpointStore:
+      t1:
+        $s: { $absent: true }
+    eventLog:
+      t1:
+        $s:
+          $all:
+            - $contains: [{ seq: 1, type: session.created }, { type: session.closed }]
+            - $count: { of: { type: run.started, payload: { kind: resume } }, equals: 1 }
+    auditLog:
+      t1:
+        $contains:
+          - type: decision
+            sessionId: $s
+            reviewer: { subject: reviewer-1, tenant: t1 }
+            details: { id: "01900000-0000-7000-8000-000000000115", pendingActionId: $act, type: approve }
+  stubCalls:
+    update_record: { count: 1 }
+  providerRequests:
+    scripted-a: { count: 2 }

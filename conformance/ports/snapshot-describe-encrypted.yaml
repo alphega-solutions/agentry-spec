@@ -1,0 +1,22 @@
+schemaVersion: "0.1.0"
+id: port.snapshot.describe-encrypted
+title: The snapshotStore adapter reports its encryption-at-rest setting through describe
+description: >-
+  `describe` reports `encryptedAtRest`, true or false (Area 10 amendment
+  2026-11-02); the format has no boolean-type matcher, so its presence is
+  checked. This is a reporting check only: whether data is in fact
+  encrypted at rest (PORT-006) is attested by the deployment and listed
+  under `verifiedElsewhere` in `conformance/coverage.yaml`, since no
+  data-only case can observe it ("Further readings settled in review").
+  In-memory adapters report `false` and are exempt, so the value is not
+  asserted; `keyRef`, present only for customer-managed keys, is not
+  asserted either. The case is part of the shared adapter test kit
+  (PORT-009).
+requirements: [PORT-009]
+port: snapshotStore
+steps:
+  - op: describe
+    args: {}
+    expect:
+      ok: true
+      result: { encryptedAtRest: { $any: true } }

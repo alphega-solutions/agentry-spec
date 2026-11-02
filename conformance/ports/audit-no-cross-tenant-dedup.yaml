@@ -1,0 +1,67 @@
+schemaVersion: "0.1.0"
+id: port.audit.no-cross-tenant-dedup
+title: Identical audit records appended by two tenants are two records
+description: >-
+  t1 and t2 append records identical except for their tenant, including
+  the same record ID, session ID and event IDs (an ID collision across
+  tenants, constructed for the test). Record IDs are scoped by tenant,
+  so t2's append succeeds exactly as t1's did: a conflict would tell t2
+  that t1 holds that ID (PORT-002, PORT-003). Each tenant reads only its
+  own record. Retention deletion of t1's log removes t1's record and
+  leaves t2's (PORT-003).
+requirements: [PORT-003]
+port: auditLog
+steps:
+  - op: append
+    args:
+      tenant: t1
+      record:
+        schemaVersion: "0.1.0"
+        id: "01900000-0000-7000-8000-000000000141"
+        timestamp: "2026-01-01T01:00:00Z"
+        tenant: "t1"
+        sessionId: "01900000-0000-7000-8000-0000000000a1"
+        principalRef: { subject: "user-1", tenant: "t1" }
+        snapshotHash: "sha256:a988755824d7aa28b08a62583e86b7642aef4270ab5bad26c3c8a50f2e26e648"
+        type: "tool_call"
+        eventIds: ["01900000-0000-7000-8000-000000000241", "01900000-0000-7000-8000-000000000242"]
+        details: { callId: "c1", tool: "update_record", arguments: { key: "k1", status: "closed" }, outcome: { ok: { output: { updated: true } } } }
+    expect:
+      ok: true
+      result:
+        id: "01900000-0000-7000-8000-000000000141"
+        tenant: "t1"
+  - op: append
+    args:
+      tenant: t2
+      record:
+        schemaVersion: "0.1.0"
+        id: "01900000-0000-7000-8000-000000000141"
+        timestamp: "2026-01-01T01:00:00Z"
+        tenant: "t2"
+        sessionId: "01900000-0000-7000-8000-0000000000a1"
+        principalRef: { subject: "user-1", tenant: "t2" }
+        snapshotHash: "sha256:a988755824d7aa28b08a62583e86b7642aef4270ab5bad26c3c8a50f2e26e648"
+        type: "tool_call"
+        eventIds: ["01900000-0000-7000-8000-000000000241", "01900000-0000-7000-8000-000000000242"]
+        details: { callId: "c1", tool: "update_record", arguments: { key: "k1", status: "closed" }, outcome: { ok: { output: { updated: true } } } }
+    expect:
+      ok: true
+      result:
+        id: "01900000-0000-7000-8000-000000000141"
+        tenant: "t2"
+  - op: query
+    args: { tenant: t1 }
+    expect: { ok: true, result: [{ id: "01900000-0000-7000-8000-000000000141", tenant: t1, principalRef: { subject: user-1, tenant: t1 } }] }
+  - op: query
+    args: { tenant: t2 }
+    expect: { ok: true, result: [{ id: "01900000-0000-7000-8000-000000000141", tenant: t2, principalRef: { subject: user-1, tenant: t2 } }] }
+  - op: deleteBefore
+    args: { tenant: t1, before: "2026-01-02T00:00:00Z" }
+    expect: { ok: true }
+  - op: query
+    args: { tenant: t1 }
+    expect: { ok: true, result: { $len: 0 } }
+  - op: query
+    args: { tenant: t2 }
+    expect: { ok: true, result: [{ id: "01900000-0000-7000-8000-000000000141", tenant: t2 }] }

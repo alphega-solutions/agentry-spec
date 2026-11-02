@@ -1,0 +1,84 @@
+schemaVersion: "0.1.0"
+id: port.eventlog.tenant-isolation
+title: Another tenant's session log behaves exactly as if it did not exist, for reads, appends and fencing tokens
+description: >-
+  Tenant t1 writes session S (…0040, seq 1–2) under a lease with fencing
+  token 3. A read in t1 of a session that never existed (…004f) gives the
+  baseline `not_found` error, whose code binds $missingCode, and a
+  `deleteSession` of it gives `not_found`, binding $missingDeleteCode.
+
+  - t2 reading S fails exactly as for a missing session: `not_found` with
+    the same code (CORE-193; no existence leak). t2's `deleteSession` of
+    S, while t2 has no log for S, fails exactly as deleting a missing
+    session (same category and code) and deletes nothing: t1 still reads
+    both events.
+  - t2 appending to S with `expectedSeq` 1 and fencing token 1 succeeds:
+    for t2 the session has no events and no accepted token. An adapter
+    that shared the log or the token high-water mark across tenants would
+    answer `conflict` here, leaking that S exists in t1 (PORT-002, PORT-003).
+  - Each tenant's read returns only its own events: t1 reads exactly its
+    two events, t2 exactly its one.
+  - Once t2 has its own log for S, t2's `deleteSession` of S succeeds and
+    removes only t2's log; t1's events remain, and t2's read is then
+    `not_found`.
+requirements: [PORT-002, PORT-003, PORT-033, PORT-004]
+port: eventLog
+clock: "2026-03-01T09:00:00Z"
+steps:
+  - op: read
+    args: { tenant: t1, session: 01900000-0000-7000-8000-00000000004f, fromSeq: 1, toSeq: 1 }
+    expect: { error: { category: not_found, code: $missingCode } }
+  - op: deleteSession
+    args: { tenant: t1, session: 01900000-0000-7000-8000-00000000004f }
+    expect: { ok: false, error: { category: not_found, code: $missingDeleteCode } }
+  - op: append
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-000000000040
+      expectedSeq: 1
+      lease: { holder: worker-a, token: 3, expiresAt: "2026-03-01T09:05:00Z" }
+      events:
+        - { schemaVersion: "0.1.0", eventId: 01900000-0000-7000-8000-000000000041, sessionId: 01900000-0000-7000-8000-000000000040, seq: 1, type: session.created, timestamp: "2026-03-01T09:00:00Z", tenantId: t1, principalRef: { subject: user-1, tenant: t1 }, snapshotHash: "sha256:4444444444444444444444444444444444444444444444444444444444444444", traceContext: { traceparent: "00-4ef7651916cd43dd8448eb211c80319c-f7ad6b7169203331-01" }, payload: { persona: assistant@1, profile: default@1 } }
+        - { schemaVersion: "0.1.0", eventId: 01900000-0000-7000-8000-000000000042, sessionId: 01900000-0000-7000-8000-000000000040, runId: 01900000-0000-7000-8000-00000000004e, seq: 2, type: run.started, timestamp: "2026-03-01T09:00:00Z", tenantId: t1, principalRef: { subject: user-1, tenant: t1 }, snapshotHash: "sha256:4444444444444444444444444444444444444444444444444444444444444444", traceContext: { traceparent: "00-4ef7651916cd43dd8448eb211c80319c-f7ad6b7169203331-01" }, payload: { kind: run } }
+    expect: { ok: true }
+  - op: read
+    args: { tenant: t2, session: 01900000-0000-7000-8000-000000000040, fromSeq: 1, toSeq: 2 }
+    expect: { error: { category: not_found, code: $missingCode } }
+  - op: deleteSession
+    args: { tenant: t2, session: 01900000-0000-7000-8000-000000000040 }
+    expect: { ok: false, error: { category: not_found, code: $missingDeleteCode } }
+  - op: read
+    args: { tenant: t1, session: 01900000-0000-7000-8000-000000000040, fromSeq: 1, toSeq: 2 }
+    expect: { ok: true, result: [{ seq: 1 }, { seq: 2 }] }
+  - op: append
+    args:
+      tenant: t2
+      session: 01900000-0000-7000-8000-000000000040
+      expectedSeq: 1
+      lease: { holder: worker-z, token: 1, expiresAt: "2026-03-01T09:05:00Z" }
+      events:
+        - { schemaVersion: "0.1.0", eventId: 01900000-0000-7000-8000-000000000043, sessionId: 01900000-0000-7000-8000-000000000040, seq: 1, type: session.created, timestamp: "2026-03-01T09:00:30Z", tenantId: t2, principalRef: { subject: user-9, tenant: t2 }, snapshotHash: "sha256:5555555555555555555555555555555555555555555555555555555555555555", traceContext: { traceparent: "00-5ff7651916cd43dd8448eb211c80319c-a8ad6b7169203331-01" }, payload: { persona: assistant@1, profile: default@1 } }
+    expect: { ok: true }
+  - op: read
+    args: { tenant: t1, session: 01900000-0000-7000-8000-000000000040, fromSeq: 1, toSeq: 2 }
+    expect:
+      result:
+        - { eventId: 01900000-0000-7000-8000-000000000041, seq: 1, tenantId: t1, principalRef: { subject: user-1, tenant: t1 } }
+        - { eventId: 01900000-0000-7000-8000-000000000042, seq: 2, tenantId: t1 }
+  - op: read
+    args: { tenant: t2, session: 01900000-0000-7000-8000-000000000040, fromSeq: 1, toSeq: 1 }
+    expect:
+      result:
+        - { eventId: 01900000-0000-7000-8000-000000000043, seq: 1, tenantId: t2, principalRef: { subject: user-9, tenant: t2 } }
+  - op: deleteSession
+    args: { tenant: t2, session: 01900000-0000-7000-8000-000000000040 }
+    expect: { ok: true }
+  - op: read
+    args: { tenant: t2, session: 01900000-0000-7000-8000-000000000040, fromSeq: 1, toSeq: 1 }
+    expect: { error: { category: not_found, code: $missingCode } }
+  - op: read
+    args: { tenant: t1, session: 01900000-0000-7000-8000-000000000040, fromSeq: 1, toSeq: 2 }
+    expect:
+      result:
+        - { eventId: 01900000-0000-7000-8000-000000000041, seq: 1 }
+        - { eventId: 01900000-0000-7000-8000-000000000042, seq: 2 }

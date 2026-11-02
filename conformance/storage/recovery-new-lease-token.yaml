@@ -1,0 +1,105 @@
+schemaVersion: "0.1.0"
+id: storage.recovery-new-lease-token
+title: Recovering an orphaned run takes a new lease with a higher fencing token, recorded in the checkpoint
+description: >-
+  The first run() of session $s (run $r1) asks for lookup c1 and the
+  implementation is crashed at `after_event_append`: c1's `tool.call` is
+  in the event log and c1 is not dispatched. The implementation restarts
+  and the clock is advanced exactly to the lease's expiry (default
+  `leaseTtl` PT5M), so $r1 is orphaned.
+
+  The next run() recovers $r1 (HITL-091 as amended): it takes a new lease,
+  fences it (the checkpoint store by saving it, the event log and
+  idempotency store by `fence`) before reading state or dispatching
+  anything (Area 10 amendment 2026-11-02, "Further readings settled in
+  review"), dispatches c1 once, and continues $r1 to its step-2 model
+  call, which asks for lookup c2. The implementation is crashed again at
+  `after_event_append` for c2, and restarted; nothing else runs. The
+  stored checkpoint is therefore the last one saved by the recovering
+  holder: `active`, with its lease.
+
+  The recovering lease's fencing token is strictly greater than the
+  crashed run's (PORT-031, PORT-020; `lease.token` in
+  `schemas/ports/v1/records.yaml`). The crashed run's token is at least
+  1, so the recovered token is at least 2, which is what the fixture
+  asserts. Format limit: no event carries the lease, so the crashed run's
+  token cannot be captured, and matchers cannot compare two bound values
+  (`$gte` takes a number), so "strictly greater than the crashed run's
+  token" is checked only through this lower bound.
+
+  Also: $r1 continues under its own `runId` with a single `run.started`;
+  c1 has exactly one `tool.call` and one `tool.result` and is dispatched
+  once; c2 has a `tool.call` and was never dispatched.
+requirements: [PORT-031, PORT-020, HITL-091]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # $r1, step 1: crashed after the tool.call append
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $r1, step 2, after recovery: crashed again after the tool.call append
+        - parts: [{ type: tool_call, callId: c2, tool: lookup, arguments: { key: k2 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b: { responses: [] }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: v1 } }
+script:
+  - crash: { at: after_event_append }
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1, then k2" }]
+  - restart: {}
+  # Exactly the lease expiry (00:00 + PT5M).
+  - clock: { advance: PT5M }
+  - crash: { at: after_event_append, session: $s }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Carry on" }]
+  - restart: {}
+expect:
+  sessions:
+    $s:
+      state: active
+      events:
+        mode: subsequence
+        items:
+          - { seq: 1, type: session.created }
+          - { type: run.started, runId: $r1, payload: { kind: run } }
+          - { type: tool.call, runId: $r1, step: 1, payload: { callId: c1 } }
+          - { type: tool.result, runId: $r1, step: 1, payload: { callId: c1, result: { ok: { output: { value: v1 } } } } }
+          - { type: tool.call, runId: $r1, step: 2, payload: { callId: c2 } }
+      absentEvents:
+        - { type: tool.result, payload: { callId: c2 } }
+        - { type: run.ended }
+      checkpoint:
+        state: active
+        lease: { token: { $gte: 2 } }
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $all:
+            - $count: { of: { type: run.started }, equals: 1 }
+            - $count: { of: { type: tool.call, payload: { callId: c1 } }, equals: 1 }
+            - $count: { of: { type: tool.result, payload: { callId: c1 } }, equals: 1 }
+  stubCalls:
+    lookup:
+      - { arguments: { key: k1 }, completed: true, context: { sessionId: $s, runId: $r1 } }
+  providerRequests:
+    scripted-a: { count: 2 }
+    scripted-b: { count: 0 }

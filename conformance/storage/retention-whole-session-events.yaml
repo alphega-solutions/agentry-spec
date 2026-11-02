@@ -1,0 +1,150 @@
+schemaVersion: "0.1.0"
+id: storage.retention-whole-session-events
+title: Retention deletes a session's events all at once, never a prefix of them, and never those of a session that is not closed
+description: >-
+  Every retention period is P2D; the default profile's idle TTL is P30D.
+  At 2026-01-01T00:00Z three sessions each run one turn: $old is then
+  closed; $long and $open stay idle. At 01-04 (P3D later) $long runs a
+  second turn and is closed (its last seq is $nLong). At 01-05 (P1D
+  later) retention runs.
+
+  - $old closed four days ago: all its events are deleted, and its log is
+    gone rather than shortened (PORT-113).
+  - $long closed one day ago, but its turn-1 events are four days old.
+    Deleting those alone would leave a gap at the start of its log, so
+    none of its events are deleted: its log still holds exactly $nLong
+    events, seq 1..$nLong (PORT-113, PORT-021). Its checkpoint is kept.
+  - $open is not closed, so its four-day-old events and its checkpoint
+    are kept (PORT-111).
+
+  Reading: a session's events become due as a whole, once the session
+  has been closed for the events period (equivalently, once its newest
+  event is older than the period); the fixture's timing makes $old due and
+  $long not due under either reading.
+requirements: [PORT-113, PORT-111]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P2D, checkpoints: P2D, idempotency: P2D, blobs: P2D, snapshots: P2D, audit: P2D }
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: P30D
+        suspendedTtl: P30D
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Hello, old." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Hello, long." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Hello, open." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Welcome back." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b: { responses: [] }
+script:
+  - action: run
+    bind: $old
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - action: close
+    session: $old
+    expect: { ok: true }
+  - action: run
+    bind: $long
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $open
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - clock: { advance: P3D }
+  - action: run
+    session: $long
+    principal: p1
+    input: [{ type: text, text: "Back again" }]
+    expect: { ok: true, endReason: responded }
+  - action: close
+    session: $long
+    capture:
+      - event: { type: session.closed }
+        bind: { seq: $nLong }
+    expect: { ok: true }
+  - clock: { advance: P1D }
+  - retention: {}
+expect:
+  sessions:
+    $long:
+      state: closed
+    $open:
+      state: idle
+  ports:
+    eventLog:
+      t1:
+        $old: { $absent: true }
+        $long:
+          $all:
+            - { $len: $nLong }
+            - $every:
+                seq: { $all: [{ $gte: 1 }, { $lte: $nLong }] }
+            - $contains:
+                - { seq: 1, type: session.created }
+                - { type: run.ended, turn: 1, payload: { reason: responded } }
+                - { type: run.ended, turn: 2, payload: { reason: responded } }
+                - { seq: $nLong, type: session.closed }
+        $open:
+          $contains:
+            - { seq: 1, type: session.created }
+            - { type: run.ended, turn: 1, payload: { reason: responded } }
+    checkpointStore:
+      t1:
+        $old: { $absent: true }
+        $long: { state: closed }
+        $open: { state: idle }
+  providerRequests:
+    scripted-a: { count: 4 }

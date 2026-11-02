@@ -1,0 +1,57 @@
+schemaVersion: "0.1.0"
+id: port.config.consistent-load-removal
+title: An artifact removed from the source during a load is still part of that load
+description: >-
+  The source holds assistant@1, lookup@1 and update_record@1. A load
+  begins, lists all three, and reads lookup@1. The test hook `change` then
+  removes update_record@1 and edits assistant@1. Within the load, the
+  removed tool is still read as it was and the persona is read unedited:
+  the load returns one consistent, old set, never a mix of old and new or
+  a set with a hole (PORT-011). Control: a load begun after the change
+  lists two artifacts, and update_record@1 is `not_found` in it. Readings
+  as in port.config.consistent-load-change.
+requirements: [PORT-011]
+port: configSource
+steps:
+  - op: seed
+    args:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", displayName: Test assistant, instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a } }
+        - { kind: Tool, id: lookup, version: 1, schemaVersion: "0.1.0", description: Look up a record by key., input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }, effect: read, binding: { kind: native, handler: test.lookup } }
+        - { kind: Tool, id: update_record, version: 1, schemaVersion: "0.1.0", description: Update a record., input: { type: object, additionalProperties: false, required: [key, value], properties: { key: { type: string }, value: { type: string } } }, effect: mutating, idempotent: false, binding: { kind: native, handler: test.update_record } }
+    expect: { ok: true }
+  - op: beginLoad
+    args: {}
+    bind: { "": $load }
+    expect: { ok: true }
+  - op: list
+    args: { load: $load }
+    expect: { ok: true, result: { $all: [{ $len: 3 }, { $contains: [assistant@1, lookup@1, update_record@1] }] } }
+  - op: read
+    args: { load: $load, ref: lookup@1 }
+    expect: { ok: true, result: { kind: Tool, id: lookup, version: 1, description: Look up a record by key. } }
+  - op: change
+    args:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", displayName: Test assistant, instructions: "You are a test assistant. Answer briefly.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a } }
+        - { kind: Tool, id: lookup, version: 1, schemaVersion: "0.1.0", description: Look up a record by key., input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }, effect: read, binding: { kind: native, handler: test.lookup } }
+    expect: { ok: true }
+  - op: read
+    args: { load: $load, ref: update_record@1 }
+    expect: { ok: true, result: { kind: Tool, id: update_record, version: 1, effect: mutating, description: Update a record. } }
+  - op: read
+    args: { load: $load, ref: assistant@1 }
+    expect: { ok: true, result: { kind: Persona, id: assistant, version: 1, instructions: "You are a test assistant." } }
+  - op: beginLoad
+    args: {}
+    bind: { "": $load2 }
+    expect: { ok: true }
+  - op: list
+    args: { load: $load2 }
+    expect: { ok: true, result: { $all: [{ $len: 2 }, { $contains: [assistant@1, lookup@1] }] } }
+  - op: read
+    args: { load: $load2, ref: update_record@1 }
+    expect: { ok: false, error: { category: not_found } }
+  - op: read
+    args: { load: $load2, ref: assistant@1 }
+    expect: { ok: true, result: { id: assistant, instructions: "You are a test assistant. Answer briefly." } }

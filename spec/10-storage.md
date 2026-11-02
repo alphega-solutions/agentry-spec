@@ -192,3 +192,39 @@ All rules here are new; this is a Tier 3 area.
 ## Amendment 2026-11-01 — from Phase 4 (Area 7 fixtures)
 
 - PORT-080: `principal` is the principal's subject, tenant and roles, so a port can filter by role as well as by subject.
+
+## Amendment 2026-11-02 — from Phase 4 (schemas and fixtures)
+
+Schemas: stored records in `schemas/ports/v1/records.yaml` (checkpoint, idempotency record, snapshot, blob metadata, audit record, lease); the port test-kit case format in `conformance/schema/port-case.yaml`.
+
+**Two kinds of fixture**
+
+- The adapter test kit (PORT-009, PORT-130) is a set of **port cases** in `conformance/ports/`. Each calls one port's operations directly, with language-neutral names and arguments listed in the format; every adapter of that port, in every language, must pass every case for it. In-memory adapters used by the conformance suite pass them too (EVAL-033).
+- Harness-level storage behaviour (retention, legal holds, consistency between events and checkpoints, residency, redaction at the boundary) is verified by ordinary fixtures in `conformance/storage/`. A `retention: {}` step runs retention processing at the current virtual time.
+- PORT-001, PORT-009: substitutability is verified by running the whole suite with each conforming adapter; results must be identical.
+
+**Records and leases**
+
+- PORT-030: the checkpoint record is the `checkpoint` schema; `version` increases by one on every save, including lease renewals, and `lastSeq` is the last event sequence number it accounts for.
+- PORT-020, PORT-031, PORT-040: a lease carries a **fencing token**, strictly greater for each new lease of a session and unchanged by renewal. Every port that takes a lease rejects with `conflict` a write whose token is lower than the highest it has accepted for that session. This is how the event log and idempotency store recognise a stale lease without consulting the checkpoint store.
+- PORT-071, PORT-073: the audit record is the `auditRecord` schema, with `details` per type as earlier areas define them; a tamper-evident log chains `hash` and `prevHash` (SHA-256 of the RFC 8785 canonical record without `hash`), and keeps the hash of the last deleted record as the next record's `prevHash` after retention.
+- PORT-006: every storing port reports through `describe` whether encryption at rest is configured.
+
+**Readings settled with the Area 10 fixtures**
+
+- PORT-110–113: a closed session's events, checkpoint and idempotency records become due when the session has been closed for their retention period. Blobs and snapshots become due when their own period has elapsed **and** no retained event, audit record or open session references them; audit records when their period has elapsed and no retained event they describe remains. A dependency period shorter than its referrers' is valid configuration; retention simply keeps the dependency longer.
+- PORT-122: resuming a session whose checkpoint has a different contract major version, without migration, fails with `conflict` (`agentry.storage.version_mismatch`) before anything in the checkpoint is acted on. PORT-120 within major version 0 means records of any earlier 0.x version are readable.
+- PORT-115: a replayed `resume()` after checkpoint retention returns `not_found` (`agentry.session.not_found`).
+- Port case readings (`conformance/schema/port-case.yaml`): event `read` bounds are inclusive; `save` replaces the whole checkpoint; a second `complete` with the same outcome succeeds; a write by another tenant, even to an identical key or ID, never conflicts with this tenant's records, since a conflict would reveal that they exist (PORT-002, PORT-003); every operation on another tenant's record fails as if it were missing; an audit log returns records in append order and rejects a second append of the same `id` with `conflict`; a vector record without `access` is readable by every principal of its tenant, and one with `access` by a principal matching any listed subject or role.
+- Requirements no fixture can verify are listed, with how they are verified, under `verifiedElsewhere` in `conformance/coverage.yaml` (PORT-001, PORT-009, PORT-121).
+
+**Further readings settled in review**
+
+- PORT-020, PORT-031, PORT-040, HITL-091: a new lease is **fenced** at every port that takes leases before its holder reads state for recovery (PORT-034) or dispatches anything: the checkpoint store by saving it, the event log and idempotency store by `fence` (`conformance/schema/port-case.yaml`). From then on those ports reject writes with a lower token, even before the new holder has written to them. A checkpoint store **MAY** refuse a new lease whose token is not higher than the current one.
+- PORT-070, PORT-073: an audit log is deleted by retention only as a prefix in append order: a record that is not yet due (or is held, PORT-114) keeps every later record too. So a tamper-evident chain never has a hole, and the first remaining record's `prevHash` is the hash of the last deleted one.
+- PORT-112: references that keep a blob or snapshot include retained events, audit records, checkpoints (held results, escalation content) and idempotency records (outcomes), and any session that is not closed (its pinned snapshot).
+- PORT-011: a load returns the configuration as it stood when the load began; a change during the load is seen by the next load.
+- PORT-006: the encryption setting is reported by the adapter (`describe`) and its correctness is attested by the deployment, not observable by fixtures; in-memory adapters report `encryptedAtRest: false` and are exempt. It is listed under `verifiedElsewhere`.
+- PORT-001: conformance runners **MUST** be able to run the suite with every port bound to a named adapter, overriding the deployment's `adapter` values, so the same fixtures run against each adapter.
+- Fixture expectations show `blobStore` records flattened as `{id, hash, mediaType, size, data, labels}`: the blob reference's fields, its labels, and its bytes.
+- Records seeded through a fixture's `setup.ports` are stored as if appended in the order listed. PORT-120 is exercised by fixtures for checkpoints (0.0.x read and resumed); events and audit records of earlier minor versions are read through the same record schemas and are not separately fixtured.

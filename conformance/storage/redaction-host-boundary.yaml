@@ -1,0 +1,213 @@
+schemaVersion: "0.1.0"
+id: storage.redaction-host-boundary
+title: Content leaving the implementation is redacted at the boundary, while the model, the blob store and the checkpoint keep it in full
+description: >-
+  The bundle's `pii` policy masks content and has the reviewerRule
+  `'pii_cleared' in reviewer.roles`. lookup is labelled `pii`
+  (`sensitivity: [pii]`) and returns SYN-PII-OWNER-0008. The bundle's
+  native afterModelCall hook tagger answers `continue` on the first model
+  response and labels the second one's only part, a tool_call c2 to
+  update_record (`approval: always`) whose value is that name, `pii`; c2
+  escalates (source `approval`).
+
+  Outward (PORT-008, applied by the implementation at the boundary):
+
+  - the persisted `tool.result` of c1 is labelled pii and its inline view
+    does not hold the name (CORE-154); it carries `contentRef` instead;
+  - the persisted `escalation.raised` carries the escalation in its
+    event-redacted form (Area 6 amendment 2026-11-01): its pending action
+    is labelled pii and its arguments do not hold the name;
+  - getReviewerView for r-plain (not cleared) shows the tool_call part
+    `redacted: true` with no arguments.
+
+  Inward, content is returned as stored:
+
+  - the step-2 provider request carries c1's result in full;
+  - the blob behind `contentRef` is in the tenant's blob store and at
+    least as large as the raw JSON output (30 bytes);
+  - the checkpoint holds the open escalation with the full arguments
+    (PORT-030, HITL-012);
+  - getReviewerView for r-cleared shows the full arguments.
+
+  Telemetry, the third outward channel, is
+  storage.telemetry-redacted (optional feature).
+requirements: [PORT-008]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        requiredHooks: [tagger@1]
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+            reviewerRule: "'pii_cleared' in reviewer.roles"
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+      - kind: Hook
+        id: tagger
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [afterModelCall]
+        results: [annotate]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.tagger }
+      - kind: Tool
+        id: lookup
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Look up a record by key.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        sensitivity: [pii]
+        binding: { kind: native, handler: test.lookup }
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.update_record }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r-plain, subject: reviewer-plain, assurance: multi_factor, roles: [] }
+        - { id: r-cleared, subject: reviewer-cleared, assurance: multi_factor, roles: [pii_cleared] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: k2, value: "SYN-PII-OWNER-0008" } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b: { responses: [] }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { owner: "SYN-PII-OWNER-0008" } }
+      update_record: []
+    nativeHooks:
+      tagger:
+        - result: continue
+        - result: annotate
+          labels:
+            - { part: 0, labels: [pii] }
+  limits:
+    inlinePayloadBytes: 65536
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Copy the owner of k1 to k2" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $esc, payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  - action: getReviewerView
+    session: $s
+    tenant: t1
+    reviewer: r-plain
+    expect:
+      ok: true
+      newEvents: 0
+      view:
+        actions:
+          - pendingActionId: $act
+            content:
+              - type: tool_call
+                labels: [pii]
+                redacted: true
+                arguments: { $absent: true }
+  - action: getReviewerView
+    session: $s
+    tenant: t1
+    reviewer: r-cleared
+    expect:
+      ok: true
+      newEvents: 0
+      view:
+        actions:
+          - pendingActionId: $act
+            content:
+              - type: tool_call
+                callId: c2
+                tool: update_record
+                labels: [pii]
+                arguments: { key: k2, value: "SYN-PII-OWNER-0008" }
+                redacted: { $absent: true }
+expect:
+  sessions:
+    $s:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - type: tool.result
+            labels: [pii]
+            contentRef: { id: $b1, hash: { $regex: "^sha256:[0-9a-f]{64}$" }, size: { $gte: 30 } }
+            payload: { callId: c1, tool: lookup }
+          - type: escalation.raised
+            labels: { $contains: [pii] }
+            payload:
+              escalation:
+                id: $esc
+                pendingActions: [{ id: $act, kind: tool_call, callId: c2, tool: update_record, labels: [pii] }]
+          - { type: run.ended, payload: { reason: escalated } }
+      absentEvents:
+        - type: tool.result
+          payload: { result: { ok: { output: { owner: "SYN-PII-OWNER-0008" } } } }
+        - type: escalation.raised
+          payload: { escalation: { pendingActions: { $contains: [{ arguments: { value: "SYN-PII-OWNER-0008" } }] } } }
+      checkpoint:
+        state: suspended
+        escalation:
+          id: $esc
+          pendingActions:
+            - { id: $act, callId: c2, arguments: { key: k2, value: "SYN-PII-OWNER-0008" } }
+  ports:
+    blobStore:
+      t1:
+        $contains:
+          - { id: $b1, size: { $gte: 30 } }
+  providerRequests:
+    scripted-a:
+      - {}
+      - messages:
+          $contains:
+            - role: tool
+              parts:
+                $contains:
+                  - type: tool_result
+                    callId: c1
+                    labels: [pii]
+                    result: { ok: { output: { owner: "SYN-PII-OWNER-0008" } } }
+    scripted-b: { count: 0 }
+  stubCalls:
+    tagger: { count: 2 }
+    lookup: { count: 1 }
+    update_record: { count: 0 }

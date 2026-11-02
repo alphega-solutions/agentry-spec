@@ -1,0 +1,143 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://alphega.io/agentry/schemas/conformance/port-case/v1.json
+title: Port adapter test-kit case
+description: >-
+  One contract case for a port adapter (PORT-009, PORT-130, EVAL-033). It
+  calls the port's operations directly, in order, and checks each result.
+  Every adapter of the port, in every language, must pass every case for
+  its port. Operation names and arguments are language-neutral; each
+  language binds them to its own signatures (Area 10 §2).
+
+
+  Arguments and results use the record shapes of
+  `schemas/ports/v1/records.yaml`, the `Event` schema, and `blobRef`.
+  Placeholders and matchers work as in conformance fixtures: a step's
+  `bind` binds placeholders from its result (dotted paths; the empty
+  path `""` binds the whole result), and later
+  steps may use them in `args` and `expect`. `$now` in `args` is the
+  case's virtual clock.
+
+
+  Operations, by port (`→` result). Every port also has these test
+  hooks: `describe {}` → `{encryptedAtRest, keyRef?}` (storing ports,
+  PORT-006); `records {tenant}` → the raw records the port stores for the
+  tenant, each a record of `schemas/ports/v1/records.yaml` (or an event),
+  so `storedRecords` can be checked (PORT-007); `failNext {op}` makes the
+  next call of `op` fail transiently with `unavailable`, `retryable: true`
+  (PORT-004). An operation on a missing record, or on another tenant's,
+  fails with `not_found`.
+
+
+  - `eventLog`: `append {tenant, session, events, expectedSeq, lease}`;
+    `read {tenant, session, fromSeq, toSeq}` → events (bounds inclusive);
+    `fence {tenant, session, lease}` registers a new lease's token before
+    its holder writes (Area 10 amendment);
+    `deleteSession {tenant, session}`.
+
+  - `checkpointStore`: `save {tenant, session, checkpoint, expectedVersion,
+    lease}` (`expectedVersion` 0 creates); `load {tenant, session}` →
+    checkpoint; `listPendingEscalations {tenant, now}` → escalations;
+    `due {tenant, now}` → session IDs whose TTL has elapsed or lease lapsed;
+    `children {tenant, session}` → session IDs; `delete {tenant,
+    session}`.
+
+  - `idempotencyStore`: `fence {tenant, session, lease}` as for the event
+    log; `start {tenant, key, record, lease}` → the stored
+    record (the existing one if any); `complete {tenant, key, outcome,
+    lease}`; `get {tenant, key}` → record; `delete {tenant, key}`.
+
+  - `snapshotStore`: `put {tenant, snapshot}`; `get {tenant, hash}` →
+    snapshot; `delete {tenant, hash}`.
+
+  - `blobStore`: `put {tenant, data, mediaType, labels}` (`data` UTF-8 text,
+    or `{base64}`) → `{ref, labels}`; `get {tenant, ref}` → `{data,
+    labels}` (`data` in the form it was put); `delete {tenant, ref}`; test
+    hook `corrupt {tenant, ref}` alters the stored bytes.
+
+  - `auditLog`: `append {tenant, record}` → the stored record (a
+    tamper-evident log adds `hash` and `prevHash`); `get {tenant, id}` →
+    record;
+    `query {tenant, session?, from?, to?, type?}` → records in append
+    order; `deleteBefore {tenant, before}` deletes the longest prefix, in
+    append order, of records whose timestamp is before `before` (so a
+    tamper-evident chain stays whole); `verify {tenant}` → `{valid}`
+    (tamper-evident logs only); test hook `tamper {tenant, id}` alters a
+    stored record's content.
+
+  - `vectorStore`: test hook `seed {source, records}` (records as in the
+    fixture format's vector store stubs: `{id, text, tenant, labels?,
+    access?}`); `query {tenant, principal, source, text, limit}` →
+    results `{id, text, labels}`.
+
+  - `secrets`: test hook `seed {tenant, reference, value, principal?}`;
+    `resolve
+    {tenant, reference, principal?}` → value.
+
+  - `configSource`: test hook `seed {artifacts}`; `beginLoad {}` → a load
+    handle; test hook `change {artifacts}` replaces the source's whole
+    contents; `list {load}` → artifact references (`id@version`); `read
+    {load, ref}` → artifact.
+type: object
+additionalProperties: false
+required: [schemaVersion, id, title, requirements, port, steps]
+properties:
+  schemaVersion: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/contractVersion" }
+  id: { type: string, pattern: "^port\\.[a-z0-9-]+(\\.[a-z0-9-]+)*$" }
+  title: { type: string, minLength: 1 }
+  description: { type: string }
+  requirements:
+    type: array
+    minItems: 1
+    uniqueItems: true
+    items: { type: string, pattern: "^[A-Z]+-[0-9]{3}$" }
+  port: { enum: [eventLog, checkpointStore, idempotencyStore, snapshotStore, blobStore, auditLog, vectorStore, secrets, configSource] }
+  clock: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/timestamp" }
+  features:
+    description: >-
+      Optional features the case needs (EVAL-022); an adapter that does not
+      offer one skips the case. `audit.tamper-evident`: tamper-evident audit
+      logs (PORT-073).
+    type: array
+    items: { enum: [audit.tamper-evident] }
+  steps:
+    type: array
+    minItems: 1
+    items:
+      type: object
+      additionalProperties: false
+      oneOf:
+        - required: [op]
+        - required: [clock]
+      properties:
+        op: { type: string, pattern: "^[a-z][A-Za-z]*$" }
+        args: { type: object }
+        bind:
+          type: object
+          additionalProperties: { type: string, pattern: "^\\$[A-Za-z_][A-Za-z0-9_]*$" }
+        clock:
+          description: Advance the virtual clock by an ISO 8601 duration.
+          type: object
+          additionalProperties: false
+          required: [advance]
+          properties:
+            advance: { type: string }
+        expect:
+          type: object
+          additionalProperties: false
+          properties:
+            ok: { type: boolean }
+            result: {}
+            error:
+              type: object
+              additionalProperties: false
+              required: [category]
+              properties:
+                category: { type: string }
+                code: { type: string }
+                retryable: { type: boolean }
+                source: { const: port }
+  storedRecords:
+    description: >-
+      Every record stored by the end validates against its record schema
+      and carries `schemaVersion` (PORT-007). Implicitly true.
+    type: boolean

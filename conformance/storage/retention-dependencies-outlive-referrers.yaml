@@ -1,0 +1,194 @@
+schemaVersion: "0.1.0"
+id: storage.retention-dependencies-outlive-referrers
+title: Blobs, snapshots and audit records outlive the retained events that reference them, even when their own periods are shorter, and are deleted once nothing retained references them
+description: >-
+  Retention: events P3D; audit, blobs, snapshots, checkpoints and
+  idempotency records PT1H, so every dependency's own period is shorter
+  than that of the events referencing it. lookup outputs are larger than
+  the inline limit (64 bytes), so each `tool.result` references a blob
+  (CORE-154); update_record is mutating, so each session has a `tool_call`
+  audit record describing its events (TOOL-074).
+
+  - At 2026-01-01T00:00Z, under snapshot $h1, $early looks up a large
+    record (blob $bEarly), updates k1 and is closed.
+  - A load makes $h2 current. At 01-03 (P2D later) $late does the same
+    under $h2 (blob $bLate) and is closed.
+  - A further load makes $h3 current, so neither $h1 nor $h2 is the
+    current snapshot; no session is open.
+  - At 01-05 (P2D later) retention runs.
+
+  $late closed two days ago, inside the events period: its events are
+  kept, and so are everything they reference although their own periods
+  have passed — blob $bLate and snapshot $h2 (PORT-112, PORT-051) — and
+  its audit record, which describes them (PORT-112). Its checkpoint and
+  idempotency record reference nothing retained and are deleted, which
+  shows retention ran.
+
+  $early closed four days ago: its events are deleted, and with no
+  retained referrer left, so are its audit record, blob $bEarly and
+  snapshot $h1. These later deletions depend on the earlier ones within
+  the same `retention` step: retention processing repeats until nothing
+  more is due, so deletions cascade (fixture format, `retentionStep`;
+  Area 10 amendment 2026-11-02 "Readings settled with the Area 10
+  fixtures" and "Further readings settled in review", PORT-112: the
+  references that keep a blob or snapshot are retained events, audit
+  records, checkpoints, idempotency records and open sessions).
+
+  The session state is not asserted: once $late's checkpoint is deleted,
+  `sessions.$late.state` has no stored record to read. Retained
+  checkpoints or idempotency records as referrers are not exercised here
+  (neither session's checkpoint or idempotency record references a blob
+  or snapshot that outlives its events).
+
+  Reading: PORT-112 is a rule retention processing follows, so a
+  deployment whose dependency periods are shorter than the events
+  period is valid and the dependencies are kept longer than declared, not
+  a configuration error.
+requirements: [PORT-112, PORT-051]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P3D, checkpoints: PT1H, idempotency: PT1H, blobs: PT1H, snapshots: PT1H, audit: PT1H }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # $early
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: big } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Done early." }]
+          usage: { inputTokens: 40, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $late
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: big } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: k1, value: v2 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Done late." }]
+          usage: { inputTokens: 40, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b: { responses: [] }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "SYN-LARGE-EARLY-0112 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } }
+        - ok: { output: { value: "SYN-LARGE-LATE-0112 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" } }
+      update_record:
+        - ok: { output: { updated: true } }
+        - ok: { output: { updated: true } }
+  limits:
+    inlinePayloadBytes: 64
+script:
+  - load: {}
+    bind: $h1
+    expect: { ok: true }
+  - action: run
+    bind: $early
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up big, then set k1" }]
+    capture:
+      - event: { type: tool.result, payload: { callId: c1 } }
+        bind: { payload.result.ok.blob.id: $bEarly }
+    expect: { ok: true, endReason: responded }
+  - action: close
+    session: $early
+    expect: { ok: true }
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: extra, version: 1, schemaVersion: "0.1.0", idleTtl: PT1H, suspendedTtl: PT1H, stepLimit: 2 }
+    bind: $h2
+    expect: { ok: true }
+  - clock: { advance: P2D }
+  - action: run
+    bind: $late
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up big, then set k1" }]
+    capture:
+      - event: { type: tool.result, payload: { callId: c1 } }
+        bind: { payload.result.ok.blob.id: $bLate }
+    expect: { ok: true, endReason: responded }
+  - action: close
+    session: $late
+    expect: { ok: true }
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: extra, version: 2, schemaVersion: "0.1.0", idleTtl: PT1H, suspendedTtl: PT1H, stepLimit: 3 }
+    bind: $h3
+    expect: { ok: true }
+  - clock: { advance: P2D }
+  - retention: {}
+expect:
+  stubCalls:
+    update_record:
+      - { context: { sessionId: $early, idempotencyKey: $kEarly } }
+      - { context: { sessionId: $late, idempotencyKey: $kLate } }
+  sessions:
+    $late:
+      events:
+        mode: subsequence
+        items:
+          - { seq: 1, type: session.created, snapshotHash: { $all: [$h2, { $not: $h1 }] } }
+          - { type: tool.result, payload: { callId: c1, result: { ok: { blob: { id: $bLate } } } } }
+          - { type: tool.result, payload: { callId: c2 } }
+          - { type: session.closed }
+  ports:
+    eventLog:
+      t1:
+        $early: { $absent: true }
+        $late:
+          $contains:
+            - { seq: 1, type: session.created }
+            - { type: session.closed }
+    auditLog:
+      t1:
+        $all:
+          - $count: { of: { sessionId: $early }, equals: 0 }
+          - $count: { of: { sessionId: $late, type: tool_call, snapshotHash: $h2, details: { callId: c2, tool: update_record } }, equals: 1 }
+    blobStore:
+      t1:
+        $all:
+          - $count: { of: { id: $bEarly }, equals: 0 }
+          - $count: { of: { id: $bLate }, equals: 1 }
+    snapshotStore:
+      t1:
+        $h1: { $absent: true }
+        $h2: { $any: true }
+    checkpointStore:
+      t1:
+        $early: { $absent: true }
+        $late: { $absent: true }
+    idempotencyStore:
+      t1:
+        $kEarly: { $absent: true }
+        $kLate: { $absent: true }
+  providerRequests:
+    scripted-a: { count: 6 }

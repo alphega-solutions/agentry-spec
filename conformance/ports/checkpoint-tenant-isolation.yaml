@@ -1,0 +1,85 @@
+schemaVersion: "0.1.0"
+id: port.checkpoint.tenant-isolation
+title: Another tenant's checkpoint behaves exactly as if it did not exist, for load, save, fencing and delete
+description: >-
+  Session ID S (…00a0) is used by tenant t1 (fencing token 3). A load in
+  t1 of a session that never existed (…00af) gives the baseline
+  `not_found` error, whose code binds $missingCode.
+
+  - t2 loading S fails exactly as for the missing session (same category
+    and code; CORE-193, no existence leak).
+  - t2 saving S with `expectedVersion` 1 — t1's current version — fails
+    `conflict`, as it would for any session with no record (stored
+    version 0 differs); it does not overwrite t1's checkpoint.
+  - t2 creating S (`expectedVersion` 0) with token 1, lower than the token
+    t1 used, succeeds: records, versions and fencing tokens are per
+    tenant (PORT-002, PORT-003). An adapter keying by session alone would
+    answer `conflict` here.
+  - Each tenant loads only its own record; t1's next save at
+    `expectedVersion` 1 succeeds (t2's writes did not touch t1's version).
+  - t2 deletes its S: afterwards t2's load is `not_found` (same code),
+    while t1 still loads its v2.
+requirements: [PORT-002, PORT-003, PORT-033, PORT-031, PORT-004]
+port: checkpointStore
+clock: "2026-03-01T10:00:00Z"
+steps:
+  - op: load
+    args: { tenant: t1, session: 01900000-0000-7000-8000-0000000000af }
+    expect: { error: { category: not_found, code: $missingCode } }
+  - op: save
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-0000000000a0
+      expectedVersion: 0
+      lease: { holder: worker-t1, token: 3, expiresAt: "2026-03-01T10:05:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-0000000000a0, version: 1, lastSeq: 11, state: active, principalRef: { subject: user-1, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:9999999999999999999999999999999999999999999999999999999999999999", taint: { tainted: false, provenances: [] }, budget: { tokens: 50000 }, counters: { sessionSize: 512 }, lease: { holder: worker-t1, token: 3, expiresAt: "2026-03-01T10:05:00Z" } }
+    expect: { ok: true }
+  - op: load
+    args: { tenant: t2, session: 01900000-0000-7000-8000-0000000000a0 }
+    expect: { error: { category: not_found, code: $missingCode } }
+  - op: save
+    args:
+      tenant: t2
+      session: 01900000-0000-7000-8000-0000000000a0
+      expectedVersion: 1
+      lease: { holder: worker-t2, token: 5, expiresAt: "2026-03-01T10:05:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t2, sessionId: 01900000-0000-7000-8000-0000000000a0, version: 2, lastSeq: 2, state: active, principalRef: { subject: user-9, tenant: t2 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:9999999999999999999999999999999999999999999999999999999999999999", taint: { tainted: false, provenances: [] }, budget: { tokens: 50000 }, counters: { sessionSize: 512 }, lease: { holder: worker-t2, token: 5, expiresAt: "2026-03-01T10:05:00Z" } }
+    expect: { error: { category: conflict } }
+  - op: load
+    args: { tenant: t1, session: 01900000-0000-7000-8000-0000000000a0 }
+    expect:
+      result: { tenant: t1, version: 1, lastSeq: 11, principalRef: { subject: user-1, tenant: t1 }, lease: { holder: worker-t1, token: 3 } }
+  - op: save
+    args:
+      tenant: t2
+      session: 01900000-0000-7000-8000-0000000000a0
+      expectedVersion: 0
+      lease: { holder: worker-t2, token: 1, expiresAt: "2026-03-01T10:05:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t2, sessionId: 01900000-0000-7000-8000-0000000000a0, version: 1, lastSeq: 2, state: active, principalRef: { subject: user-9, tenant: t2 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:9999999999999999999999999999999999999999999999999999999999999999", taint: { tainted: false, provenances: [] }, budget: { tokens: 50000 }, counters: { sessionSize: 512 }, lease: { holder: worker-t2, token: 1, expiresAt: "2026-03-01T10:05:00Z" } }
+    expect: { ok: true }
+  - op: load
+    args: { tenant: t2, session: 01900000-0000-7000-8000-0000000000a0 }
+    expect:
+      result: { schemaVersion: "0.1.0", tenant: t2, sessionId: 01900000-0000-7000-8000-0000000000a0, version: 1, lastSeq: 2, principalRef: { subject: user-9, tenant: t2 }, lease: { holder: worker-t2, token: 1 } }
+  - op: load
+    args: { tenant: t1, session: 01900000-0000-7000-8000-0000000000a0 }
+    expect:
+      result: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-0000000000a0, version: 1, lastSeq: 11, principalRef: { subject: user-1, tenant: t1 } }
+  - op: save
+    args:
+      tenant: t1
+      session: 01900000-0000-7000-8000-0000000000a0
+      expectedVersion: 1
+      lease: { holder: worker-t1, token: 3, expiresAt: "2026-03-01T10:05:00Z" }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-0000000000a0, version: 2, lastSeq: 12, state: active, principalRef: { subject: user-1, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:9999999999999999999999999999999999999999999999999999999999999999", taint: { tainted: false, provenances: [] }, budget: { tokens: 50000 }, counters: { sessionSize: 512 }, lease: { holder: worker-t1, token: 3, expiresAt: "2026-03-01T10:05:00Z" } }
+    expect: { ok: true }
+  - op: delete
+    args: { tenant: t2, session: 01900000-0000-7000-8000-0000000000a0 }
+    expect: { ok: true }
+  - op: load
+    args: { tenant: t2, session: 01900000-0000-7000-8000-0000000000a0 }
+    expect: { error: { category: not_found, code: $missingCode } }
+  - op: load
+    args: { tenant: t1, session: 01900000-0000-7000-8000-0000000000a0 }
+    expect:
+      result: { tenant: t1, version: 2, lastSeq: 12 }

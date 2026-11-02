@@ -1,0 +1,53 @@
+schemaVersion: "0.1.0"
+id: port.blob.put-returns-ref
+title: Putting a blob returns its reference with ID, SHA-256 of the bytes, media type, and size
+description: >-
+  Two blobs are stored: UTF-8 text and binary bytes given as base64. Each
+  `put` returns a reference whose `hash` is `sha256:` plus the SHA-256 of
+  the exact bytes stored, `size` their length in bytes, and `mediaType` as
+  given (PORT-060, CORE-113); the two IDs differ. `get` by each reference
+  returns the same bytes in the form they were given. The stored blob
+  records validate and carry `schemaVersion` (storedRecords, PORT-007).
+
+  The raw stored records (test hook `records`) are two blob records, each
+  with `schemaVersion` 0.1.0 (PORT-007).
+requirements: [PORT-060, PORT-007]
+port: blobStore
+storedRecords: true
+steps:
+  - op: put
+    args: { tenant: t1, data: "SYN-BLOB-CONTENT-0001", mediaType: text/plain, labels: [] }
+    bind: { ref: $text, ref.id: $textId }
+    expect:
+      ok: true
+      result:
+        ref:
+          id: { $any: true }
+          hash: "sha256:39a975c6e9e40278affaec7517001a5415f13a64446f66f9c2b484b5913c82dc"
+          mediaType: text/plain
+          size: 21
+  - op: put
+    args: { tenant: t1, data: { base64: "AAECf4D+/1NZTg==" }, mediaType: application/octet-stream, labels: [] }
+    bind: { ref: $bin }
+    expect:
+      ok: true
+      result:
+        ref:
+          id: { $not: $textId }
+          hash: "sha256:08f8ce9dd8417b895d66c7bfe061b405ac5dffd29df96892147e16d08b57b6d6"
+          mediaType: application/octet-stream
+          size: 10
+  - op: get
+    args: { tenant: t1, ref: $text }
+    expect: { ok: true, result: { data: "SYN-BLOB-CONTENT-0001" } }
+  - op: get
+    args: { tenant: t1, ref: $bin }
+    expect: { ok: true, result: { data: { base64: "AAECf4D+/1NZTg==" } } }
+  - op: records
+    args: { tenant: t1 }
+    expect:
+      ok: true
+      result:
+        $all:
+          - { $len: 2 }
+          - $every: { schemaVersion: "0.1.0", tenant: t1 }

@@ -1,0 +1,121 @@
+schemaVersion: "0.1.0"
+id: storage.checkpoint-not-ahead-of-log
+title: A checkpoint never accounts for a sequence number the event log does not hold, including when the implementation stops mid-run
+description: >-
+  Three sessions are observed through the ports at the end of the
+  fixture (PORT-035; `lastSeq` is the last sequence number a checkpoint
+  accounts for, Area 10 amendment 2026-11-02):
+
+  - $a responds and is closed: `session.closed` is its last event
+    (CORE-021), so its checkpoint's `lastSeq` is at most that event's seq.
+  - $c responds once; in its second turn it is crashed at
+    `after_event_append` while the model asks for lookup c1: the append
+    holding `tool.call` c1 is the last write to its log and the
+    checkpoint is not saved after it, so `lastSeq` is strictly below
+    that event's seq. A checkpoint written before the append and counting
+    the events about to be appended (a write-ahead checkpoint) fails here.
+  - $d responds once; in its second turn it is crashed at
+    `after_model_request`: that `model.request` is the last event in its
+    log, so `lastSeq` is at most its seq.
+
+  The implementation is restarted after each crash and the clock never
+  moves, so no lease lapses and nothing recovers the crashed runs; their
+  ports stay as the crashes left them. A crashed session has a checkpoint,
+  since its active run's lease is recorded with it (HITL-090). c1 is never
+  dispatched and $d's provider call is never answered.
+requirements: [PORT-035]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # $a, $c and $d, turn 1
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $c, turn 2: crashed after the tool.call append
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $d, turn 2: crashed before its provider answers, no response consumed
+    scripted-b: { responses: [] }
+  stubs:
+    tools:
+      lookup: []
+script:
+  - action: run
+    bind: $a
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - action: close
+    session: $a
+    capture:
+      - event: { type: session.closed }
+        bind: { seq: $na }
+    expect: { ok: true }
+  - action: run
+    bind: $c
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $d
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - crash: { at: after_event_append, session: $c }
+  - action: run
+    session: $c
+    principal: p1
+    input: [{ type: text, text: "Look up k1" }]
+  - restart: {}
+  - crash: { at: after_model_request, session: $d }
+  - action: run
+    session: $d
+    principal: p1
+    input: [{ type: text, text: "Hello again" }]
+  - restart: {}
+expect:
+  sessions:
+    $a:
+      state: closed
+    $c:
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, turn: 2, seq: $tcC, payload: { callId: c1 } }
+      absentEvents:
+        - { type: tool.result }
+    $d:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, turn: 2, seq: $mrD }
+      absentEvents:
+        - { type: model.response, turn: 2 }
+  ports:
+    checkpointStore:
+      t1:
+        $a: { lastSeq: { $lte: $na } }
+        $c: { lastSeq: { $all: [{ $lte: $tcC }, { $not: $tcC }] } }
+        $d: { lastSeq: { $lte: $mrD } }
+  providerRequests:
+    scripted-b: { count: 0 }
+  stubCalls:
+    lookup: { count: 0 }

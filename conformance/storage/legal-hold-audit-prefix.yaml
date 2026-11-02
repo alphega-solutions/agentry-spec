@@ -1,0 +1,81 @@
+schemaVersion: "0.1.0"
+id: storage.legal-hold-audit-prefix
+title: In a tamper-evident audit log, a held record keeps every later record through retention, and the chain stays whole
+description: >-
+  For tamper-evident audit logs only (`features: [audit.tamper-evident]`,
+  PORT-073). Every retention period is P1D; the deployment declares a
+  legal hold on session …b02 of t1 (PORT-114).
+
+  `setup.ports` seeds t1's audit log, in append order, with three
+  `tool_call` records of closed sessions from 2025-12-01, whose events are
+  not retained: X (session …b01), H (session …b02, held) and Y (session
+  …b03). Seeded records are appended in the order given, so the log
+  chains them. The clock moves on P2D and retention runs: all three
+  records' period has elapsed and no retained event describes them.
+
+  - X, before the held record, is deleted.
+  - H is kept: it is held.
+  - Y is kept although it is due and its session is not held: a
+    tamper-evident log is deleted by retention only as a prefix in append
+    order, and a held record keeps every later record (Area 10 amendment
+    2026-11-02, "Further readings settled in review").
+  - The remaining chain is whole: H, the first remaining record, still
+    has a `prevHash` (the hash of deleted X, PORT-073), and Y's
+    `prevHash` is H's `hash`.
+
+  storage.legal-hold-blocks-deletion covers holds on every port, for any
+  audit log.
+requirements: [PORT-114, PORT-073]
+contract: ">=0.1.0 <1.0.0"
+features: [audit.tamper-evident]
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P1D, checkpoints: P1D, idempotency: P1D, blobs: P1D, snapshots: P1D, audit: P1D }
+        legalHolds:
+          - { tenant: t1, session: "01900000-0000-7000-8000-000000000b02", reason: "Synthetic session hold for conformance" }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a: { responses: [] }
+    scripted-b: { responses: [] }
+  ports:
+    auditLog:
+      t1:
+        - { schemaVersion: "0.1.0", id: "01900000-0000-7000-8000-0000000f0b01", timestamp: "2025-12-01T00:00:01Z", tenant: t1, sessionId: "01900000-0000-7000-8000-000000000b01", principalRef: { subject: "user-1", tenant: t1 }, snapshotHash: "sha256:5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed", type: tool_call, eventIds: ["01900000-0000-7000-8000-0000000e0b11", "01900000-0000-7000-8000-0000000e0b12"], details: { callId: c1, tool: update_record, arguments: { key: k1, value: v1 }, outcome: { ok: { output: { updated: true } } } } }
+        - { schemaVersion: "0.1.0", id: "01900000-0000-7000-8000-0000000f0b02", timestamp: "2025-12-01T00:00:02Z", tenant: t1, sessionId: "01900000-0000-7000-8000-000000000b02", principalRef: { subject: "user-1", tenant: t1 }, snapshotHash: "sha256:5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed", type: tool_call, eventIds: ["01900000-0000-7000-8000-0000000e0b21", "01900000-0000-7000-8000-0000000e0b22"], details: { callId: c1, tool: update_record, arguments: { key: k1, value: v1 }, outcome: { ok: { output: { updated: true } } } } }
+        - { schemaVersion: "0.1.0", id: "01900000-0000-7000-8000-0000000f0b03", timestamp: "2025-12-01T00:00:03Z", tenant: t1, sessionId: "01900000-0000-7000-8000-000000000b03", principalRef: { subject: "user-1", tenant: t1 }, snapshotHash: "sha256:5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed", type: tool_call, eventIds: ["01900000-0000-7000-8000-0000000e0b31", "01900000-0000-7000-8000-0000000e0b32"], details: { callId: c1, tool: update_record, arguments: { key: k1, value: v1 }, outcome: { ok: { output: { updated: true } } } } }
+script:
+  - clock: { advance: P2D }
+  - retention: {}
+expect:
+  ports:
+    auditLog:
+      t1:
+        - { id: "01900000-0000-7000-8000-0000000f0b02", sessionId: "01900000-0000-7000-8000-000000000b02", hash: $hHeld, prevHash: { $any: true } }
+        - { id: "01900000-0000-7000-8000-0000000f0b03", sessionId: "01900000-0000-7000-8000-000000000b03", prevHash: $hHeld }
+  providerRequests:
+    scripted-a: { count: 0 }
+    scripted-b: { count: 0 }
