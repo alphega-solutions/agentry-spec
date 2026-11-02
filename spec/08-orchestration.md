@@ -175,8 +175,24 @@ Schemas: the `session.created` `parent` block and `tool.call` `childSessionId` i
 
 - A mirrored pending action has the owning session's action ID, `delegated: true` and `chain` (the child session IDs from the nearest child down to the owner), and the record's `expiresAt` is the chain's earliest expiry (ORCH-065). The owner's own escalation is an ordinary one (`delegated` absent).
 - Each ancestor's escalation record carries its own `id`, `sessionId`, `runId`, `turn`, `step` and `snapshotHash`; `taintProvenances` are each session's own.
-- On an accepted `resume()` of the root, every session in the chain starts a new run in turn — the owner first, then each ancestor as its child's result is ready — and each emits `escalation.resolved` listing the decision IDs applied to the actions it mirrored or owned.
+- On an accepted `resume()` of the root, every session in the chain starts a new run at once, from the root down to the owner; each emits `run.started` and then `escalation.resolved` listing the decision IDs applied to the actions it mirrored or owned. The owner continues its turn; each ancestor waits in its pending agent call. If a descendant escalates again, the new escalation propagates (ORCH-060) and ends each waiting ancestor's new run `escalated`.
+- Mirrored actions carry the owner's full action contents (`callId`, `tool`, `arguments`, and so on). Every level's copy of an action carries the chain-effective `reviewerRequirements` (ORCH-062). Expiry rejections are recorded once, on the root escalation, and applied down the chain on resume.
 
 **Ordering**
 
 - ORCH-001, ORCH-080: the parent's `tool.call` for an agent tool, carrying `childSessionId`, is appended before the child's `session.created`. The child's events are in its own sequence (CORE-160) and its session appears under its own ID in every port.
+
+**Readings settled with the Area 8 fixtures**
+
+- ORCH-050: a child whose run ends `responded`, `blocked`, `step_limit`, `budget_exhausted`, `context_limit` or `timeout` is closed `completed`; `failed` closes it `failed`. When the child's response has `image` or `file` parts and the child has no output schema, the `{text}` output also carries `files`: their blob references in order (ORCH-052, CORE-112).
+- ORCH-021: an agent tool's `output` and the child persona's output schema are compatible when their RFC 8785 canonical JSON is equal. ORCH-020 and ORCH-021 errors name the agent tool (`details.artifact`) and the field (`/effect`, `/egress`, `/output`).
+- ORCH-014, PROV-023: every persona reachable through an agent tool **MUST** have at least one model (primary or fallback) whose provider is in the intersection of its own and every possible caller's allowed providers; otherwise the configuration is rejected. At run time the child uses the first of its models, in order, that the intersection allows (PROV-051).
+- ORCH-043, ORCH-044: the parent call's remaining deadline counts only time the chain is not `suspended`. A child whose run timeout is capped by that deadline ends `timeout` when it elapses and returns `agentry.delegation.limit`; an agent call never ends with `agentry.tool.timeout`.
+- CFG-091, ORCH-042: a budget is reached when usage is equal to or greater than it.
+- ORCH-070, TOOL-034: an agent call pending when its session is cancelled, closed or expires gets no `tool.result`. A parent that expires on its own (for example after `onExpiry: reject` and a further `idleTtl`) cancels its descendants first per ORCH-070; ORCH-066 applies only to the chain's escalation expiring under `close`.
+
+**Known fixture limits**
+
+- The trace-id equality of ORCH-004 is not expressible: a placeholder binds a whole value, so a child's trace-id cannot be compared with its parent's. Fixtures check only that each trace context is well formed.
+- Crash points reach a child only at its first stub dispatch (`after_dispatch`, `after_outcome_recorded`), since a crash fires at the first occurrence during the root's action; a crash at a child's model request or `tool.call` append is not expressible.
+- Events of different sessions have no common order; cross-session order is shown through a shared scripted provider's request order or an ordered hook stub's calls.
