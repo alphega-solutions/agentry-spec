@@ -155,3 +155,28 @@ All rules here are new; this is a Tier 3 area. Rules that amend approved areas a
 ## Appendix A — Workflow engines (informative)
 
 Hosts interact only with root sessions (ORCH-006), so the integration patterns in Area 6 Appendix A apply unchanged: a delegation chain behaves, from outside, as one session that may suspend for decisions. Deterministic multi-agent pipelines — run persona A, then persona B — belong in the workflow engine as separate root sessions, not in delegation.
+
+## Amendment 2026-11-02 — from Phase 4 (schemas and fixtures)
+
+Schemas: the `session.created` `parent` block and `tool.call` `childSessionId` in `schemas/core/v1/event.yaml`; `delegation.maxDepth` in `schemas/config/v1/harness-profile.yaml`; delegated pending actions (`delegated`, `chain`) in `schemas/core/v1/hitl.yaml`.
+
+**The child's input and output**
+
+- ORCH-010: the child's first message is one `principal`-role message with one `structured` part whose `value` is the validated arguments, carrying the provenance and labels of ORCH-011.
+- ORCH-050: for `responded`, the agent tool's `ok` output is the child's `structured` part's `value` when the child persona has an output schema, and otherwise `{ "text": <the response's text parts joined with a newline> }`.
+- ORCH-052, HOOK-120: the parent's `tool_result` part has provenance `agent:<persona id>` and the union of the labels the child saw; the `tool.result` event's `provenances` lists `agent:<persona id>` followed by every untrusted provenance the child saw, in order of first entry. The result is **trusted** — it does not taint the parent — only if the child was never tainted; otherwise it taints the parent, whose taint provenances gain `agent:<persona id>` and the child's tainting provenances.
+
+**Host operations and errors**
+
+- ORCH-006: every host operation on a child session — including `getReviewerView` — is refused with `conflict` (`agentry.delegation.child_session`); `listPendingEscalations` never returns a child's escalation (ORCH-063).
+- ORCH-031: the depth `policy.decision` has kind `depth`, outcome `block`, and the call's `callId` and `tool`.
+
+**Escalations (ORCH-060–066)**
+
+- A mirrored pending action has the owning session's action ID, `delegated: true` and `chain` (the child session IDs from the nearest child down to the owner), and the record's `expiresAt` is the chain's earliest expiry (ORCH-065). The owner's own escalation is an ordinary one (`delegated` absent).
+- Each ancestor's escalation record carries its own `id`, `sessionId`, `runId`, `turn`, `step` and `snapshotHash`; `taintProvenances` are each session's own.
+- On an accepted `resume()` of the root, every session in the chain starts a new run in turn — the owner first, then each ancestor as its child's result is ready — and each emits `escalation.resolved` listing the decision IDs applied to the actions it mirrored or owned.
+
+**Ordering**
+
+- ORCH-001, ORCH-080: the parent's `tool.call` for an agent tool, carrying `childSessionId`, is appended before the child's `session.created`. The child's events are in its own sequence (CORE-160) and its session appears under its own ID in every port.
