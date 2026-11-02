@@ -11,7 +11,7 @@ description: >-
   - `archive_record` declares `onTainted: block`; the bundle sets `allow`
     for it. The effective outcome is block: the call is stopped with a
     policy error to the model and the turn continues to a response.
-requirements: [CFG-042, CFG-030]
+requirements: [CFG-042, CFG-030, HOOK-123]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:

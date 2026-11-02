@@ -1,0 +1,120 @@
+schemaVersion: "0.1.0"
+id: hook.approval-no-rules-escalates
+title: "With no approval rules declared in any bundle or persona, a call whose effective approval is `policy` escalates"
+description: >-
+  Neither the policy bundle (baseline org@1) nor the persona declares
+  `approvalRules`. `update_record` has `approval: policy`, so every call to
+  it escalates from source `approval` and is not dispatched. The control
+  `note` (approval never) in the same configuration is dispatched, so the
+  escalation comes from the `policy` approval and not from the setup. The
+  session is never tainted.
+requirements: [HOOK-131]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: policy
+        binding: { kind: native, handler: test.update_record }
+      - kind: Tool
+        id: note
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Record a note.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: true
+        approval: never
+        binding: { kind: native, handler: test.note }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [update_record@1, note@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # $sControl
+        - parts: [{ type: tool_call, callId: c1, tool: note, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Noted." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sPolicy
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      note:
+        - ok: { output: { noted: true } }
+      update_record: []
+script:
+  - action: run
+    bind: $sControl
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Note v1 on k1" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sPolicy
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    expect: { ok: true, endReason: escalated }
+expect:
+  sessions:
+    $sControl:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: note } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: escalation.raised }
+    $sPolicy:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - { type: escalation.raised, payload: { escalation: { sources: [approval], pendingActions: [{ callId: c1, source: approval }] } } }
+          - { type: run.ended, payload: { reason: escalated } }
+      absentEvents:
+        - { type: tool.call }
+        - { type: policy.decision, payload: { kind: taint } }
+  stubCalls:
+    note: [{ arguments: { key: k1, value: v1 } }]
+    update_record: { count: 0 }
