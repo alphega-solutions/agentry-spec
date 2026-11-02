@@ -68,7 +68,7 @@ Matchers: `{"$any": true}`, `{"$absent": true}`, `{"$regex": "..."}`, `{"$len": 
 
 - **Stub calls** (`expect.stubCalls`), keyed by native tool ID, `<serverId>/<toolName>`, `<endpointId>/<operationId>`, or remote hook ID: `{ arguments, context: { sessionId, runId, principal, idempotencyKey, deadline, traceContext }, cancelled, completed }`; `arguments` are the tool's arguments (HTTP stubs included), and `completed` is whether the stub's result reached the implementation. Remote and native hook invocations record `{ arguments }`, the `HookRequest` (`schemas/core/v1/hook.yaml`), keyed by remote hook ID or hook ID.
 - **Vector store queries** (`expect.stubCalls.vectorStore/<sourceId>`): `{ arguments: { tenant, principal: { subject, tenant, roles }, text, limit } }`.
-- **Provider requests** (`expect.providerRequests`): `{ provider, model, messages, tools: [{ name, description, input }], outputSchema, params }`; a tool's `name` is its tool ID. A step's tool results are sent as ONE message with role `tool` holding all its `tool_result` parts in request order (TOOL-032).
+- **Provider requests** (`expect.providerRequests`): `{ provider, model, messages, tools: [{ name, description, input }], outputSchema, params, singleToolCall }`; a tool's `name` is its tool ID. A step's tool results are sent as ONE message with role `tool` holding all its `tool_result` parts in request order (TOOL-032).
 - **Ports** (`expect.ports`, keyed by port name, then tenant):
   - `eventLog: {t1: {<sessionId>: [events]}}`;
   - `idempotencyStore: {t1: {<key>: { state: started|completed, outcome, childSessionId? }}}`;
