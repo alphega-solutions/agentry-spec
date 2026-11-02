@@ -48,6 +48,13 @@ properties:
     description: Union of sensitivity labels of content in the payload (CORE-151).
     $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/labels"
   payload: { type: object }
+  contentRef:
+    description: >-
+      Present when redaction changed the payload's content (CORE-154): the
+      full, unredacted payload content in the BlobStore, from which context is
+      reproduced (CTX-001, CTX-003). Tenant-scoped and subject to the same
+      sensitivity policies as the content (Area 7 amendment 2026-11-01).
+    $ref: "https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/blobRef"
   extensions: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/extensions" }
 
 allOf:
@@ -72,6 +79,11 @@ allOf:
   - if: { properties: { type: { enum: [turn.started, turn.completed] } } }
     then: { required: [turn] }
   - if: { properties: { type: { enum: [model.request, model.response, tool.call, tool.result] } } }
+    then: { required: [turn, step] }
+  # context events carry their position (Area 7 amendment 2026-11-01)
+  - if: { properties: { type: { const: context.retrieved } } }
+    then: { required: [turn] }
+  - if: { properties: { type: { const: context.compacted } } }
     then: { required: [turn, step] }
   # events that carry content carry its provenance and labels (CORE-151)
   - if: { properties: { type: { enum: [model.response, tool.call, tool.result, escalation.raised, context.retrieved, context.compacted] } } }
