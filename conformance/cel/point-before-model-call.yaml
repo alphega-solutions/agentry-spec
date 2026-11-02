@@ -1,9 +1,13 @@
 schemaVersion: 0.1.0
 id: cel.point-before-model-call
+description: >-
+  beforeModelCall at step 2 sees the step-1 tool result. The baseline bundle
+  trusts no tools, so that delivered result has tainted the session (HOOK-120,
+  HOOK-126).
 requirements:
 - HOOK-110
 point: beforeModelCall
-expression: content.exists(p, p.provenance.startsWith('tool:') && 'pii' in p.labels) && !session.tainted
+expression: content.exists(p, p.provenance.startsWith('tool:') && 'pii' in p.labels) && session.tainted
 variables:
   principal:
     subject: user-1
@@ -18,7 +22,7 @@ variables:
     assurance: multi_factor
   session:
     persona: assistant@1
-    tainted: false
+    tainted: true
     turn: 3
     step: 2
   content:

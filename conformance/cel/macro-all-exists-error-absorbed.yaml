@@ -1,11 +1,13 @@
-# langdef: if any predicate is false, `all` is false, ignoring errors from other
-# predicates; `exists` is the dual. x = 0 divides by zero in both.
 schemaVersion: 0.1.0
 id: cel.macro-all-exists-error-absorbed
+description: >-
+  langdef: if any predicate is false, `all` is false, ignoring errors from other
+  predicates; `exists` is the dual. The first element is 0 (session.step - 2,
+  from a variable so it cannot be constant-folded) and divides by zero in both.
 requirements:
 - HOOK-110
 point: beforeModelCall
-expression: '[[0, 2].all(x, 2 / x == 2), [0, 1].exists(x, 1 / x == 1)]'
+expression: '[[(session.step - 2), 2].all(x, 2 / x == 2), [(session.step - 2), 1].exists(x, 1 / x == 1)]'
 variables:
   principal:
     subject: user-1

@@ -1,7 +1,8 @@
-# Selecting an absent key of a map is a no-such-key error at run time.
-# Guarded form: op-logical-guarded-missing-key.
 schemaVersion: 0.1.0
 id: cel.runtime-missing-map-key
+description: >-
+  Selecting an absent key of a map is a no-such-key error at run time. Guarded
+  form: op-logical-guarded-missing-key.
 requirements:
 - HOOK-113
 point: beforeModelCall

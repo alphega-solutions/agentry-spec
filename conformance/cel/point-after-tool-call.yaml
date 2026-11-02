@@ -1,14 +1,17 @@
-# Uses `tool` and `content` only. The `result` variable cannot be given: in
-# schemas/core/v1/hook.yaml `$defs.result` is defined twice and the HookResult
-# definition replaces the tool-result one, so `variables.result` only validates
-# as a HookResult. Value cases on `result` wait for that schema fix.
 schemaVersion: 0.1.0
 id: cel.point-after-tool-call
+description: >-
+  The afterToolCall variables: `tool`, `result` and `content`, which at the tool
+  points is exactly the call's one `tool_result` part (Area 5 amendment,
+  HOOK-091). `result.output` is dyn (HOOK-112). `session.tainted` does not yet
+  reflect the result being judged: it enters context at delivery (Area 4 stage
+  12).
 requirements:
 - HOOK-110
 point: afterToolCall
-expression: tool.id == 'lookup' && tool.effect == 'read' && !tool.egress && content.exists(p, p.provenance
-  == 'tool:lookup')
+expression: tool.id == 'lookup' && tool.effect == 'read' && !tool.egress && result.ok && result.output.status
+  == 'closed' && size(content) == 1 && content[0].type == 'tool_result' && content[0].provenance == 'tool:lookup'
+  && !session.tainted
 variables:
   principal:
     subject: user-1
@@ -42,5 +45,9 @@ variables:
     egress: false
     idempotent: true
     sensitivity: []
+  result:
+    ok: true
+    output:
+      status: closed
 expect:
   value: true

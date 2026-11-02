@@ -1,6 +1,7 @@
-# Literals of every JSON-like kind: int, double, string, bool, null, list, map.
 schemaVersion: 0.1.0
 id: cel.literal-json-values
+description: >-
+  Literals of every JSON-like kind: int, double, string, bool, null, list, map.
 requirements:
 - HOOK-110
 point: beforeModelCall

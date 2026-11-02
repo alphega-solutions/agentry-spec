@@ -1,5 +1,8 @@
 schemaVersion: 0.1.0
 id: cel.point-before-response
+description: >-
+  beforeResponse sees the final response parts, here a text part and a
+  structured part.
 requirements:
 - HOOK-110
 point: beforeResponse

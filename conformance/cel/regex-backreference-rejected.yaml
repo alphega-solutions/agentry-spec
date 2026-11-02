@@ -1,10 +1,11 @@
-# RE2 has no backreferences, so the pattern `(a)\1` is invalid and `matches`
-# errors (a backtracking engine would instead return true). The pattern comes from
-# a variable, so it cannot be checked at load: the failure is at run time
-# (HOOK-113). An invalid *literal* pattern is deliberately not covered: the spec
-# does not say whether it must be rejected at load (HOOK-112) or fail at run time.
 schemaVersion: 0.1.0
 id: cel.regex-backreference-rejected
+description: >-
+  RE2 has no backreferences, so the pattern `(a)\1` is invalid and `matches`
+  errors (a backtracking engine would instead return true). The pattern comes
+  from a variable, so it cannot be checked at load: the failure is at run time
+  (HOOK-112, HOOK-113). Literal form, rejected at load:
+  regex-literal-invalid-rejected.
 requirements:
 - HOOK-113
 - HOOK-114

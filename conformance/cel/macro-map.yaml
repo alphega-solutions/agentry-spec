@@ -1,6 +1,7 @@
-# Two-argument `map` and the three-argument `map(x, predicate, transform)` form.
 schemaVersion: 0.1.0
 id: cel.macro-map
+description: >-
+  Two-argument `map` and the three-argument `map(x, predicate, transform)` form.
 requirements:
 - HOOK-110
 point: beforeModelCall

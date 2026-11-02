@@ -1,10 +1,12 @@
-# `text` exists only on text parts (§9.1); `has(p.text)` is false for an image part.
 schemaVersion: 0.1.0
 id: cel.null-missing-part-field
+description: >-
+  A part has `text` only if it is a text part and `value` only if it is a
+  structured part (HOOK-112); `has()` is false for the field a part lacks.
 requirements:
 - HOOK-110
 point: beforeModelCall
-expression: content.map(p, has(p.text))
+expression: content.map(p, [has(p.text), has(p.value)])
 variables:
   principal:
     subject: user-1
@@ -38,7 +40,16 @@ variables:
     provenance: attachment:SYN-scan-1
     labels:
     - phi
+  - type: structured
+    value:
+      verdict: SYN-ok
+    provenance: model
+    labels: []
 expect:
   value:
-  - true
-  - false
+  - - true
+    - false
+  - - false
+    - false
+  - - false
+    - true

@@ -1,8 +1,10 @@
-# RE2 has no lookahead, so `SYN-(?=[0-9])` is invalid and `matches` errors (a
-# backtracking engine would return true). Pattern from a variable, so run time;
-# see regex-backreference-rejected for the literal-pattern gap.
 schemaVersion: 0.1.0
 id: cel.regex-lookahead-rejected
+description: >-
+  RE2 has no lookahead, so `SYN-(?=[0-9])` is invalid and `matches` errors (a
+  backtracking engine would return true). The pattern comes from a variable, so
+  the failure is at run time (HOOK-112, HOOK-113); a literal invalid pattern is
+  a `type_check` failure, see regex-literal-invalid-rejected.
 requirements:
 - HOOK-113
 - HOOK-114

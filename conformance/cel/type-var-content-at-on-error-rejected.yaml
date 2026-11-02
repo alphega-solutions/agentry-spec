@@ -1,6 +1,7 @@
-# `content` is not available at onError (§9.1).
 schemaVersion: 0.1.0
 id: cel.type-var-content-at-on-error-rejected
+description: >-
+  `content` is not available at onError (§9.1).
 requirements:
 - HOOK-112
 point: onError

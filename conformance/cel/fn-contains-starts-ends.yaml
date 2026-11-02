@@ -1,5 +1,8 @@
 schemaVersion: 0.1.0
 id: cel.fn-contains-starts-ends
+description: >-
+  `contains`, `startsWith` and `endsWith` on strings, each with a non-matching
+  control.
 requirements:
 - HOOK-110
 point: beforeModelCall

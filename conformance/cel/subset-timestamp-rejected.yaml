@@ -1,10 +1,11 @@
-# Stage: `compile` is parsing plus the syntactic subset check (needs no
-# declarations); `type_check` is checking against the point's declarations.
-# Both are load-time configuration errors (HOOK-112).
-# `timestamp()` is not declared in the subset environment, so the call is an
-# undeclared overload: `type_check`.
 schemaVersion: 0.1.0
 id: cel.subset-timestamp-rejected
+description: >-
+  Stage: `compile` is parsing plus the syntactic subset check (needs no
+  declarations); `type_check` is checking against the point's declarations. Both
+  are load-time configuration errors (HOOK-112). `timestamp()` is not declared
+  in the subset environment, so the call is an undeclared overload:
+  `type_check`.
 requirements:
 - HOOK-111
 - HOOK-112

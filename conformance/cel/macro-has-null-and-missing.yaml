@@ -1,8 +1,9 @@
-# `has(m.f)` on a map tests whether key f is present (langdef). A key whose
-# value is JSON null is present and equals null; an absent key is not present.
-# Null and missing are distinct.
 schemaVersion: 0.1.0
 id: cel.macro-has-null-and-missing
+description: >-
+  `has(m.f)` on a map tests whether key f is present (langdef). A key whose
+  value is JSON null is present and equals null; an absent key is not present.
+  Null and missing are distinct.
 requirements:
 - HOOK-110
 point: beforeModelCall

@@ -1,6 +1,7 @@
-# Replaces every occurrence, or the first n with the optional count.
 schemaVersion: 0.1.0
 id: cel.ext-replace
+description: >-
+  Replaces every occurrence, or the first n with the optional count.
 requirements:
 - HOOK-110
 point: beforeModelCall

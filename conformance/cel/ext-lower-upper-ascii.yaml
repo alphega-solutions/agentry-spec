@@ -1,6 +1,7 @@
-# Only ASCII letters change case; non-ASCII letters are left as they are.
 schemaVersion: 0.1.0
 id: cel.ext-lower-upper-ascii
+description: >-
+  Only ASCII letters change case; non-ASCII letters are left as they are.
 requirements:
 - HOOK-110
 point: beforeModelCall

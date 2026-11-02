@@ -1,5 +1,7 @@
 schemaVersion: 0.1.0
 id: cel.macro-filter
+description: >-
+  `filter` over a list literal and over content parts, chained with `map`.
 requirements:
 - HOOK-110
 point: beforeModelCall

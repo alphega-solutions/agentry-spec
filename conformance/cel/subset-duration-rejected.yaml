@@ -1,9 +1,10 @@
-# Stage: `compile` is parsing plus the syntactic subset check (needs no
-# declarations); `type_check` is checking against the point's declarations.
-# Both are load-time configuration errors (HOOK-112).
-# `duration()` is not declared in the subset environment: `type_check`.
 schemaVersion: 0.1.0
 id: cel.subset-duration-rejected
+description: >-
+  Stage: `compile` is parsing plus the syntactic subset check (needs no
+  declarations); `type_check` is checking against the point's declarations. Both
+  are load-time configuration errors (HOOK-112). `duration()` is not declared in
+  the subset environment: `type_check`.
 requirements:
 - HOOK-111
 - HOOK-112

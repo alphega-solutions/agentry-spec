@@ -1,10 +1,11 @@
-# Stage: `compile` is parsing plus the syntactic subset check (needs no
-# declarations); `type_check` is checking against the point's declarations.
-# Both are load-time configuration errors (HOOK-112).
-# Only six strings-extension functions are in the subset (HOOK-110);
-# `substring` is not, even where the library's full extension offers it.
 schemaVersion: 0.1.0
 id: cel.subset-strings-ext-substring-rejected
+description: >-
+  Stage: `compile` is parsing plus the syntactic subset check (needs no
+  declarations); `type_check` is checking against the point's declarations. Both
+  are load-time configuration errors (HOOK-112). Only six strings-extension
+  functions are in the subset (HOOK-110); `substring` is not, even where the
+  library's full extension offers it.
 requirements:
 - HOOK-110
 - HOOK-112

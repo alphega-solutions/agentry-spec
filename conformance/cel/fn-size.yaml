@@ -1,7 +1,8 @@
-# `size` on strings, lists and maps, global and receiver form. String size
-# counts Unicode code points, not bytes or UTF-16 units (langdef).
 schemaVersion: 0.1.0
 id: cel.fn-size
+description: >-
+  `size` on strings, lists and maps, global and receiver form. String size
+  counts Unicode code points, not bytes or UTF-16 units (langdef).
 requirements:
 - HOOK-110
 point: beforeModelCall

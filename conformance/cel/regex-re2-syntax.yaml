@@ -1,8 +1,9 @@
-# RE2 syntax that some host regex engines lack: the inline flag group (?i), the
-# Unicode class \p{Lu} (the CEL escape \\ yields one backslash) and the ASCII
-# class [[:digit:]]. Each has a non-matching control.
 schemaVersion: 0.1.0
 id: cel.regex-re2-syntax
+description: >-
+  RE2 syntax that some host regex engines lack: the inline flag group (?i), the
+  Unicode class \p{Lu} (the CEL escape \\ yields one backslash) and the ASCII
+  class [[:digit:]]. Each has a non-matching control.
 requirements:
 - HOOK-114
 point: beforeModelCall

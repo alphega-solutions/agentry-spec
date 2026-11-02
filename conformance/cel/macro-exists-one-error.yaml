@@ -1,11 +1,13 @@
-# Unlike `all`/`exists`, any predicate error makes `exists_one` raise (langdef).
 schemaVersion: 0.1.0
 id: cel.macro-exists-one-error
+description: >-
+  Unlike `all`/`exists`, any predicate error makes `exists_one` raise (langdef).
+  The first element is 0 (session.step - 2) and divides by zero.
 requirements:
 - HOOK-110
 - HOOK-113
 point: beforeModelCall
-expression: '[0, 1].exists_one(x, 1 / x == 1)'
+expression: '[(session.step - 2), 1].exists_one(x, 1 / x == 1)'
 variables:
   principal:
     subject: user-1

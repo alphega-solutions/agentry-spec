@@ -1,6 +1,7 @@
-# Unbalanced parenthesis: a parse error at load.
 schemaVersion: 0.1.0
 id: cel.compile-syntax-error
+description: >-
+  Unbalanced parenthesis: a parse error at load.
 requirements:
 - HOOK-112
 point: beforeModelCall

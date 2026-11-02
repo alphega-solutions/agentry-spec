@@ -1,7 +1,8 @@
-# `summary` is in a sessionEnd HookRequest but is not a CEL variable (§9.1;
-# conformance/schema/cel-fixture.yaml): undeclared.
 schemaVersion: 0.1.0
 id: cel.type-var-summary-not-cel-rejected
+description: >-
+  `summary` is in a sessionEnd HookRequest but is not a CEL variable (§9.1;
+  conformance/schema/cel-fixture.yaml): undeclared.
 requirements:
 - HOOK-112
 point: sessionEnd

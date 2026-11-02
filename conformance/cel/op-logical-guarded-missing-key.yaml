@@ -1,7 +1,9 @@
-# The idiomatic guard for an optional attribute: `has()` is false, so the
-# missing-key error on the right is absorbed. Unguarded form: runtime-missing-map-key.
 schemaVersion: 0.1.0
 id: cel.op-logical-guarded-missing-key
+description: >-
+  The idiomatic guard for an optional attribute: `has()` is false, so the
+  missing-key error on the right is absorbed. Unguarded form:
+  runtime-missing-map-key.
 requirements:
 - HOOK-110
 point: beforeModelCall

@@ -1,6 +1,7 @@
-# `exists` over parts; false on an empty list.
 schemaVersion: 0.1.0
 id: cel.macro-exists
+description: >-
+  `exists` over parts; false on an empty list.
 requirements:
 - HOOK-110
 point: beforeModelCall

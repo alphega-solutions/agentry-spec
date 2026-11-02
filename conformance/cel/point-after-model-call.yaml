@@ -1,5 +1,7 @@
 schemaVersion: 0.1.0
 id: cel.point-after-model-call
+description: >-
+  afterModelCall sees the model's response parts; text parts expose `text`.
 requirements:
 - HOOK-110
 point: afterModelCall

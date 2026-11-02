@@ -1,9 +1,10 @@
-# Stage: `compile` is parsing plus the syntactic subset check (needs no
-# declarations); `type_check` is checking against the point's declarations.
-# Both are load-time configuration errors (HOOK-112).
-# An unknown function is an undeclared reference: `type_check`.
 schemaVersion: 0.1.0
 id: cel.subset-custom-function-rejected
+description: >-
+  Stage: `compile` is parsing plus the syntactic subset check (needs no
+  declarations); `type_check` is checking against the point's declarations. Both
+  are load-time configuration errors (HOOK-112). An unknown function is an
+  undeclared reference: `type_check`.
 requirements:
 - HOOK-111
 - HOOK-112

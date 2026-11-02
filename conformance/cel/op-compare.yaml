@@ -1,7 +1,8 @@
-# Int comparison; strings order lexicographically by code point ('B' < 'a',
-# 'SYN-2' > 'SYN-10'); list equality is element-wise and ordered.
 schemaVersion: 0.1.0
 id: cel.op-compare
+description: >-
+  Int comparison; strings order lexicographically by code point ('B' < 'a',
+  'SYN-2' > 'SYN-10'); list equality is element-wise and ordered.
 requirements:
 - HOOK-110
 point: beforeModelCall

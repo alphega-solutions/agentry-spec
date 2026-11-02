@@ -1,6 +1,7 @@
-# Leading and trailing whitespace (spaces, tab, newline) removed.
 schemaVersion: 0.1.0
 id: cel.ext-trim
+description: >-
+  Leading and trailing whitespace (spaces, tab, newline) removed.
 requirements:
 - HOOK-110
 point: beforeModelCall

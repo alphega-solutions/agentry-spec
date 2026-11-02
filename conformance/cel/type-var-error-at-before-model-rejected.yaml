@@ -1,6 +1,7 @@
-# `error` is available only at onError (§9.1).
 schemaVersion: 0.1.0
 id: cel.type-var-error-at-before-model-rejected
+description: >-
+  `error` is available only at onError (§9.1).
 requirements:
 - HOOK-112
 point: beforeModelCall

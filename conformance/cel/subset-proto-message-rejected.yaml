@@ -1,11 +1,12 @@
-# Stage: `compile` is parsing plus the syntactic subset check (needs no
-# declarations); `type_check` is checking against the point's declarations.
-# Both are load-time configuration errors (HOOK-112).
-# A message construction is identifiable from syntax alone, and well-known
-# types like Duration are built into standard CEL environments, so the checker
-# alone may accept it; the syntactic subset check rejects it: `compile`.
 schemaVersion: 0.1.0
 id: cel.subset-proto-message-rejected
+description: >-
+  Stage: `compile` is parsing plus the syntactic subset check (needs no
+  declarations); `type_check` is checking against the point's declarations. Both
+  are load-time configuration errors (HOOK-112). A message construction is
+  identifiable from syntax alone, and well-known types like Duration are built
+  into standard CEL environments, so the checker alone may accept it; the
+  syntactic subset check rejects it: `compile`.
 requirements:
 - HOOK-111
 - HOOK-112

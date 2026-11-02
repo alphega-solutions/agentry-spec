@@ -1,11 +1,14 @@
-# `summary` is present in the request but not a CEL variable; see
-# type-var-summary-not-cel-rejected.
 schemaVersion: 0.1.0
 id: cel.point-session-end
+description: >-
+  At sessionEnd `session` holds the last turn and step reached (HOOK-091).
+  `summary` is present in the request but is not a CEL variable; see
+  type-var-summary-not-cel-rejected.
 requirements:
 - HOOK-110
 point: sessionEnd
-expression: session.turn >= 3 && principal.subject == 'user-1' && session.persona == 'assistant@1'
+expression: session.turn == 3 && session.step == 2 && principal.subject == 'user-1' && session.persona
+  == 'assistant@1'
 variables:
   principal:
     subject: user-1
@@ -25,7 +28,7 @@ variables:
     step: 2
   summary:
     closeReason: completed
-    turns: 4
+    turns: 3
     usage:
       inputTokens: 10
       outputTokens: 5

@@ -1,7 +1,8 @@
-# langdef: arithmetic raises an error when the result exceeds the int64 range;
-# it never wraps.
 schemaVersion: 0.1.0
 id: cel.runtime-int-overflow
+description: >-
+  langdef: arithmetic raises an error when the result exceeds the int64 range;
+  it never wraps.
 requirements:
 - HOOK-113
 point: beforeModelCall

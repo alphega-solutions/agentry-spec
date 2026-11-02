@@ -1,11 +1,13 @@
-# A false operand of `&&` determines the result; the other operand's runtime
-# error (division by zero) is ignored (langdef, logical operators).
 schemaVersion: 0.1.0
 id: cel.op-logical-short-circuit
+description: >-
+  A false operand of `&&` determines the result; the other operand's runtime
+  error (division by zero through a variable, session.step - 2 = 0) is ignored
+  (langdef, logical operators).
 requirements:
 - HOOK-110
 point: beforeModelCall
-expression: false && (1 / 0 == 1)
+expression: false && (session.turn / (session.step - 2) == 1)
 variables:
   principal:
     subject: user-1

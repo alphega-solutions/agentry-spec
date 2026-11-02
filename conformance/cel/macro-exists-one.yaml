@@ -1,6 +1,7 @@
-# `exists_one` is true only when exactly one element matches.
 schemaVersion: 0.1.0
 id: cel.macro-exists-one
+description: >-
+  `exists_one` is true only when exactly one element matches.
 requirements:
 - HOOK-110
 point: beforeModelCall

@@ -1,7 +1,8 @@
-# `contains` is a string function only; list membership is `in` (op-in-list).
-# No (list, string) overload exists, so the checker rejects it.
 schemaVersion: 0.1.0
 id: cel.fn-contains-on-list-rejected
+description: >-
+  `contains` is a string function only; list membership is `in` (op-in-list). No
+  (list, string) overload exists, so the checker rejects it.
 requirements:
 - HOOK-110
 - HOOK-112

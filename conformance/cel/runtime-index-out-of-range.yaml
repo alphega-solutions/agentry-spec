@@ -1,6 +1,7 @@
-# Index 2 of a two-element list.
 schemaVersion: 0.1.0
 id: cel.runtime-index-out-of-range
+description: >-
+  Index 2 of a two-element list.
 requirements:
 - HOOK-113
 point: beforeModelCall

@@ -1,6 +1,7 @@
-# List indexing by int and map indexing by string key.
 schemaVersion: 0.1.0
 id: cel.op-indexing
+description: >-
+  List indexing by int and map indexing by string key.
 requirements:
 - HOOK-110
 point: beforeModelCall

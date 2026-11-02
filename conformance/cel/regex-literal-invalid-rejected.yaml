@@ -1,0 +1,36 @@
+schemaVersion: 0.1.0
+id: cel.regex-literal-invalid-rejected
+description: >-
+  A `matches` pattern that is a literal and not valid RE2 is a load-time
+  `type_check` failure (HOOK-112). The CEL escape `\\` yields one backslash, so
+  the pattern is `(a)\1`, a backreference RE2 lacks. Non-literal form, failing
+  at run time: regex-backreference-rejected.
+requirements:
+- HOOK-112
+- HOOK-114
+point: beforeModelCall
+expression: content[0].text.matches('(a)\\1')
+variables:
+  principal:
+    subject: user-1
+    tenant: t1
+    roles:
+    - clinician
+    - reviewer
+    attributes:
+      department: SYN-cardiology
+      site: SYN-site-7
+      manager: null
+    assurance: multi_factor
+  session:
+    persona: assistant@1
+    tainted: false
+    turn: 3
+    step: 2
+  content:
+  - type: text
+    text: SYN-aa
+    provenance: principal
+    labels: []
+expect:
+  failure: type_check

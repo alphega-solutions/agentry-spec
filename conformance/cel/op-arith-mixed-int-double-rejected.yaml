@@ -1,9 +1,10 @@
-# CEL has no automatic numeric conversions (langdef: "there are no automatic
-# arithmetic conversions for the numeric types"). `session.turn` is declared int
-# (§9.1), so `_*_` has no (int, double) overload and the checker rejects it.
-# Control: op-arith-mixed-explicit-conversion.
 schemaVersion: 0.1.0
 id: cel.op-arith-mixed-int-double-rejected
+description: >-
+  CEL has no automatic numeric conversions (langdef: "there are no automatic
+  arithmetic conversions for the numeric types"). `session.turn` is declared int
+  (§9.1), so `_*_` has no (int, double) overload and the checker rejects it.
+  Control: op-arith-mixed-explicit-conversion.
 requirements:
 - HOOK-110
 - HOOK-112

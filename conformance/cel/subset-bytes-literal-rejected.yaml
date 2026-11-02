@@ -1,10 +1,11 @@
-# Stage: `compile` is parsing plus the syntactic subset check (needs no
-# declarations); `type_check` is checking against the point's declarations.
-# Both are load-time configuration errors (HOOK-112).
-# A bytes literal parses, and the standard checker would type it as bytes, so
-# only the syntactic subset check can reject it: `compile`.
 schemaVersion: 0.1.0
 id: cel.subset-bytes-literal-rejected
+description: >-
+  Stage: `compile` is parsing plus the syntactic subset check (needs no
+  declarations); `type_check` is checking against the point's declarations. Both
+  are load-time configuration errors (HOOK-112). A bytes literal parses, and the
+  standard checker would type it as bytes, so only the syntactic subset check
+  can reject it: `compile`.
 requirements:
 - HOOK-111
 - HOOK-112

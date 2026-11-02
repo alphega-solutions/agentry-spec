@@ -1,5 +1,8 @@
 schemaVersion: 0.1.0
 id: cel.point-on-error
+description: >-
+  onError sees `error` (code, category, source); `session` holds the turn and
+  step at which the error occurred.
 requirements:
 - HOOK-110
 point: onError

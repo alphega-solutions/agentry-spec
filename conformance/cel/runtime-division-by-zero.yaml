@@ -1,6 +1,7 @@
-# Integer division by zero (step - 2 = 0).
 schemaVersion: 0.1.0
 id: cel.runtime-division-by-zero
+description: >-
+  Integer division by zero (step - 2 = 0).
 requirements:
 - HOOK-113
 point: beforeModelCall

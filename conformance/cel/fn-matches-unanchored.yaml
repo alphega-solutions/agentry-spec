@@ -1,7 +1,8 @@
-# `matches` succeeds if the pattern matches a substring (langdef); it is not
-# anchored unless the pattern uses ^ and $. Receiver and global forms.
 schemaVersion: 0.1.0
 id: cel.fn-matches-unanchored
+description: >-
+  `matches` succeeds if the pattern matches a substring (langdef); it is not
+  anchored unless the pattern uses ^ and $. Receiver and global forms.
 requirements:
 - HOOK-110
 - HOOK-114

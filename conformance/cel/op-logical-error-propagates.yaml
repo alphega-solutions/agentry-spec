@@ -1,12 +1,13 @@
-# Control for the absorption cases: when the other operand does not decide the
-# result, the division-by-zero error is the result.
 schemaVersion: 0.1.0
 id: cel.op-logical-error-propagates
+description: >-
+  Control for the absorption cases: when the other operand does not decide the
+  result, the division-by-zero error (session.step - 2 = 0) is the result.
 requirements:
 - HOOK-110
 - HOOK-113
 point: beforeModelCall
-expression: true && (1 / 0 == 1)
+expression: true && (session.turn / (session.step - 2) == 1)
 variables:
   principal:
     subject: user-1
