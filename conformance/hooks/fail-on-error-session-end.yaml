@@ -6,12 +6,20 @@ description: >-
   `error` event, which triggers the onError hook on-err (failClosed). on-err
   errors too: the run still responds, and on-err is not invoked again for
   its own failure (exactly one invocation; its stub holds one behaviour).
-  On close, the sessionEnd hook on-end (failClosed) errors: the session
-  still closes `completed`, and on-err is not invoked for that failure
-  either. Whether the onError or sessionEnd failure emits an `error` event
-  of its own is not asserted (HOOK-051 says every failure does; HOOK-052
-  only forbids it triggering onError hooks).
-requirements: [HOOK-052]
+  The session is then closed by a separate `close` action, outside any run:
+  the sessionEnd hook on-end (failClosed) errors, the session still closes
+  `completed`, and on-err is not invoked for that failure either.
+
+
+  Each of the three failures emits exactly one `error` event (HOOK-051,
+  HOOK-052 as amended 2026-11-01), all with code agentry.hook.failed,
+  category unavailable, retryable false, source hook (never the endpoints'
+  test.hook.* codes): tele's and on-err's carry the run's ID; on-end's,
+  emitted while the session closes outside a run, carries no runId. All
+  three are treated as continue, so there is no hook.decision. on-end's
+  HookRequest has no runId and its session view holds the last turn and
+  step reached (turn 1, step 1).
+requirements: [HOOK-052, HOOK-051]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:
@@ -121,15 +129,26 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: error, payload: { error: { source: hook } } }
+          - { type: run.started, runId: $r }
+          - { type: error, runId: $r, payload: { error: { code: agentry.hook.failed, category: unavailable, retryable: false, source: hook } } }
           - { type: model.request }
           - { type: run.ended, payload: { reason: responded } }
           - { type: session.closed, payload: { reason: completed } }
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $all:
+            - $count: { of: { type: error }, equals: 3 }
+            - $count: { of: { type: error, payload: { error: { code: agentry.hook.failed, category: unavailable, retryable: false, source: hook } } }, equals: 3 }
+            - $count: { of: { type: error, runId: $r }, equals: 2 }
+            - $count: { of: { type: error, runId: { $absent: true } }, equals: 1 }
+            - $count: { of: { type: hook.decision }, equals: 0 }
   stubCalls:
     tele: { count: 1 }
     on-err:
-      - arguments: { point: onError, error: { source: hook } }
+      - arguments: { point: onError, runId: $r, error: { code: agentry.hook.failed, category: unavailable, source: hook } }
     on-end:
-      - arguments: { point: sessionEnd }
+      - arguments: { point: sessionEnd, runId: { $absent: true }, session: { turn: 1, step: 1 } }
   delivered:
     $s: { text: "Answered.", fallback: false }

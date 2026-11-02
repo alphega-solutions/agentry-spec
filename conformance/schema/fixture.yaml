@@ -4,7 +4,9 @@ title: Conformance fixture
 description: >-
   Format of a conformance fixture (EVAL-001–004). Values beginning with "$"
   followed by an identifier are placeholders that bind on first match and must
-  match consistently afterwards (EVAL-002). Write "$$" for a literal "$".
+  match consistently afterwards (EVAL-002): a placeholder binds the whole value
+  it first matches, and later occurrences must equal it exactly (deep
+  equality, not partial object matching). Write "$$" for a literal "$".
   Matcher objects may appear anywhere in expectations: {"$any": true},
   {"$absent": true}, {"$regex": "..."}, {"$len": n}, {"$contains": [...]}
   (each listed item matches a distinct element), {"$not": <value or

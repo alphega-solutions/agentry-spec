@@ -2,10 +2,21 @@ schemaVersion: "0.1.0"
 id: hook.source-request-no-binary
 title: A HookRequest carries an image part by blob reference only, never its bytes
 description: >-
-  The principal sends text and an uploaded image whose blob holds synthetic
-  bytes. A remote hook at sessionStart and beforeModelCall answers
-  `continue`. In both requests the image part carries its media type and
-  blob reference, and no part of the content carries inline `data`.
+  The principal sends text and an uploaded image whose blob holds the
+  distinctive synthetic bytes SYN-IMAGE-BYTES-0115-PNG (base64
+  U1lOLUlNQUdFLUJZVEVTLTAxMTUtUE5H). A remote hook at sessionStart and
+  beforeModelCall answers `continue`. At sessionStart the content is
+  exactly the two input parts; at beforeModelCall the assembled request
+  holds only text parts and that image. In both, the image appears by
+  media type and blob reference only, and no part has inline `data` or
+  `extensions`. Neither the
+  bytes nor their base64 form appear in any text of any recorded hook
+  request. (The provider may legitimately receive the image, so
+  `noTransmittedContent`, which also covers provider requests, is not used;
+  the check is confined to the hook's stub calls. The HookRequest and its
+  parts are closed by schema, so with the content pinned to these two
+  parts there is no other field the bytes could occupy
+  besides text, which is checked.)
   (core.hook-binary-in-place-edit-rejected covers rewrites of binary parts;
   this fixture covers what the hook is given.)
 requirements: [HOOK-115]
@@ -75,10 +86,10 @@ setup:
     blobStore:
       t1:
         - id: blob-img-1
-          hash: "sha256:82e0d9513a9797c3e32e35d6fff5c8648db4b0a8c74ffea2be6d5b827d3c7aa7"
+          hash: "sha256:c5c115c99001b6d47ab38aeb35c08260fb19117d9beeba70277ccce76e95a0c9"
           mediaType: image/png
-          size: 20
-          data: "U1lOVEhFVElDLUlNQUdFLTAwMDE="
+          size: 24
+          data: "U1lOLUlNQUdFLUJZVEVTLTAxMTUtUE5H"
   stubs:
     remoteHooks:
       viewer:
@@ -95,28 +106,44 @@ script:
       - type: image
         mediaType: image/png
         source: upload
-        blob: { id: blob-img-1, hash: "sha256:82e0d9513a9797c3e32e35d6fff5c8648db4b0a8c74ffea2be6d5b827d3c7aa7", mediaType: image/png, size: 20 }
+        blob: { id: blob-img-1, hash: "sha256:c5c115c99001b6d47ab38aeb35c08260fb19117d9beeba70277ccce76e95a0c9", mediaType: image/png, size: 24 }
     expect: { ok: true, endReason: responded }
 expect:
   stubCalls:
     viewer:
-      - arguments:
-          point: sessionStart
-          content:
-            $all:
-              - $contains:
-                  - type: image
-                    mediaType: image/png
-                    blob: { id: blob-img-1, hash: "sha256:82e0d9513a9797c3e32e35d6fff5c8648db4b0a8c74ffea2be6d5b827d3c7aa7", mediaType: image/png, size: 20 }
-              - $every: { data: { $absent: true } }
-      - arguments:
-          point: beforeModelCall
-          content:
-            $all:
-              - $contains:
-                  - type: image
-                    mediaType: image/png
-                    blob: { id: blob-img-1, hash: "sha256:82e0d9513a9797c3e32e35d6fff5c8648db4b0a8c74ffea2be6d5b827d3c7aa7", mediaType: image/png, size: 20 }
-              - $every: { data: { $absent: true } }
+      $all:
+        - $len: 2
+        - $count:
+            of:
+              arguments:
+                content:
+                  $count:
+                    of: { text: { $regex: "SYN-IMAGE-BYTES|U1lOLUlNQUdFLUJZVEVT" } }
+                    gte: 1
+            equals: 0
+        - $every:
+            arguments:
+              content:
+                $every: { data: { $absent: true }, extensions: { $absent: true } }
+        - $contains:
+          - arguments:
+              point: sessionStart
+              session: { turn: 1, step: 0 }
+              content:
+                - { type: text, text: "Describe this" }
+                - type: image
+                  mediaType: image/png
+                  blob: { id: blob-img-1, hash: "sha256:c5c115c99001b6d47ab38aeb35c08260fb19117d9beeba70277ccce76e95a0c9", mediaType: image/png, size: 24 }
+          - arguments:
+              point: beforeModelCall
+              session: { turn: 1, step: 1 }
+              content:
+                $all:
+                  - $contains:
+                      - { type: text, text: "Describe this" }
+                      - type: image
+                        mediaType: image/png
+                        blob: { id: blob-img-1, hash: "sha256:c5c115c99001b6d47ab38aeb35c08260fb19117d9beeba70277ccce76e95a0c9", mediaType: image/png, size: 24 }
+                  - $every: { type: { $regex: "^(text|image)$" } }
   providerRequests:
     scripted-a: { count: 1 }

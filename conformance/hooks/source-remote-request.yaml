@@ -15,18 +15,18 @@ description: >-
   The deployment's remote hook takes its API key by secret reference; the
   in-memory secrets provider serves a synthetic value. That value never
   appears in a persisted event, checkpoint or audit record
-  (`noPersistedContent`), and no request carries a credential field.
+  (`noPersistedContent`), nor anywhere in what the implementation sends
+  out — any recorded HookRequest or provider request
+  (`noTransmittedContent`); it may reach the endpoint only through its
+  transport credentials, which hook stub records do not hold. No request
+  carries a credential field.
 
 
-  Reading chosen: `session.step` is the step the point belongs to, so the
-  tool-call points of step 1 report step 1. The format cannot assert that
-  the secret value appears nowhere inside a recorded HookRequest (there is no
-  deep "string never occurs" matcher for stub calls, and
-  `noPersistedContent` does not cover them), nor that the endpoint was
-  called with the resolved credential (hook stub records hold only
-  `arguments`); the request is closed by schema
-  (`unevaluatedProperties: false`), so the checks below cover only its
-  top-level fields (no `credentials`).
+  `session.step` is the step the point belongs to (HOOK-091 as amended
+  2026-11-01), so the tool-call points of step 1 report step 1. lookup's
+  result enters context at delivery, so the session is untainted at both
+  tool points and tainted at step 2's beforeModelCall (the baseline trusts
+  no tools).
 requirements: [HOOK-091, HOOK-115]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -144,7 +144,7 @@ expect:
           sessionId: $s
           runId: $r
           principal: { subject: user-1, tenant: t1 }
-          session: { persona: assistant@1, turn: 1, step: 1 }
+          session: { persona: assistant@1, tainted: false, turn: 1, step: 1 }
           content: { $contains: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }] }
           tool: { id: lookup, effect: read, egress: false }
           call: { arguments: { key: k1 } }
@@ -157,7 +157,7 @@ expect:
           sessionId: $s
           runId: $r
           principal: { subject: user-1, tenant: t1 }
-          session: { persona: assistant@1, turn: 1, step: 1 }
+          session: { persona: assistant@1, tainted: false, turn: 1, step: 1 }
           tool: { id: lookup, effect: read, egress: false }
           result: { ok: true, output: { value: "SYN-VALUE-0091" } }
           call: { $absent: true }
@@ -169,7 +169,7 @@ expect:
           sessionId: $s
           runId: $r
           principal: { subject: user-1, tenant: t1 }
-          session: { persona: assistant@1, turn: 1, step: 2 }
+          session: { persona: assistant@1, tainted: true, turn: 1, step: 2 }
           content:
             $contains:
               - { type: text, text: "Look up k1" }
@@ -180,4 +180,6 @@ expect:
           credentials: { $absent: true }
     lookup: [{ arguments: { key: k1 } }]
   noPersistedContent:
+    - "SYN-SECRET-HOOK-0091-DO-NOT-PERSIST"
+  noTransmittedContent:
     - "SYN-SECRET-HOOK-0091-DO-NOT-PERSIST"

@@ -15,7 +15,11 @@ description: >-
   Control, $sOver: the same profile, where the session's own model calls
   exceed the budget (40, then 40 more with another tool call requested), so
   the run ends `budget_exhausted` with no third model call. This shows the
-  budget is in force for the profile.
+  budget is in force for the profile. Whether the budget check before step
+  3 comes before or after that step's beforeModelCall hooks is not
+  specified, so the judge is called twice or three times in $sOver: a spare
+  judge response is scripted and only "at least four judge calls in all"
+  is asserted.
 requirements: [HOOK-103]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -112,6 +116,8 @@ setup:
           usage: { inputTokens: 60, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
         - parts: [{ type: structured, value: { result: continue } }]
           usage: { inputTokens: 60, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: structured, value: { result: continue } }]
+          usage: { inputTokens: 60, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
   stubs:
     tools:
       lookup:
@@ -157,6 +163,6 @@ expect:
         - { type: model.request, step: 3 }
   providerRequests:
     scripted-a: { count: 4 }
-    scripted-judge: { count: 4 }
+    scripted-judge: { $count: { of: { provider: scripted-judge }, gte: 4 } }
   delivered:
     $s: { text: "Found it.", fallback: false }

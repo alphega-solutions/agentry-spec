@@ -1,0 +1,215 @@
+schemaVersion: "0.1.0"
+id: hook.result-annotate-unmapped-label
+title: An `annotate` naming a label with no sensitivity policy, or a part index out of range, is an invalid result
+description: >-
+  Two remote beforeModelCall hooks, each matched by its own marker so
+  exactly one runs per session. guard-ann is a guardrail declaring
+  annotate and block (failClosed by default); ann-only is a failClosed
+  guardrail declaring only annotate. The bundle has sensitivity policies
+  for pii and phi only; the custom label test.example:unmapped is valid
+  syntax but has none. An annotate that names a label with no sensitivity
+  policy (HOOK-022), or a part index outside the content the hook saw, is
+  malformed (HOOK-020/050 as amended 2026-11-01) and is an invalid_result
+  failure: an `error` event with code agentry.hook.invalid_result, category
+  fatal, retryable false, source hook, and the label is not applied.
+
+  - $sUnmappedBlock: guard-ann annotates part 0 with test.example:unmapped
+    → failure → block (HOOK-051): hook.decision {result: block,
+    reasonCode: agentry.hook.invalid_result}, no model call, fallback.
+  - $sUnmappedContinue: ann-only annotates part 0 with
+    test.example:unmapped → failure → continue, since it declares neither
+    block nor escalate (HOOK-053): no hook.decision, and the model is
+    called with the input unlabelled.
+  - $sOutOfRange: guard-ann annotates part 5 (the content has one part)
+    with pii → failure → block, as in $sUnmappedBlock.
+  - $sMapped (control): guard-ann annotates part 0 with pii → applied:
+    hook.decision {result: annotate, labelsAdded: [pii]}, no error, and
+    the model receives the input labelled pii.
+requirements: [HOOK-022, HOOK-020, HOOK-050, HOOK-051, HOOK-053]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        remoteHooks:
+          - { id: guard-ann, endpoint: "memory://hook-guard-ann", region: test-region }
+          - { id: ann-only, endpoint: "memory://hook-ann-only", region: test-region }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: Hook
+        id: guard-ann
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeModelCall]
+        results: [annotate, block]
+        timeoutMs: 1000
+        match: "content.exists(p, p.type == 'text' && p.text.contains('SYN-CASE-G'))"
+        source: { kind: remote, endpoint: guard-ann }
+      - kind: Hook
+        id: ann-only
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeModelCall]
+        results: [annotate]
+        failureMode: failClosed
+        timeoutMs: 1000
+        match: "content.exists(p, p.type == 'text' && p.text.contains('SYN-CASE-A'))"
+        source: { kind: remote, endpoint: ann-only }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [guard-ann@1, ann-only@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Annotate-only answer." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Mapped answer." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b: { responses: [] }
+  stubs:
+    remoteHooks:
+      guard-ann:
+        - result: annotate
+          labels: [{ part: 0, labels: ["test.example:unmapped"] }]
+        - result: annotate
+          labels: [{ part: 5, labels: [pii] }]
+        - result: annotate
+          labels: [{ part: 0, labels: [pii] }]
+      ann-only:
+        - result: annotate
+          labels: [{ part: 0, labels: ["test.example:unmapped"] }]
+script:
+  - action: run
+    bind: $sUnmappedBlock
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYN-CASE-G unmapped" }]
+    expect: { ok: true, endReason: blocked }
+  - action: run
+    bind: $sUnmappedContinue
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYN-CASE-A unmapped" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sOutOfRange
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYN-CASE-G out of range" }]
+    expect: { ok: true, endReason: blocked }
+  - action: run
+    bind: $sMapped
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYN-CASE-G mapped" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sUnmappedBlock:
+      events:
+        mode: subsequence
+        items:
+          - { type: error, payload: { error: { code: agentry.hook.invalid_result, category: fatal, retryable: false, source: hook } } }
+          - { type: run.ended, payload: { reason: blocked } }
+      absentEvents:
+        - { type: model.request }
+    $sUnmappedContinue:
+      events:
+        mode: subsequence
+        items:
+          - { type: error, payload: { error: { code: agentry.hook.invalid_result, category: fatal, retryable: false, source: hook } } }
+          - { type: model.request }
+          - { type: run.ended, payload: { reason: responded } }
+    $sOutOfRange:
+      events:
+        mode: subsequence
+        items:
+          - { type: error, payload: { error: { code: agentry.hook.invalid_result, category: fatal, retryable: false, source: hook } } }
+          - { type: run.ended, payload: { reason: blocked } }
+      absentEvents:
+        - { type: model.request }
+    $sMapped:
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: guard-ann@1, point: beforeModelCall, result: annotate, labelsAdded: [pii] } }
+          - { type: model.request }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: error }
+  ports:
+    eventLog:
+      t1:
+        $sUnmappedBlock:
+          $all:
+            - $count: { of: { type: hook.decision }, equals: 1 }
+            - $count: { of: { type: hook.decision, payload: { hook: guard-ann@1, point: beforeModelCall, result: block, reasonCode: agentry.hook.invalid_result } }, equals: 1 }
+        $sUnmappedContinue:
+          $count: { of: { type: hook.decision }, equals: 0 }
+        $sOutOfRange:
+          $all:
+            - $count: { of: { type: hook.decision }, equals: 1 }
+            - $count: { of: { type: hook.decision, payload: { hook: guard-ann@1, point: beforeModelCall, result: block, reasonCode: agentry.hook.invalid_result } }, equals: 1 }
+        $sMapped:
+          $count: { of: { type: hook.decision }, equals: 1 }
+  stubCalls:
+    guard-ann: { count: 3 }
+    ann-only: { count: 1 }
+  providerRequests:
+    scripted-a:
+      - messages:
+          $contains:
+            - role: principal
+              parts:
+                - { type: text, text: "SYN-CASE-A unmapped", labels: [] }
+      - messages:
+          $contains:
+            - role: principal
+              parts:
+                - { type: text, text: "SYN-CASE-G mapped", labels: [pii] }
+    scripted-b: { count: 0 }
+  delivered:
+    $sUnmappedBlock: { text: "This request was blocked.", fallback: true }
+    $sUnmappedContinue: { text: "Annotate-only answer.", fallback: false }
+    $sOutOfRange: { text: "This request was blocked.", fallback: true }
+    $sMapped: { text: "Mapped answer.", fallback: false }
