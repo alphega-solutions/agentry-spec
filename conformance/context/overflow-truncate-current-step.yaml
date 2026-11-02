@@ -1,0 +1,159 @@
+schemaVersion: "0.1.0"
+id: context.overflow-truncate-current-step
+title: Under truncate, a step whose own tool call and result do not fit overflows mid-turn; the next run truncates and responds
+description: >-
+  Both candidate models declare contextLimit 100 and maxOutputTokens 20 and
+  count every non-text part as 30 tokens (tokenCounting.nonTextPart), so a
+  tool call and its result together cost 60. Available space is 100 − 20 =
+  80 (reserveOutputTokens defaults to maxOutputTokens); the trigger level is
+  90% of 80 = 72. System content is 8 tokens (3 + 5). The profile compacts
+  by truncate.
+
+
+  $over, turn 1, step 1: 8 + 20 (input D01..D20) = 28, so the call is made;
+  the model calls lookup (c1). Before step 2: 8 + 20 + 30 (tool_call) + 30
+  (tool_result) = 88 > 72, so compaction runs, but nothing is droppable:
+  there is no earlier turn, and the step-1 response with its tool call and
+  result is the current step (CTX-060). 88 > 80, so it cannot fit after
+  compaction: no step-2 model call, an error event (limit,
+  agentry.context.overflow), run end context_limit, session idle. The tool
+  itself ran (its result is recorded).
+
+
+  Turn 2 ("Hi"): 8 + 80 (turn 1: 20 + 30 + 30) + 1 = 89 > 72; truncate drops
+  turn 1 (one unit) and leaves 9, so the call is made and the run
+  responds. The request carries only the new principal message.
+
+
+  Control $fit: input "Lookup k1" (2 words). Before step 2: 8 + 2 + 30 + 30 =
+  70 ≤ 72: no compaction, the call is made with the tool result, and the run
+  responds.
+
+
+  Reading: for the model call that follows a tool step, "tool calls and
+  results in the current step" (CTX-060) are that step's response, calls
+  and results — the step the call answers. Nothing here depends on whether
+  truncation aims at the trigger level or at the available space: 88
+  exceeds both and 9 is under both.
+requirements: [CTX-090]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+        context: { compaction: { mode: truncate } }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { contextLimit: 100, maxOutputTokens: 20 }
+      tokenCounting: { nonTextPart: 30 }
+      responses:
+        # $over turn 1, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 28, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $over turn 2
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 9, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $fit step 1
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 10, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $fit step 2
+        - parts: [{ type: text, text: "Done." }]
+          usage: { inputTokens: 70, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      capabilities: { contextLimit: 100, maxOutputTokens: 20 }
+      tokenCounting: { nonTextPart: 30 }
+      responses: []
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "SYN-LOOKUP-0001" } }
+        - ok: { output: { value: "SYN-LOOKUP-0002" } }
+script:
+  - action: run
+    bind: $over
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "D01 D02 D03 D04 D05 D06 D07 D08 D09 D10 D11 D12 D13 D14 D15 D16 D17 D18 D19 D20" }]
+    expect: { ok: true, endReason: context_limit }
+  - action: run
+    session: $over
+    principal: p1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $fit
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Lookup k1" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $over:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: turn.started, runId: $r1, turn: 1 }
+          - { type: model.request, runId: $r1, turn: 1 }
+          - { type: tool.result, runId: $r1, payload: { callId: c1, tool: lookup } }
+          - { type: error, runId: $r1, payload: { error: { category: limit, code: agentry.context.overflow } } }
+          - { type: run.ended, runId: $r1, payload: { reason: context_limit } }
+          - { type: turn.started, runId: $r2, turn: 2 }
+          - { type: context.compacted, runId: $r2, payload: { mode: truncate, units: [{ turn: 1 }] } }
+          - { type: model.request, runId: $r2, turn: 2 }
+          - { type: run.ended, runId: $r2, payload: { reason: responded } }
+      absentEvents:
+        - { type: context.compacted, runId: $r1 }
+        - { type: session.closed }
+    $fit:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: c1, tool: lookup } }
+          - { type: model.request }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: context.compacted }
+        - { type: error }
+  providerRequests:
+    # Exactly four: $over turn 1 makes only its step-1 call.
+    scripted-a:
+      - {}
+      - messages:
+          $all:
+            - $count: { of: { role: principal }, equals: 1 }
+            - $count: { of: { role: tool }, equals: 0 }
+            - $contains:
+                - role: principal
+                  parts: [{ type: text, text: "Hi", provenance: principal }]
+      - {}
+      - messages:
+          $contains:
+            - role: tool
+              parts: [{ type: tool_result, callId: c1 }]
+    scripted-b: { count: 0 }
+  stubCalls:
+    lookup: { count: 2 }

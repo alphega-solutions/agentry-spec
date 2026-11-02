@@ -1,0 +1,148 @@
+schemaVersion: "0.1.0"
+id: context.config-summarizer-pinned
+title: A summarizer model pinned by the policy bundle receives the summarizer request, not the session's model
+description: >-
+  org@1 pins compaction.model to scripted-sum/sum-1, a third scripted
+  provider declared in the deployment; the profile sets compaction.mode
+  summarize (the bundle sets no mode, so this is not a loosening). The
+  session's model is scripted-a/model-a with fallback scripted-b/model-b,
+  both with contextLimit 100 and maxOutputTokens 20: space 80, trigger level
+  72. System content is 8 tokens (3 + 5).
+
+
+  Turn 1: 8 + 40 (A01..A40) = 48; reply "Reply one." (2 words). Turn 2: 8 +
+  40 + 2 + 30 (B01..B30) = 80 > 72, so turn 1 is summarized. The one
+  summarizer request goes to scripted-sum with model sum-1 and no tools;
+  scripted-a receives only the two session calls (it has exactly two
+  responses, so a summarizer call routed to it would run out). The summary
+  "Summary of turn one." (4 words) replaces turn 1: 8 + 4 + 30 = 42, and
+  the turn-2 request to scripted-a carries it as an assistant message with
+  the least-trusted provenance of what it replaced (principal, model →
+  model) in place of turn 1's messages. context.compacted records mode
+  summarize, units [turn 1], and scripted-sum's usage. No model.request or
+  model.response event is for scripted-sum.
+requirements: [CTX-100]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          - { id: scripted-sum, adapter: scripted, endpoint: "memory://scripted-sum", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+        context:
+          compaction:
+            model: { provider: scripted-sum, name: sum-1 }
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+        context: { compaction: { mode: summarize } }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { contextLimit: 100, maxOutputTokens: 20 }
+      responses:
+        - parts: [{ type: text, text: "Reply one." }]
+          usage: { inputTokens: 48, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Reply two." }]
+          usage: { inputTokens: 42, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      capabilities: { contextLimit: 100, maxOutputTokens: 20 }
+      responses: []
+    scripted-sum:
+      responses:
+        - parts: [{ type: text, text: "Summary of turn one." }]
+          usage: { inputTokens: 42, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "A01 A02 A03 A04 A05 A06 A07 A08 A09 A10 A11 A12 A13 A14 A15 A16 A17 A18 A19 A20 A21 A22 A23 A24 A25 A26 A27 A28 A29 A30 A31 A32 A33 A34 A35 A36 A37 A38 A39 A40" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "B01 B02 B03 B04 B05 B06 B07 B08 B09 B10 B11 B12 B13 B14 B15 B16 B17 B18 B19 B20 B21 B22 B23 B24 B25 B26 B27 B28 B29 B30" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, runId: $r1, payload: { provider: scripted-a } }
+          - type: context.compacted
+            runId: $r2
+            payload:
+              mode: summarize
+              units: [{ turn: 1 }]
+              usage: { inputTokens: 42, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+          - { type: model.request, runId: $r2, payload: { provider: scripted-a, model: model-a } }
+          - { type: run.ended, runId: $r2, payload: { reason: responded } }
+      absentEvents:
+        - { type: model.request, payload: { provider: scripted-sum } }
+        - { type: model.response, payload: { provider: scripted-sum } }
+  providerRequests:
+    scripted-sum:
+      - { provider: scripted-sum, model: sum-1, tools: [] }
+    scripted-a:
+      - {}
+      - provider: scripted-a
+        model: model-a
+        messages:
+          $all:
+            - $count: { of: { role: principal }, equals: 1 }
+            - $contains:
+                - role: assistant
+                  parts: [{ type: text, text: "Summary of turn one.", provenance: model }]
+                - role: principal
+                  parts: [{ type: text, text: "B01 B02 B03 B04 B05 B06 B07 B08 B09 B10 B11 B12 B13 B14 B15 B16 B17 B18 B19 B20 B21 B22 B23 B24 B25 B26 B27 B28 B29 B30", provenance: principal }]
+    scripted-b: { count: 0 }

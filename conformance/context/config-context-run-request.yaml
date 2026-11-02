@@ -1,0 +1,409 @@
+schemaVersion: "0.1.0"
+id: context.config-context-run-request
+title: A run request may tighten the `min` and `stricter` fields of the `context` block, with effect on that run; loosening them, or setting a locked or union field, fails with `invalid_input`
+description: >-
+  Both candidate models declare contextLimit 100 and maxOutputTokens 30.
+  default@1 sets reserveOutputTokens 20, compaction.mode truncate and
+  retrieval.source kb (auto unset, so off); triggerPercent is unset (default
+  90). Space 100 − 20 = 80, trigger level 72. retrieve@1 sets retrieval.auto
+  true, source kb, limit 4. System content is 8 tokens (3 + 5). Every
+  default@1 session has the same turn 1: 8 + 30 (A01..A30) = 38, reply
+  "Reply one." (2 words), so turn 1 is 32 tokens of history.
+
+
+  Accepted, with their effect on the run (each turn-2 override only):
+
+  | Session | Turn 2 override | Turn 2 context | Effective threshold | Result |
+  |---|---|---|---|---|
+  | $trig | triggerPercent 50 | 8+32+20 (B01..B20) = 60 | 0.5 × 80 = 40 | turn 1 dropped (→ 28) |
+  | $trigCtl | none | 60 | 72 | no compaction |
+  | $res | reserveOutputTokens 5 | 8+32+36 (C01..C36) = 76 | 0.9 × 95 = 85.5 | no compaction |
+  | $resCtl | none | 76 | 72 | turn 1 dropped (→ 44) |
+  | $none | mode none | 8+32+50 (D01..D50) = 90 | space 80 | overflow, context_limit (truncate would leave 58) |
+
+  On retrieve@1: $lim overrides limit 2 — the port is queried with limit 2
+  and the context.retrieved event records limit 2 and two of the six
+  backend records; $off overrides auto false — no query and no
+  context.retrieved.
+
+
+  Rejected before anything is persisted, with details.field a JSON Pointer
+  into the profile (CFG-101 as amended): reserveOutputTokens 25 (> 20; at
+  most maxOutputTokens 30, so only the min rule rejects it), triggerPercent
+  95 (> the default 90 — defaults count as effective values), mode
+  summarize (looser than truncate), retrieval.auto true (looser than false;
+  a source is set, so CTX-101 is not the cause), retrieval.limit 6 on
+  retrieve@1 (> 4); and, because a run request may set only min and
+  stricter fields, compaction.model and retrieval.source (locked) and
+  retrieval.defaultLabels (union), even when adding a label.
+requirements: [CTX-100, CTX-102]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+          vectorStore: { adapter: memory, region: test-region, sources: [kb, docs] }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+        context:
+          reserveOutputTokens: 20
+          compaction: { mode: truncate }
+          retrieval: { source: kb }
+      - kind: HarnessProfile
+        id: retrieve
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+        context: { retrieval: { auto: true, source: kb, limit: 4 } }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1, retrieve@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { contextLimit: 100, maxOutputTokens: 30 }
+      responses:
+        # $trig
+        - parts: [{ type: text, text: "Reply one." }]
+          usage: { inputTokens: 38, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Done." }]
+          usage: { inputTokens: 28, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $trigCtl
+        - parts: [{ type: text, text: "Reply one." }]
+          usage: { inputTokens: 38, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Done." }]
+          usage: { inputTokens: 60, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $res
+        - parts: [{ type: text, text: "Reply one." }]
+          usage: { inputTokens: 38, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Done." }]
+          usage: { inputTokens: 76, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $resCtl
+        - parts: [{ type: text, text: "Reply one." }]
+          usage: { inputTokens: 38, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Done." }]
+          usage: { inputTokens: 44, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $none (turn 2 makes no call)
+        - parts: [{ type: text, text: "Reply one." }]
+          usage: { inputTokens: 38, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $lim
+        - parts: [{ type: text, text: "Found." }]
+          usage: { inputTokens: 12, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $off
+        - parts: [{ type: text, text: "Nothing retrieved." }]
+          usage: { inputTokens: 10, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      capabilities: { contextLimit: 100, maxOutputTokens: 30 }
+      responses: []
+  stubs:
+    vectorStores:
+      kb:
+        - results:
+            - { id: kb-1, text: "SYN-KB-0001", tenant: t1 }
+            - { id: kb-2, text: "SYN-KB-0002", tenant: t1 }
+            - { id: kb-3, text: "SYN-KB-0003", tenant: t1 }
+            - { id: kb-4, text: "SYN-KB-0004", tenant: t1 }
+            - { id: kb-5, text: "SYN-KB-0005", tenant: t1 }
+            - { id: kb-6, text: "SYN-KB-0006", tenant: t1 }
+script:
+  # triggerPercent tightened for turn 2.
+  - action: run
+    bind: $trig
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "A01 A02 A03 A04 A05 A06 A07 A08 A09 A10 A11 A12 A13 A14 A15 A16 A17 A18 A19 A20 A21 A22 A23 A24 A25 A26 A27 A28 A29 A30" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $trig
+    principal: p1
+    overrides: { context: { compaction: { triggerPercent: 50 } } }
+    input: [{ type: text, text: "B01 B02 B03 B04 B05 B06 B07 B08 B09 B10 B11 B12 B13 B14 B15 B16 B17 B18 B19 B20" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $trigCtl
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "A01 A02 A03 A04 A05 A06 A07 A08 A09 A10 A11 A12 A13 A14 A15 A16 A17 A18 A19 A20 A21 A22 A23 A24 A25 A26 A27 A28 A29 A30" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $trigCtl
+    principal: p1
+    input: [{ type: text, text: "B01 B02 B03 B04 B05 B06 B07 B08 B09 B10 B11 B12 B13 B14 B15 B16 B17 B18 B19 B20" }]
+    expect: { ok: true, endReason: responded }
+  # reserveOutputTokens tightened (lowered) for turn 2.
+  - action: run
+    bind: $res
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "A01 A02 A03 A04 A05 A06 A07 A08 A09 A10 A11 A12 A13 A14 A15 A16 A17 A18 A19 A20 A21 A22 A23 A24 A25 A26 A27 A28 A29 A30" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $res
+    principal: p1
+    overrides: { context: { reserveOutputTokens: 5 } }
+    input: [{ type: text, text: "C01 C02 C03 C04 C05 C06 C07 C08 C09 C10 C11 C12 C13 C14 C15 C16 C17 C18 C19 C20 C21 C22 C23 C24 C25 C26 C27 C28 C29 C30 C31 C32 C33 C34 C35 C36" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $resCtl
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "A01 A02 A03 A04 A05 A06 A07 A08 A09 A10 A11 A12 A13 A14 A15 A16 A17 A18 A19 A20 A21 A22 A23 A24 A25 A26 A27 A28 A29 A30" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $resCtl
+    principal: p1
+    input: [{ type: text, text: "C01 C02 C03 C04 C05 C06 C07 C08 C09 C10 C11 C12 C13 C14 C15 C16 C17 C18 C19 C20 C21 C22 C23 C24 C25 C26 C27 C28 C29 C30 C31 C32 C33 C34 C35 C36" }]
+    expect: { ok: true, endReason: responded }
+  # compaction.mode tightened to none for turn 2.
+  - action: run
+    bind: $none
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "A01 A02 A03 A04 A05 A06 A07 A08 A09 A10 A11 A12 A13 A14 A15 A16 A17 A18 A19 A20 A21 A22 A23 A24 A25 A26 A27 A28 A29 A30" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $none
+    principal: p1
+    overrides: { context: { compaction: { mode: none } } }
+    input: [{ type: text, text: "D01 D02 D03 D04 D05 D06 D07 D08 D09 D10 D11 D12 D13 D14 D15 D16 D17 D18 D19 D20 D21 D22 D23 D24 D25 D26 D27 D28 D29 D30 D31 D32 D33 D34 D35 D36 D37 D38 D39 D40 D41 D42 D43 D44 D45 D46 D47 D48 D49 D50" }]
+    expect: { ok: true, endReason: context_limit }
+  # retrieval.limit tightened.
+  - action: run
+    bind: $lim
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    profile: retrieve@1
+    overrides: { context: { retrieval: { limit: 2 } } }
+    input: [{ type: text, text: "Find notes" }]
+    expect: { ok: true, endReason: responded }
+  # retrieval.auto tightened to false.
+  - action: run
+    bind: $off
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    profile: retrieve@1
+    overrides: { context: { retrieval: { auto: false } } }
+    input: [{ type: text, text: "Find notes" }]
+    expect: { ok: true, endReason: responded }
+  # Loosening min and stricter fields.
+  - action: run
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    overrides: { context: { reserveOutputTokens: 25 } }
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: false, error: { category: invalid_input, details: { field: /context/reserveOutputTokens } }, newEvents: 0 }
+  - action: run
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    overrides: { context: { compaction: { triggerPercent: 95 } } }
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: false, error: { category: invalid_input, details: { field: /context/compaction/triggerPercent } }, newEvents: 0 }
+  - action: run
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    overrides: { context: { compaction: { mode: summarize } } }
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: false, error: { category: invalid_input, details: { field: /context/compaction/mode } }, newEvents: 0 }
+  - action: run
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    overrides: { context: { retrieval: { auto: true } } }
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: false, error: { category: invalid_input, details: { field: /context/retrieval/auto } }, newEvents: 0 }
+  - action: run
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    profile: retrieve@1
+    overrides: { context: { retrieval: { limit: 6 } } }
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: false, error: { category: invalid_input, details: { field: /context/retrieval/limit } }, newEvents: 0 }
+  # Locked and union fields cannot be set by a run request.
+  - action: run
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    overrides: { context: { compaction: { model: { provider: scripted-b, name: model-b } } } }
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: false, error: { category: invalid_input }, newEvents: 0 }
+  - action: run
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    overrides: { context: { retrieval: { source: docs } } }
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: false, error: { category: invalid_input, details: { field: /context/retrieval/source } }, newEvents: 0 }
+  - action: run
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    overrides: { context: { retrieval: { defaultLabels: [pii] } } }
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: false, error: { category: invalid_input, details: { field: /context/retrieval/defaultLabels } }, newEvents: 0 }
+expect:
+  sessions:
+    $trig:
+      events:
+        mode: subsequence
+        items:
+          - { type: run.ended, runId: $t1, payload: { reason: responded } }
+          - { type: run.started, runId: $t2, payload: { overrides: { context: { compaction: { triggerPercent: 50 } } } } }
+          - { type: context.compacted, runId: $t2, payload: { mode: truncate, units: [{ turn: 1 }] } }
+          - { type: model.request, runId: $t2, turn: 2 }
+          - { type: run.ended, runId: $t2, payload: { reason: responded } }
+      absentEvents:
+        - { type: context.compacted, runId: $t1 }
+    $trigCtl:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, turn: 2 }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: context.compacted }
+    $res:
+      events:
+        mode: subsequence
+        items:
+          - { type: run.started, payload: { overrides: { context: { reserveOutputTokens: 5 } } } }
+          - { type: model.request, turn: 2 }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: context.compacted }
+    $resCtl:
+      events:
+        mode: subsequence
+        items:
+          - { type: run.ended, runId: $u1, payload: { reason: responded } }
+          - { type: context.compacted, runId: $u2, payload: { mode: truncate, units: [{ turn: 1 }] } }
+          - { type: model.request, runId: $u2, turn: 2 }
+          - { type: run.ended, runId: $u2, payload: { reason: responded } }
+    $none:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: run.ended, runId: $n1, payload: { reason: responded } }
+          - { type: run.started, runId: $n2, payload: { overrides: { context: { compaction: { mode: none } } } } }
+          - { type: error, runId: $n2, payload: { error: { category: limit, code: agentry.context.overflow } } }
+          - { type: run.ended, runId: $n2, payload: { reason: context_limit } }
+      absentEvents:
+        - { type: context.compacted }
+        - { type: model.request, turn: 2 }
+    $lim:
+      events:
+        mode: subsequence
+        items:
+          - type: context.retrieved
+            payload: { source: kb, limit: 2, results: { $len: 2 } }
+          - { type: model.request }
+    $off:
+      absentEvents:
+        - { type: context.retrieved }
+  providerRequests:
+    scripted-a:
+      # $trig
+      - {}
+      - messages:
+          $all:
+            - $count: { of: { role: principal }, equals: 1 }
+            - $contains: [{ role: principal, parts: [{ type: text, text: "B01 B02 B03 B04 B05 B06 B07 B08 B09 B10 B11 B12 B13 B14 B15 B16 B17 B18 B19 B20" }] }]
+      # $trigCtl
+      - {}
+      - messages: { $count: { of: { role: principal }, equals: 2 } }
+      # $res
+      - {}
+      - messages: { $count: { of: { role: principal }, equals: 2 } }
+      # $resCtl
+      - {}
+      - messages:
+          $all:
+            - $count: { of: { role: principal }, equals: 1 }
+            - $contains: [{ role: principal, parts: [{ type: text, text: "C01 C02 C03 C04 C05 C06 C07 C08 C09 C10 C11 C12 C13 C14 C15 C16 C17 C18 C19 C20 C21 C22 C23 C24 C25 C26 C27 C28 C29 C30 C31 C32 C33 C34 C35 C36" }] }]
+      # $none
+      - {}
+      # $lim
+      - messages:
+          $contains:
+            - role: principal
+              parts:
+                - { type: text, text: "Find notes", provenance: principal }
+                - { type: text, text: "SYN-KB-0001", provenance: "retrieval:kb" }
+                - { type: text, text: "SYN-KB-0002", provenance: "retrieval:kb" }
+      # $off
+      - messages:
+          $contains:
+            - role: principal
+              parts: [{ type: text, text: "Find notes", provenance: principal }]
+    scripted-b: { count: 0 }
+  stubCalls:
+    vectorStore/kb:
+      - { arguments: { text: "Find notes", limit: 2 } }

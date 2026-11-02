@@ -10,7 +10,7 @@ description: >-
   agentry.context.overflow) is emitted, and the run ends context_limit. The
   session is idle, so a later run() with a short input is accepted:
   truncation drops the earlier turn and the run responds.
-requirements: [CORE-020, CORE-060, CORE-061]
+requirements: [CORE-020, CORE-060, CORE-061, CTX-090]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:
