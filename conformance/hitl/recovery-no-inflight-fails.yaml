@@ -1,0 +1,77 @@
+schemaVersion: "0.1.0"
+id: hitl.recovery-no-inflight-fails
+title: An orphaned run with no tool call in flight ends failed on recovery; the triggering run() is then refused because the session closed
+description: >-
+  Turn 1 responds. During turn 2 (run $r2) the implementation is crashed
+  at `after_model_request`: the model request is recorded but the
+  provider has not answered, and no tool call is in flight. After a
+  restart the clock is advanced exactly to the run lease's expiry
+  (default PT5M; a lease has elapsed when the current time equals its
+  expiry, Area 6 amendment 2026-11-01).
+
+
+  run() on the orphaned session first performs recovery (HITL-092). With
+  no in-flight call, the orphaned run ends `failed` (HITL-091 as amended
+  2026-11-01) with no recovery escalation, and the session closes
+  `failed` (CORE-020). The triggering run() then proceeds on a closed
+  session and fails with `conflict` (CORE-022). The provider's second
+  scripted response is never consumed; a third would fail the test.
+requirements: [HITL-090, HITL-091, HITL-092]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - crash: { at: after_model_request, session: $s }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Look up k1" }]
+  - restart: {}
+  # Exactly the lease expiry (00:00 + PT5M).
+  - clock: { advance: PT5M }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Still there?" }]
+    expect: { ok: false, error: { category: conflict } }
+expect:
+  sessions:
+    $s:
+      state: closed
+      closeReason: failed
+      events:
+        mode: subsequence
+        items:
+          - { type: run.ended, runId: $r1, payload: { reason: responded } }
+          - { type: run.started, runId: { $all: [$r2, { $not: $r1 }] }, payload: { kind: run } }
+          - { type: model.request, runId: $r2, turn: 2, step: 1 }
+          - { type: run.ended, runId: $r2, payload: { reason: failed } }
+          - { type: session.closed, payload: { reason: failed } }
+      absentEvents:
+        - { type: escalation.raised }
+        - { type: tool.call }
+        - { type: model.response, runId: $r2 }
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $count: { of: { type: run.started }, equals: 2 }

@@ -601,6 +601,9 @@ $defs:
       store; its `tool.result` is not appended.
       `after_event_append` — immediately after the event-log append that
       contains the next `tool.call` event; the checkpoint is not saved.
+      `after_model_request` — immediately after the next `model.request`
+      event is appended, before the provider answers: no scripted
+      response is consumed and no tool call is in flight.
 
 
       Recovery after a restart follows HITL-091 as amended 2026-11-01. An
@@ -620,7 +623,7 @@ $defs:
         properties:
           at:
             description: Named crash points (EVAL-035).
-            enum: [after_started_record, after_dispatch, after_outcome_recorded, after_event_append]
+            enum: [after_started_record, after_dispatch, after_outcome_recorded, after_event_append, after_model_request]
           session: { $ref: "#/$defs/placeholder" }
 
   restartStep:

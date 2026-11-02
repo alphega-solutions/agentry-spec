@@ -52,6 +52,7 @@ Matchers: `{"$any": true}`, `{"$absent": true}`, `{"$regex": "..."}`, `{"$len": 
   - `after_dispatch` — the stub ran (its behaviour is consumed, its side effect happened) but the result never reached the implementation; the stub-call record has `completed: false`;
   - `after_outcome_recorded` — outcome in the idempotency store, before `tool.result` is appended;
   - `after_event_append` — immediately after the event-log append that contains the next `tool.call` event; checkpoint not saved.
+  - `after_model_request` — immediately after the next `model.request` is appended, before the provider answers; no response consumed, no tool call in flight.
 
   The crashed action must be followed, later in the script, by a `restart` step before the next action step.
 - **Recovery** (HITL-091 as amended 2026-11-01): an orphaned run that continues keeps its `runId` and emits no new `run.started`. The host call that triggered recovery then runs its own run and receives its own outcome, which its step's `expect` matches.

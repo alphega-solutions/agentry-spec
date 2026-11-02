@@ -260,3 +260,7 @@ Schemas: `schemas/core/v1/hitl.yaml` (`escalation`, `pendingAction`, `decision`,
 - Expiry processing (HITL-082, CORE-041) is timestamped with the expiry time, whenever it is detected: expiry rejections, their audit records, and `session.closed` (`expired`). Several expiry rejections are recorded in action order.
 - HITL-011: a `content` action's `contentRef` is a blob of media type `application/json` holding the parts under review as a JSON array. At `afterToolCall`, `tool.result` is appended only once the action is decided (stage 11 follows stage 10). `allowedDecisions` are listed in the order approve, reject, edit, confirm; reviewer `rules` in layer order (bundles in stack order, then the persona); `listPendingEscalations` returns escalations by `createdAt`, oldest first. The approval reason code reflects the effective approval, whether it came from the tool or a sensitivity policy (TOOL-035).
 - HITL-082, HITL-090: a TTL or lease has elapsed when the current time is equal to or later than its expiry (as CORE-040/041). The further `idleTtl` after expiry rejections is measured from the `suspendedTtl` expiry time. HITL-100 excludes an escalation whose `suspendedTtl` has elapsed even when, under `onExpiry: reject`, its session is still `suspended`.
+
+**Known fixture limits**
+
+- HITL-061's stage 4 for edited arguments is not observable: an edit changes only arguments, and the principal and snapshot are fixed for the session (CORE-012), so the edited call always gets the original call's assurance outcome, and a call that fails stage 4 never escalates.
