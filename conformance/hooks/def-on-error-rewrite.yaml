@@ -1,0 +1,45 @@
+schemaVersion: "0.1.0"
+id: hook.def-on-error-rewrite
+title: A hook at onError declaring rewrite is rejected, including when it also sits at a point that permits rewrite
+description: >-
+  `onError` permits only `annotate` (Area 5 §5). Each failing load adds one
+  native guardrail hook `err-fix@1` declaring `rewrite`: at `onError` alone;
+  at `onError` with `annotate` also declared; and at `beforeModelCall` and
+  `onError` together, where `rewrite` is permitted at one point but not at
+  every one (HOOK-003). Controls load: the same hook at `onError` declaring
+  only `annotate`, and the same hook declaring `rewrite` at
+  `beforeModelCall` only. (cfg.semantic-terminal-hook-results covers
+  `block` at onError and `rewrite`/`escalate` at sessionEnd.)
+requirements: [HOOK-003]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  - load:
+      artifacts:
+        - { kind: Hook, id: err-fix, version: 1, schemaVersion: "0.1.0", points: [onError], results: [rewrite], timeoutMs: 1000, source: { kind: native, handler: test.hook.err_fix } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Hook, id: err-fix, version: 1, schemaVersion: "0.1.0", points: [onError], results: [annotate, rewrite], timeoutMs: 1000, source: { kind: native, handler: test.hook.err_fix } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Hook, id: err-fix, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall, onError], results: [rewrite], timeoutMs: 1000, source: { kind: native, handler: test.hook.err_fix } }
+    expect: { ok: false, error: { category: configuration } }
+  # Controls.
+  - load:
+      artifacts:
+        - { kind: Hook, id: err-fix, version: 1, schemaVersion: "0.1.0", points: [onError], results: [annotate], timeoutMs: 1000, source: { kind: native, handler: test.hook.err_fix } }
+    expect: { ok: true }
+  - load:
+      artifacts:
+        - { kind: Hook, id: err-fix, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [rewrite], timeoutMs: 1000, source: { kind: native, handler: test.hook.err_fix } }
+    expect: { ok: true }
+expect: {}

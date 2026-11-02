@@ -1,0 +1,133 @@
+schemaVersion: "0.1.0"
+id: hook.load-unresolved-source
+title: A hook whose source does not resolve at load is a configuration error, for each of the four source kinds
+description: >-
+  The persona requires `src@1`, a beforeToolCall annotate hook. Each failing
+  load replaces `src@1` with a variant whose source does not resolve
+  (HOOK-080):
+
+  - rule: a `when` that does not compile; a `when` that does not type-check
+    (string plus integer);
+  - native: handler `unregistered.scan`, which the runner never registers;
+  - remote: endpoint `missing-scanner`, not among the deployment's
+    `remoteHooks` (only `scanner` is);
+  - model: provider `scripted-absent`, which the deployment does not
+    declare; and provider `scripted-judge`, declared but excluded by a
+    policy bundle whose `allowedProviders` lists only scripted-a and
+    scripted-b (bundle and hook replaced in the same load).
+
+  A failed load leaves the previous snapshot in force. Controls replace
+  `src@1` with a resolving source of each kind in turn: a rule that compiles
+  and type-checks, handler `test.hook.scan`, endpoint `scanner`, and
+  provider `scripted-judge` under the baseline bundle (no provider
+  restriction).
+requirements: [HOOK-080]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          - { id: scripted-judge, adapter: scripted, endpoint: "memory://scripted-judge", region: test-region, retainsData: false }
+        remoteHooks:
+          - { id: scanner, endpoint: "memory://hook-scanner", region: test-region }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - { kind: Hook, id: src, version: 1, schemaVersion: "0.1.0", points: [beforeToolCall], results: [annotate], timeoutMs: 1000, source: { kind: native, handler: test.hook.src } }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [src@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  # rule: does not compile
+  - load:
+      artifacts:
+        - { kind: Hook, id: src, version: 1, schemaVersion: "0.1.0", points: [beforeToolCall], results: [annotate], timeoutMs: 1000, source: { kind: rule, when: "call.arguments.exists(k, ", then: { result: annotate, labels: [pii] } } }
+    expect: { ok: false, error: { category: configuration } }
+  # rule: does not type-check
+  - load:
+      artifacts:
+        - { kind: Hook, id: src, version: 1, schemaVersion: "0.1.0", points: [beforeToolCall], results: [annotate], timeoutMs: 1000, source: { kind: rule, when: "tool.effect + 1 == 2", then: { result: annotate, labels: [pii] } } }
+    expect: { ok: false, error: { category: configuration } }
+  # native: handler not registered
+  - load:
+      artifacts:
+        - { kind: Hook, id: src, version: 1, schemaVersion: "0.1.0", points: [beforeToolCall], results: [annotate], timeoutMs: 1000, source: { kind: native, handler: unregistered.scan } }
+    expect: { ok: false, error: { category: configuration } }
+  # remote: endpoint not declared in the deployment
+  - load:
+      artifacts:
+        - { kind: Hook, id: src, version: 1, schemaVersion: "0.1.0", points: [beforeToolCall], results: [annotate], timeoutMs: 1000, source: { kind: remote, endpoint: missing-scanner } }
+    expect: { ok: false, error: { category: configuration } }
+  # model: provider not declared in the deployment
+  - load:
+      artifacts:
+        - { kind: Hook, id: src, version: 1, schemaVersion: "0.1.0", points: [beforeToolCall], results: [annotate], timeoutMs: 5000, source: { kind: model, model: { provider: scripted-absent, name: judge-1 }, instructions: "Label the call. Answer with a HookResult.", maxTokens: 200 } }
+    expect: { ok: false, error: { category: configuration } }
+  # model: provider declared but not allowed by the policy bundle
+  - load:
+      artifacts:
+        - kind: PolicyBundle
+          id: org
+          version: 1
+          schemaVersion: "0.1.0"
+          policyInstructions: "Follow organisational policy."
+          defaultFallbackMessage: "I can't help with that request."
+          allowedProviders: [scripted-a, scripted-b]
+          sensitivityPolicies:
+            pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+            phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+        - { kind: Hook, id: src, version: 1, schemaVersion: "0.1.0", points: [beforeToolCall], results: [annotate], timeoutMs: 5000, source: { kind: model, model: { provider: scripted-judge, name: judge-1 }, instructions: "Label the call. Answer with a HookResult.", maxTokens: 200 } }
+    expect: { ok: false, error: { category: configuration } }
+  # Controls: each kind resolving.
+  - load:
+      artifacts:
+        - { kind: Hook, id: src, version: 1, schemaVersion: "0.1.0", points: [beforeToolCall], results: [annotate], timeoutMs: 1000, source: { kind: rule, when: "tool.effect == 'mutating' && call.arguments.exists(k, k == 'value')", then: { result: annotate, labels: [pii] } } }
+    expect: { ok: true }
+  - load:
+      artifacts:
+        - { kind: Hook, id: src, version: 1, schemaVersion: "0.1.0", points: [beforeToolCall], results: [annotate], timeoutMs: 1000, source: { kind: native, handler: test.hook.scan } }
+    expect: { ok: true }
+  - load:
+      artifacts:
+        - { kind: Hook, id: src, version: 1, schemaVersion: "0.1.0", points: [beforeToolCall], results: [annotate], timeoutMs: 1000, source: { kind: remote, endpoint: scanner } }
+    expect: { ok: true }
+  - load:
+      artifacts:
+        - { kind: Hook, id: src, version: 1, schemaVersion: "0.1.0", points: [beforeToolCall], results: [annotate], timeoutMs: 5000, source: { kind: model, model: { provider: scripted-judge, name: judge-1 }, instructions: "Label the call. Answer with a HookResult.", maxTokens: 200 } }
+    expect: { ok: true }
+expect: {}

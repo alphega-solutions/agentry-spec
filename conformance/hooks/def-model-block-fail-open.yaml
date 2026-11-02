@@ -1,0 +1,72 @@
+schemaVersion: "0.1.0"
+id: hook.def-model-block-fail-open
+title: A model hook that declares block or escalate with failOpen is rejected
+description: >-
+  A model hook that can block or escalate must fail closed, so injected
+  content that breaks its output cannot turn a block into `continue`
+  (HOOK-101). The deployment declares a judge provider, `scripted-judge`,
+  which no layer restricts. Each failing load adds one model hook
+  `judge@1` at beforeModelCall with `failureMode: failOpen`, declaring
+  `block`, `escalate`, or `annotate` and `block`. Controls load: the same
+  hook declaring `block` with `failClosed`, the same with no failure mode
+  (default `failClosed` for a guardrail, HOOK-001), and an annotate-only
+  model hook with `failOpen`, which HOOK-101 does not restrict.
+requirements: [HOOK-101]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          - { id: scripted-judge, adapter: scripted, endpoint: "memory://scripted-judge", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  - load:
+      artifacts:
+        - { kind: Hook, id: judge, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [block], failureMode: failOpen, timeoutMs: 5000, source: { kind: model, model: { provider: scripted-judge, name: judge-1 }, instructions: "Classify the request. Answer with a HookResult.", maxTokens: 200 } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Hook, id: judge, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [escalate], failureMode: failOpen, timeoutMs: 5000, source: { kind: model, model: { provider: scripted-judge, name: judge-1 }, instructions: "Classify the request. Answer with a HookResult.", maxTokens: 200 } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Hook, id: judge, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [annotate, block], failureMode: failOpen, timeoutMs: 5000, source: { kind: model, model: { provider: scripted-judge, name: judge-1 }, instructions: "Classify the request. Answer with a HookResult.", maxTokens: 200 } }
+    expect: { ok: false, error: { category: configuration } }
+  # Controls.
+  - load:
+      artifacts:
+        - { kind: Hook, id: judge, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [block], failureMode: failClosed, timeoutMs: 5000, source: { kind: model, model: { provider: scripted-judge, name: judge-1 }, instructions: "Classify the request. Answer with a HookResult.", maxTokens: 200 } }
+    expect: { ok: true }
+  - load:
+      artifacts:
+        - { kind: Hook, id: judge, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [block], timeoutMs: 5000, source: { kind: model, model: { provider: scripted-judge, name: judge-1 }, instructions: "Classify the request. Answer with a HookResult.", maxTokens: 200 } }
+    expect: { ok: true }
+  - load:
+      artifacts:
+        - { kind: Hook, id: judge-note, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [annotate], failureMode: failOpen, timeoutMs: 5000, source: { kind: model, model: { provider: scripted-judge, name: judge-1 }, instructions: "Label the request. Answer with a HookResult.", maxTokens: 200 } }
+    expect: { ok: true }
+expect: {}

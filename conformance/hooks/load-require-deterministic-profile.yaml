@@ -1,0 +1,96 @@
+schemaVersion: "0.1.0"
+id: hook.load-require-deterministic-profile
+title: With requireDeterministic set in a harness profile, a point whose model hook can block also needs a rule or remote hook that can block
+description: >-
+  The default profile (in the persona's `allowedProfiles`) sets
+  `guardrails.requireDeterministic: true` (HOOK-104); the policy bundle does
+  not. The check applies to the persona combined with that profile
+  (CFG-042 as amended 2026-11-01). Rejected: the persona requiring only a
+  model hook able to `block` at beforeModelCall; the same with a native
+  blocking hook beside it (native is not deterministic); the profile itself
+  requiring the model hook alone. Accepted: the model hook with a blocking
+  rule hook or a blocking remote hook at the same point, from the persona or
+  from the profile; and, as the last control, the lone model hook with the
+  profile not setting `requireDeterministic`, so the rejections come from
+  the setting. Reading of "only a native one" as in
+  hook.load-require-deterministic-bundle.
+requirements: [HOOK-104]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          - { id: scripted-judge, adapter: scripted, endpoint: "memory://scripted-judge", region: test-region, retainsData: false }
+        remoteHooks:
+          - { id: gate, endpoint: "memory://hook-gate", region: test-region }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - { kind: Hook, id: judge-block, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [block], timeoutMs: 5000, source: { kind: model, model: { provider: scripted-judge, name: judge-1 }, instructions: "Classify the content. Answer with a HookResult.", maxTokens: 200 } }
+      - { kind: Hook, id: judge-wide, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall, beforeToolCall], results: [block], timeoutMs: 5000, source: { kind: model, model: { provider: scripted-judge, name: judge-1 }, instructions: "Classify the content. Answer with a HookResult.", maxTokens: 200 } }
+      - { kind: Hook, id: native-block, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [block], timeoutMs: 1000, source: { kind: native, handler: test.hook.native_block } }
+      - { kind: Hook, id: rule-note, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [annotate], timeoutMs: 1000, source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-UNSAFE'))", then: { result: annotate, labels: [pii] } } }
+      - { kind: Hook, id: rule-block, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [block], timeoutMs: 1000, source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-UNSAFE'))", then: { result: block, reasonCode: test.guard.blocked } } }
+      - { kind: Hook, id: rule-tool-block, version: 1, schemaVersion: "0.1.0", points: [beforeToolCall], results: [block], timeoutMs: 1000, source: { kind: rule, when: "tool.effect == 'mutating'", then: { result: block, reasonCode: test.guard.blocked } } }
+      - { kind: Hook, id: remote-block, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [block], timeoutMs: 1000, source: { kind: remote, endpoint: gate } }
+      - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, deliveryMode: buffered, budget: { tokens: 100000 }, timeouts: { run: PT5M, tool: PT30S }, retry: { unavailable: 2 }, outputRetryLimit: 2, limits: { partSize: 1048576, sessionSize: 10485760 }, defaultAttachmentLabels: [], guardrails: { requireDeterministic: true } }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  # Persona: only a model block hook.
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], requiredHooks: [judge-block@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }] } }
+    expect: { ok: false, error: { category: configuration } }
+  # Persona: model block hook with only a native block hook beside it.
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], requiredHooks: [judge-block@1, native-block@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }] } }
+    expect: { ok: false, error: { category: configuration } }
+  # Profile itself requires only the model block hook.
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, deliveryMode: buffered, budget: { tokens: 100000 }, timeouts: { run: PT5M, tool: PT30S }, retry: { unavailable: 2 }, outputRetryLimit: 2, limits: { partSize: 1048576, sessionSize: 10485760 }, defaultAttachmentLabels: [], guardrails: { requireDeterministic: true }, requiredHooks: [judge-block@1] }
+    expect: { ok: false, error: { category: configuration } }
+  # Control: persona adds a blocking rule hook at the same point.
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], requiredHooks: [judge-block@1, rule-block@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }] } }
+    expect: { ok: true }
+  # Control: persona adds a blocking remote hook at the same point.
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], requiredHooks: [judge-block@1, remote-block@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }] } }
+    expect: { ok: true }
+  # Control: profile requires the model hook with a blocking remote hook.
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, deliveryMode: buffered, budget: { tokens: 100000 }, timeouts: { run: PT5M, tool: PT30S }, retry: { unavailable: 2 }, outputRetryLimit: 2, limits: { partSize: 1048576, sessionSize: 10485760 }, defaultAttachmentLabels: [], guardrails: { requireDeterministic: true }, requiredHooks: [judge-block@1, remote-block@1] }
+    expect: { ok: true }
+  # Control: without requireDeterministic, a lone model block hook loads.
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, deliveryMode: buffered, budget: { tokens: 100000 }, timeouts: { run: PT5M, tool: PT30S }, retry: { unavailable: 2 }, outputRetryLimit: 2, limits: { partSize: 1048576, sessionSize: 10485760 }, defaultAttachmentLabels: [] }
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], requiredHooks: [judge-block@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }] } }
+    expect: { ok: true }
+expect: {}

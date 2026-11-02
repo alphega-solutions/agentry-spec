@@ -1,0 +1,107 @@
+schemaVersion: "0.1.0"
+id: hook.load-cel-outside-subset
+title: CEL outside the agentry subset, or failing to type-check, is rejected at load in when, match and approval rules
+description: >-
+  Each failing load introduces one CEL expression in one of three places: a
+  rule hook's `when` (`cel-when@1`), a native hook's `match`
+  (`cel-match@1`), both at beforeToolCall, and a policy bundle's
+  `approvalRules`, which use the beforeToolCall variables (HOOK-130). For
+  each place the expression uses a timestamp function, a bytes literal, or a
+  function outside the subset (HOOK-110, HOOK-111), or fails to type-check
+  against the point's variables (HOOK-112: integer plus string, boolean plus
+  integer, string minus integer). The `when` place also uses a protobuf
+  message type, and the approval rule place a duration (HOOK-111). Every
+  expression is otherwise syntactically valid CEL, so only the subset or the
+  type-checker can reject it. A failed load leaves the previous snapshot in
+  force. The control loads well-formed expressions in all three places
+  using only subset features (macros, `in`, `?:`, strings-extension
+  functions, `matches`, conversions).
+requirements: [HOOK-110, HOOK-111, HOOK-112]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  # when: timestamp function
+  - load:
+      artifacts:
+        - { kind: Hook, id: cel-when, version: 1, schemaVersion: "0.1.0", points: [beforeToolCall], results: [block], timeoutMs: 1000, source: { kind: rule, when: "timestamp('2026-01-01T00:00:00Z') < timestamp('2027-01-01T00:00:00Z')", then: { result: block, reasonCode: test.guard.blocked } } }
+    expect: { ok: false, error: { category: configuration } }
+  # match: timestamp function
+  - load:
+      artifacts:
+        - { kind: Hook, id: cel-match, version: 1, schemaVersion: "0.1.0", points: [beforeToolCall], results: [block], timeoutMs: 1000, match: "timestamp('2026-01-01T00:00:00Z') < timestamp('2027-01-01T00:00:00Z')", source: { kind: native, handler: test.hook.cel_match } }
+    expect: { ok: false, error: { category: configuration } }
+  # approval rule: timestamp function
+  - load:
+      artifacts:
+        - { kind: PolicyBundle, id: org, version: 1, schemaVersion: "0.1.0", policyInstructions: "Follow organisational policy.", defaultFallbackMessage: "I can't help with that request.", approvalRules: ["call.arguments.key == string(timestamp('2026-01-01T00:00:00Z'))"], sensitivityPolicies: { pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }, phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] } } }
+    expect: { ok: false, error: { category: configuration } }
+  # when: bytes literal
+  - load:
+      artifacts:
+        - { kind: Hook, id: cel-when, version: 1, schemaVersion: "0.1.0", points: [beforeToolCall], results: [block], timeoutMs: 1000, source: { kind: rule, when: "b'SYN' == b'SYN'", then: { result: block, reasonCode: test.guard.blocked } } }
+    expect: { ok: false, error: { category: configuration } }
+  # match: bytes literal
+  - load:
+      artifacts:
+        - { kind: Hook, id: cel-match, version: 1, schemaVersion: "0.1.0", points: [beforeToolCall], results: [block], timeoutMs: 1000, match: "size(b'SYN') > 0", source: { kind: native, handler: test.hook.cel_match } }
+    expect: { ok: false, error: { category: configuration } }
+  # approval rule: bytes literal
+  - load:
+      artifacts:
+        - { kind: PolicyBundle, id: org, version: 1, schemaVersion: "0.1.0", policyInstructions: "Follow organisational policy.", defaultFallbackMessage: "I can't help with that request.", approvalRules: ["call.arguments.key == string(b'SYN')"], sensitivityPolicies: { pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }, phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] } } }
+    expect: { ok: false, error: { category: configuration } }
+  # when: custom function
+  - load:
+      artifacts:
+        - { kind: Hook, id: cel-when, version: 1, schemaVersion: "0.1.0", points: [beforeToolCall], results: [block], timeoutMs: 1000, source: { kind: rule, when: "isSensitive(call.arguments)", then: { result: block, reasonCode: test.guard.blocked } } }
+    expect: { ok: false, error: { category: configuration } }
+  # match: custom function
+  - load:
+      artifacts:
+        - { kind: Hook, id: cel-match, version: 1, schemaVersion: "0.1.0", points: [beforeToolCall], results: [block], timeoutMs: 1000, match: "isMutating(tool)", source: { kind: native, handler: test.hook.cel_match } }
+    expect: { ok: false, error: { category: configuration } }
+  # approval rule: custom function
+  - load:
+      artifacts:
+        - { kind: PolicyBundle, id: org, version: 1, schemaVersion: "0.1.0", policyInstructions: "Follow organisational policy.", defaultFallbackMessage: "I can't help with that request.", approvalRules: ["needsReview(call.arguments.key)"], sensitivityPolicies: { pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }, phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] } } }
+    expect: { ok: false, error: { category: configuration } }
+  # when: type error
+  - load:
+      artifacts:
+        - { kind: Hook, id: cel-when, version: 1, schemaVersion: "0.1.0", points: [beforeToolCall], results: [block], timeoutMs: 1000, source: { kind: rule, when: "session.turn + 'one' > 0", then: { result: block, reasonCode: test.guard.blocked } } }
+    expect: { ok: false, error: { category: configuration } }
+  # match: type error
+  - load:
+      artifacts:
+        - { kind: Hook, id: cel-match, version: 1, schemaVersion: "0.1.0", points: [beforeToolCall], results: [block], timeoutMs: 1000, match: "tool.egress + 1 == 2", source: { kind: native, handler: test.hook.cel_match } }
+    expect: { ok: false, error: { category: configuration } }
+  # approval rule: type error
+  - load:
+      artifacts:
+        - { kind: PolicyBundle, id: org, version: 1, schemaVersion: "0.1.0", policyInstructions: "Follow organisational policy.", defaultFallbackMessage: "I can't help with that request.", approvalRules: ["principal.subject - 1 == 0"], sensitivityPolicies: { pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }, phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] } } }
+    expect: { ok: false, error: { category: configuration } }
+  # when: protobuf message type
+  - load:
+      artifacts:
+        - { kind: Hook, id: cel-when, version: 1, schemaVersion: "0.1.0", points: [beforeToolCall], results: [block], timeoutMs: 1000, source: { kind: rule, when: "google.protobuf.Timestamp{seconds: 1} != null", then: { result: block, reasonCode: test.guard.blocked } } }
+    expect: { ok: false, error: { category: configuration } }
+  # approval rule: duration
+  - load:
+      artifacts:
+        - { kind: PolicyBundle, id: org, version: 1, schemaVersion: "0.1.0", policyInstructions: "Follow organisational policy.", defaultFallbackMessage: "I can't help with that request.", approvalRules: ["duration('1h') > duration('1m')"], sensitivityPolicies: { pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }, phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] } } }
+    expect: { ok: false, error: { category: configuration } }
+  # Control: subset-only expressions in all three places
+  - load:
+      artifacts:
+        - { kind: Hook, id: cel-when, version: 1, schemaVersion: "0.1.0", points: [beforeToolCall], results: [block], timeoutMs: 1000, source: { kind: rule, when: "call.arguments.exists(k, k == 'key') && (session.tainted ? true : tool.effect in ['mutating', 'read'])", then: { result: block, reasonCode: test.guard.blocked } } }
+        - { kind: Hook, id: cel-match, version: 1, schemaVersion: "0.1.0", points: [beforeToolCall], results: [block], timeoutMs: 1000, match: "tool.id.lowerAscii().startsWith('update') && int(session.turn) >= 0", source: { kind: native, handler: test.hook.cel_match } }
+        - { kind: PolicyBundle, id: org, version: 1, schemaVersion: "0.1.0", policyInstructions: "Follow organisational policy.", defaultFallbackMessage: "I can't help with that request.", approvalRules: ["string(call.arguments.key).trim().matches('^SYN-[0-9]+$') || size(principal.roles.filter(r, r == 'reviewer')) > 0"], sensitivityPolicies: { pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }, phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] } } }
+    expect: { ok: true }
+expect: {}

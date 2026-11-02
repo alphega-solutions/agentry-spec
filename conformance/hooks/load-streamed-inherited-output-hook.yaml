@@ -1,0 +1,99 @@
+schemaVersion: "0.1.0"
+id: hook.load-streamed-inherited-output-hook
+title: A streamed profile is rejected when an output hook able to block or rewrite comes from the policy bundle or the persona
+description: >-
+  HOOK-040 applies to every hook in effect for a persona combined with a
+  streamed profile, not only the hooks the profile itself requires (CFG-042
+  as amended 2026-11-01: checks apply to each persona with each profile in
+  its `allowedProfiles`, with the full bundle stack). The baseline persona
+  allows `streamed@1`, which requires no hooks of its own.
+
+  - The policy bundle requires `out-block@1` (afterModelCall, `block`) →
+    rejected.
+  - The persona requires `resp-rewrite@1` (beforeResponse, `rewrite`, a
+    remote hook) → rejected.
+  - The persona requires `resp-escalate@1` (beforeResponse, `escalate`) →
+    rejected.
+
+  Control: the same bundle and persona hooks with the persona allowing only
+  `default@1` (buffered), and `streamed@1` removed so no streamed
+  combination exists, loads. (cfg.semantic-streamed-output-hooks covers
+  each result at each output point when the profile requires the hook.)
+requirements: [HOOK-040]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        remoteHooks:
+          - { id: scanner, endpoint: "memory://hook-scanner", region: test-region }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - { kind: Hook, id: out-block, version: 1, schemaVersion: "0.1.0", points: [afterModelCall], results: [block], timeoutMs: 1000, source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-UNSAFE'))", then: { result: block, reasonCode: test.guard.blocked } } }
+      - { kind: Hook, id: resp-rewrite, version: 1, schemaVersion: "0.1.0", points: [beforeResponse], results: [rewrite], timeoutMs: 1000, source: { kind: remote, endpoint: scanner } }
+      - { kind: Hook, id: resp-escalate, version: 1, schemaVersion: "0.1.0", points: [beforeResponse], results: [escalate], timeoutMs: 1000, source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-UNSAFE'))", then: { result: escalate, reasonCode: test.guard.review } } }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  # Bundle requires a blocking afterModelCall hook; the persona allows streamed@1.
+  - load:
+      artifacts:
+        - kind: PolicyBundle
+          id: org
+          version: 1
+          schemaVersion: "0.1.0"
+          policyInstructions: "Follow organisational policy."
+          defaultFallbackMessage: "I can't help with that request."
+          requiredHooks: [out-block@1]
+          sensitivityPolicies:
+            pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+            phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+    expect: { ok: false, error: { category: configuration } }
+  # Persona requires a rewriting beforeResponse hook and allows streamed@1.
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], requiredHooks: [resp-rewrite@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }] } }
+    expect: { ok: false, error: { category: configuration } }
+  # Persona requires an escalating beforeResponse hook and allows streamed@1.
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], requiredHooks: [resp-escalate@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }] } }
+    expect: { ok: false, error: { category: configuration } }
+  # Control: the same hooks with no streamed combination.
+  - load:
+      artifacts:
+        - kind: PolicyBundle
+          id: org
+          version: 1
+          schemaVersion: "0.1.0"
+          policyInstructions: "Follow organisational policy."
+          defaultFallbackMessage: "I can't help with that request."
+          requiredHooks: [out-block@1]
+          sensitivityPolicies:
+            pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+            phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1], requiredHooks: [resp-rewrite@1, resp-escalate@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }] } }
+      remove: [streamed@1]
+    expect: { ok: true }
+expect: {}

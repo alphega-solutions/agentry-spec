@@ -1,0 +1,63 @@
+schemaVersion: "0.1.0"
+id: hook.def-rule-no-rewrite
+title: A rule hook declaring rewrite is rejected
+description: >-
+  Rule hooks have `when`/`then`, where `then` is `annotate`, `block` or
+  `escalate`; they cannot rewrite (HOOK-090). Each failing load adds one rule
+  hook `scrub@1` at beforeModelCall (where `rewrite` is permitted, so only
+  the source kind can make it invalid): declaring `rewrite` alongside the
+  `block` its `then` returns; declaring `rewrite` alone with a `then` of
+  `rewrite`. Controls load: the same rule hook declaring only `block`, and a
+  remote hook declaring `rewrite` at the same point.
+requirements: [HOOK-090]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        remoteHooks:
+          - { id: scrubber, endpoint: "memory://hook-scrubber", region: test-region }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  - load:
+      artifacts:
+        - { kind: Hook, id: scrub, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [block, rewrite], timeoutMs: 1000, source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-SECRET'))", then: { result: block, reasonCode: test.guard.blocked } } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Hook, id: scrub, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [rewrite], timeoutMs: 1000, source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-SECRET'))", then: { result: rewrite, parts: [{ type: text, text: "SYN-REDACTED" }] } } }
+    expect: { ok: false, error: { category: configuration } }
+  # Controls.
+  - load:
+      artifacts:
+        - { kind: Hook, id: scrub, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [block], timeoutMs: 1000, source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-SECRET'))", then: { result: block, reasonCode: test.guard.blocked } } }
+    expect: { ok: true }
+  - load:
+      artifacts:
+        - { kind: Hook, id: scrub-remote, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [rewrite], timeoutMs: 1000, source: { kind: remote, endpoint: scrubber } }
+    expect: { ok: true }
+expect: {}
