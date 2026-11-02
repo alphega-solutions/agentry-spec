@@ -1,0 +1,215 @@
+schemaVersion: "0.1.0"
+id: context.assembly-order
+title: "Context is assembled in order: bundle instructions in stack order, persona instructions, summaries, history, then the current turn with retrieved parts appended to the principal message"
+description: >-
+  The deployment stacks org@1 then dept@1; the persona has its own
+  instructions. Automatic retrieval from `kb` is on; the profile compacts
+  by summarize with its own summarizer provider scripted-sum. Both session
+  models declare contextLimit 200 and maxOutputTokens 20: space 180,
+  compaction above 90% of it, i.e. above 162 tokens. Token counts (one
+  per word of a text part, 10 per other part): system content 12
+  ("Follow organisational policy." 3 + "Follow SYN-DEPT-0010 departmental
+  policy." 4 + "You are a test assistant." 5).
+
+  - Turn 1: input 130 words, retrieval returns nothing; context 12 + 130 =
+    142 ≤ 162. Answer 2 words; turn 1 costs 132.
+  - Turn 2: input 5 words, nothing retrieved; context 12 + 132 + 5 = 149 ≤
+    162. Answer 2 words; turn 2 costs 7.
+  - Turn 3: input 4 words + a file attachment (10) + one retrieved record
+    (4 words) = 18; context 12 + 132 + 7 + 18 = 169 > 162, so the oldest
+    unit, turn 1, is summarized (6-word summary): 12 + 6 + 7 + 18 = 43 ≤
+    162. Step 1 calls lookup; step 2 adds a tool_call and a tool_result
+    (10 each): 63 ≤ 162, no further compaction.
+
+  The turn-3 requests are asserted exactly (arrays match exactly). Reading
+  chosen for the system content, which the spec orders but does not lay
+  out: one `system`-role message whose parts are each instruction text, in
+  order (bundle stack order, then persona), unchanged. The summary is one
+  `assistant`-role message with one text part (Area 7 amendment
+  2026-11-01) whose provenance is the least-trusted of turn 1's
+  (principal, model → model). The retrieved part follows the principal's
+  input and attachment, in the same message; this turn's assistant tool
+  call and its tool message follow, in event order.
+requirements: [CTX-010]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: dept
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow SYN-DEPT-0010 departmental policy."
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1, dept@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          - { id: scripted-sum, adapter: scripted, endpoint: "memory://scripted-sum", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+          vectorStore: { adapter: memory, region: test-region, sources: [kb] }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+        context:
+          compaction: { mode: summarize, model: { provider: scripted-sum, name: sum-1 } }
+          retrieval: { auto: true, source: kb }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { contextLimit: 200, maxOutputTokens: 20 }
+      responses:
+        - parts: [{ type: text, text: "First answer." }]
+          usage: { inputTokens: 142, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Second answer." }]
+          usage: { inputTokens: 149, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k3 } }]
+          usage: { inputTokens: 43, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Report summarised." }]
+          usage: { inputTokens: 63, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      capabilities: { contextLimit: 200, maxOutputTokens: 20 }
+      responses: []
+    scripted-sum:
+      responses:
+        - parts: [{ type: text, text: "SYN-SUMMARY-0001 the principal sent filler text" }]
+          usage: { inputTokens: 132, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "SYN-VALUE-0003" } }
+    vectorStores:
+      kb:
+        - results: []
+        - results: []
+        - results: [{ id: kb-3, text: "SYN-KB-0003 widgets ship Mondays", tenant: t1 }]
+  ports:
+    blobStore:
+      t1:
+        - id: blob-file-1
+          hash: "sha256:488b66a845535f2173fe026ad21ad4238ca6b733b00a24ba332adab6729a0a80"
+          mediaType: text/plain
+          size: 44
+          data: "U1lOVEhFVElDLUZJTEUtMDAwMTogcXVhcnRlcmx5IHdpZGdldCByZXBvcnQ="
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYNTHETIC-FILLER-0000 SYNTHETIC-FILLER-0001 SYNTHETIC-FILLER-0002 SYNTHETIC-FILLER-0003 SYNTHETIC-FILLER-0004 SYNTHETIC-FILLER-0005 SYNTHETIC-FILLER-0006 SYNTHETIC-FILLER-0007 SYNTHETIC-FILLER-0008 SYNTHETIC-FILLER-0009 SYNTHETIC-FILLER-0010 SYNTHETIC-FILLER-0011 SYNTHETIC-FILLER-0012 SYNTHETIC-FILLER-0013 SYNTHETIC-FILLER-0014 SYNTHETIC-FILLER-0015 SYNTHETIC-FILLER-0016 SYNTHETIC-FILLER-0017 SYNTHETIC-FILLER-0018 SYNTHETIC-FILLER-0019 SYNTHETIC-FILLER-0020 SYNTHETIC-FILLER-0021 SYNTHETIC-FILLER-0022 SYNTHETIC-FILLER-0023 SYNTHETIC-FILLER-0024 SYNTHETIC-FILLER-0025 SYNTHETIC-FILLER-0026 SYNTHETIC-FILLER-0027 SYNTHETIC-FILLER-0028 SYNTHETIC-FILLER-0029 SYNTHETIC-FILLER-0030 SYNTHETIC-FILLER-0031 SYNTHETIC-FILLER-0032 SYNTHETIC-FILLER-0033 SYNTHETIC-FILLER-0034 SYNTHETIC-FILLER-0035 SYNTHETIC-FILLER-0036 SYNTHETIC-FILLER-0037 SYNTHETIC-FILLER-0038 SYNTHETIC-FILLER-0039 SYNTHETIC-FILLER-0040 SYNTHETIC-FILLER-0041 SYNTHETIC-FILLER-0042 SYNTHETIC-FILLER-0043 SYNTHETIC-FILLER-0044 SYNTHETIC-FILLER-0045 SYNTHETIC-FILLER-0046 SYNTHETIC-FILLER-0047 SYNTHETIC-FILLER-0048 SYNTHETIC-FILLER-0049 SYNTHETIC-FILLER-0050 SYNTHETIC-FILLER-0051 SYNTHETIC-FILLER-0052 SYNTHETIC-FILLER-0053 SYNTHETIC-FILLER-0054 SYNTHETIC-FILLER-0055 SYNTHETIC-FILLER-0056 SYNTHETIC-FILLER-0057 SYNTHETIC-FILLER-0058 SYNTHETIC-FILLER-0059 SYNTHETIC-FILLER-0060 SYNTHETIC-FILLER-0061 SYNTHETIC-FILLER-0062 SYNTHETIC-FILLER-0063 SYNTHETIC-FILLER-0064 SYNTHETIC-FILLER-0065 SYNTHETIC-FILLER-0066 SYNTHETIC-FILLER-0067 SYNTHETIC-FILLER-0068 SYNTHETIC-FILLER-0069 SYNTHETIC-FILLER-0070 SYNTHETIC-FILLER-0071 SYNTHETIC-FILLER-0072 SYNTHETIC-FILLER-0073 SYNTHETIC-FILLER-0074 SYNTHETIC-FILLER-0075 SYNTHETIC-FILLER-0076 SYNTHETIC-FILLER-0077 SYNTHETIC-FILLER-0078 SYNTHETIC-FILLER-0079 SYNTHETIC-FILLER-0080 SYNTHETIC-FILLER-0081 SYNTHETIC-FILLER-0082 SYNTHETIC-FILLER-0083 SYNTHETIC-FILLER-0084 SYNTHETIC-FILLER-0085 SYNTHETIC-FILLER-0086 SYNTHETIC-FILLER-0087 SYNTHETIC-FILLER-0088 SYNTHETIC-FILLER-0089 SYNTHETIC-FILLER-0090 SYNTHETIC-FILLER-0091 SYNTHETIC-FILLER-0092 SYNTHETIC-FILLER-0093 SYNTHETIC-FILLER-0094 SYNTHETIC-FILLER-0095 SYNTHETIC-FILLER-0096 SYNTHETIC-FILLER-0097 SYNTHETIC-FILLER-0098 SYNTHETIC-FILLER-0099 SYNTHETIC-FILLER-0100 SYNTHETIC-FILLER-0101 SYNTHETIC-FILLER-0102 SYNTHETIC-FILLER-0103 SYNTHETIC-FILLER-0104 SYNTHETIC-FILLER-0105 SYNTHETIC-FILLER-0106 SYNTHETIC-FILLER-0107 SYNTHETIC-FILLER-0108 SYNTHETIC-FILLER-0109 SYNTHETIC-FILLER-0110 SYNTHETIC-FILLER-0111 SYNTHETIC-FILLER-0112 SYNTHETIC-FILLER-0113 SYNTHETIC-FILLER-0114 SYNTHETIC-FILLER-0115 SYNTHETIC-FILLER-0116 SYNTHETIC-FILLER-0117 SYNTHETIC-FILLER-0118 SYNTHETIC-FILLER-0119 SYNTHETIC-FILLER-0120 SYNTHETIC-FILLER-0121 SYNTHETIC-FILLER-0122 SYNTHETIC-FILLER-0123 SYNTHETIC-FILLER-0124 SYNTHETIC-FILLER-0125 SYNTHETIC-FILLER-0126 SYNTHETIC-FILLER-0127 SYNTHETIC-FILLER-0128 SYNTHETIC-FILLER-0129" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Second question about widgets please" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $s
+    principal: p1
+    input:
+      - { type: text, text: "Summarise the attached report" }
+      - type: file
+        mediaType: text/plain
+        name: report.txt
+        source: upload
+        blob: { id: blob-file-1, hash: "sha256:488b66a845535f2173fe026ad21ad4238ca6b733b00a24ba332adab6729a0a80", mediaType: text/plain, size: 44 }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: turn.started, turn: 3 }
+          - { type: context.retrieved, payload: { source: kb, query: "Summarise the attached report" } }
+          - { type: context.compacted, payload: { mode: summarize, units: [{ turn: 1 }] } }
+          - { type: model.request, turn: 3, step: 1 }
+          - { type: tool.result, turn: 3, step: 1, payload: { callId: c1 } }
+          - { type: model.request, turn: 3, step: 2 }
+      absentEvents:
+        - { type: model.request, payload: { provider: scripted-sum } }
+  providerRequests:
+    scripted-sum: { count: 1 }
+    scripted-b: { count: 0 }
+    scripted-a:
+      - {}
+      - {}
+      # Turn 3, step 1
+      - messages:
+          - role: system
+            parts:
+              - { type: text, text: "Follow organisational policy.", provenance: system, labels: [] }
+              - { type: text, text: "Follow SYN-DEPT-0010 departmental policy.", provenance: system, labels: [] }
+              - { type: text, text: "You are a test assistant.", provenance: system, labels: [] }
+          - role: assistant
+            parts:
+              - { type: text, text: "SYN-SUMMARY-0001 the principal sent filler text", provenance: model, labels: [] }
+          - role: principal
+            parts:
+              - { type: text, text: "Second question about widgets please", provenance: principal, labels: [] }
+          - role: assistant
+            parts:
+              - { type: text, text: "Second answer.", provenance: model, labels: [] }
+          - role: principal
+            parts:
+              - { type: text, text: "Summarise the attached report", provenance: principal, labels: [] }
+              - { type: file, mediaType: text/plain, blob: { id: blob-file-1 }, provenance: "attachment:upload", labels: [] }
+              - { type: text, text: "SYN-KB-0003 widgets ship Mondays", provenance: "retrieval:kb", labels: [] }
+      # Turn 3, step 2
+      - messages:
+          - role: system
+            parts:
+              - { type: text, text: "Follow organisational policy.", provenance: system, labels: [] }
+              - { type: text, text: "Follow SYN-DEPT-0010 departmental policy.", provenance: system, labels: [] }
+              - { type: text, text: "You are a test assistant.", provenance: system, labels: [] }
+          - role: assistant
+            parts:
+              - { type: text, text: "SYN-SUMMARY-0001 the principal sent filler text", provenance: model, labels: [] }
+          - role: principal
+            parts:
+              - { type: text, text: "Second question about widgets please", provenance: principal, labels: [] }
+          - role: assistant
+            parts:
+              - { type: text, text: "Second answer.", provenance: model, labels: [] }
+          - role: principal
+            parts:
+              - { type: text, text: "Summarise the attached report", provenance: principal, labels: [] }
+              - { type: file, mediaType: text/plain, blob: { id: blob-file-1 }, provenance: "attachment:upload", labels: [] }
+              - { type: text, text: "SYN-KB-0003 widgets ship Mondays", provenance: "retrieval:kb", labels: [] }
+          - role: assistant
+            parts:
+              - { type: tool_call, callId: c1, tool: lookup, arguments: { key: k3 }, provenance: model, labels: [] }
+          - role: tool
+            parts:
+              - { type: tool_result, callId: c1, tool: lookup, result: { ok: { output: { value: "SYN-VALUE-0003" } } }, provenance: "tool:lookup", labels: [] }

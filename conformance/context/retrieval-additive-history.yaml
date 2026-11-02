@@ -1,0 +1,124 @@
+schemaVersion: "0.1.0"
+id: context.retrieval-additive-history
+title: Automatically retrieved content is appended to the principal message and never replaces or reorders system content or history
+description: >-
+  The profile enables automatic retrieval from `kb`, limit 2. Turn 1's
+  query returns no records, so turn 1 adds no retrieved parts and the
+  history it leaves is unambiguous. Turn 2's query returns two records.
+
+  Turn 2's model request is asserted exactly: system content first, then
+  turn 1's principal and assistant messages unchanged and in order, then
+  turn 2's principal message with the two retrieved parts appended after
+  the principal's own part (CTX-043, CTX-010). Turn 1's request is
+  asserted exactly too, as the baseline the second one only adds to.
+
+  Reading (not fixed by the spec): system content is one `system`
+  message whose parts are the bundle's `policyInstructions` then the
+  persona's `instructions` (CTX-010 item 1), each a text part with
+  provenance `system` and no labels. Token use is far below the scripted
+  default limits; no compaction.
+requirements: [CTX-043]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+          vectorStore: { adapter: memory, region: test-region, sources: [kb] }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+        context: { retrieval: { auto: true, source: kb, limit: 2 } }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "SYN-ANSWER-0043-1" }]
+          usage: { inputTokens: 20, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "SYN-ANSWER-0043-2" }]
+          usage: { inputTokens: 40, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    vectorStores:
+      kb:
+        - results: []
+        - results:
+            - { id: r1, text: "SYN-KB-0043-A first retrieved note", tenant: t1 }
+            - { id: r2, text: "SYN-KB-0043-B second retrieved note", tenant: t1 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "First question" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Second question" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  providerRequests:
+    scripted-a:
+      - messages:
+          - role: system
+            parts:
+              - { type: text, text: "Follow organisational policy.", provenance: system, labels: [] }
+              - { type: text, text: "You are a test assistant.", provenance: system, labels: [] }
+          - role: principal
+            parts:
+              - { type: text, text: "First question", provenance: principal, labels: [] }
+      - messages:
+          - role: system
+            parts:
+              - { type: text, text: "Follow organisational policy.", provenance: system, labels: [] }
+              - { type: text, text: "You are a test assistant.", provenance: system, labels: [] }
+          - role: principal
+            parts:
+              - { type: text, text: "First question", provenance: principal, labels: [] }
+          - role: assistant
+            parts:
+              - { type: text, text: "SYN-ANSWER-0043-1", provenance: model }
+          - role: principal
+            parts:
+              - { type: text, text: "Second question", provenance: principal, labels: [] }
+              - { type: text, text: "SYN-KB-0043-A first retrieved note", provenance: "retrieval:kb", labels: [] }
+              - { type: text, text: "SYN-KB-0043-B second retrieved note", provenance: "retrieval:kb", labels: [] }
+  stubCalls:
+    vectorStore/kb:
+      - arguments: { tenant: t1, text: "First question", limit: 2 }
+      - arguments: { tenant: t1, text: "Second question", limit: 2 }
