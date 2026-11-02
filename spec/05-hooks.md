@@ -215,7 +215,7 @@ The taint rule is a deterministic policy check in the harness. It is not a hook 
 | Model hook output not a valid `HookResult` → failure | HOOK-101 |
 | Model hook calls bypass hooks, emit no model events; no tools; usage on decision | HOOK-102 |
 | Model hook tokens not counted toward turn budget | HOOK-103 |
-| `requireDeterministic` with only a model block hook, or only a native one → rejected | HOOK-104 |
+| `requireDeterministic` with a model block hook whose only companion is a model or native block hook → rejected | HOOK-104 |
 | CEL outside subset → rejected; type error → rejected | HOOK-110–112 |
 | CEL runtime error → hook failure | HOOK-113 |
 | CEL edge cases: integer division, null and missing fields, RE2 `matches` | HOOK-110, 114 |
@@ -237,7 +237,7 @@ The taint rule is a deterministic policy check in the harness. It is not a hook 
 | Streamed profile with blocking/rewriting `afterModelCall` or `beforeResponse` hook → rejected at load | HOOK-040 |
 | Annotate-only `failClosed` hook fails → continue | HOOK-053 |
 | Required remote hook barred by sensitivity policy → failure, fail-closed block | HOOK-054 |
-| Persona tries to remove a bundle hook → rejected | HOOK-070, 071 |
+| Persona tries to replace or re-version a bundle hook → rejected; omitting it does not remove it | HOOK-070, 071 |
 | Implementation supports all four source kinds | HOOK-081 |
 | Model hook from a disallowed provider → rejected | HOOK-100 |
 | Model hook declaring `block` with `failOpen` → rejected | HOOK-101 |
@@ -291,3 +291,47 @@ The taint rule is a deterministic policy check in the harness. It is not a hook 
 
 - HOOK-062: hook input hashes are computed over content canonicalized with RFC 8785 (EVAL-000). In replay-decisions mode, hooks without a recorded decision are re-evaluated and divergences reported (EVAL-063).
 
+
+## Amendment 2026-11-01 — from Phase 4 (schemas and fixtures)
+
+Schemas: `schemas/config/v1/hook.yaml` (`HookDefinition`); `schemas/core/v1/hook.yaml` (`hookRequest`, `hookResult`, and `variables`, the per-point view); the `hookDecision` payload in `schemas/core/v1/event.yaml`.
+
+**Definitions**
+
+- HOOK-001: `results` lists at least one result (`continue` alone is allowed). Source fields are those the Area 1–4 fixtures used: `rule {when, then}`, `native {handler, credentials?}`, `remote {endpoint}`, `model {model: {provider, name, params?}, instructions, maxTokens}`. `credentials` (secret references only, CFG-061) is allowed only on a `native` source; a `remote` source uses its deployment endpoint's credentials (HOOK-091, HOOK-092).
+- HOOK-090: a rule hook **MUST** declare in `results` the result its `then` returns; otherwise the definition is a configuration error. A rule's `annotate` adds its labels to every part the point sees.
+- HOOK-104: "deterministic" means `rule` or `remote`. A `native` block hook does not satisfy the requirement, and a point with no model hook able to `block` is not constrained.
+- HOOK-070, HOOK-071: a lower layer cannot remove a hook required above it. Omitting it from the lower layer's `requiredHooks` has no effect (`union`); declaring the same `id` at another version is rejected.
+
+**Requests and results**
+
+- HOOK-091: a `HookRequest` carries `schemaVersion`, `hook` (`id@version`), `point`, `tenant`, `sessionId`, `runId` (absent only at `sessionEnd` when the session closes outside a run), optional `traceContext`, and the point's view: `principal` and `session` everywhere; `content` everywhere except `onError` and `sessionEnd`; `tool` and `call` at `beforeToolCall`; `tool` and `result` at `afterToolCall`; `error` at `onError`; `summary` (`closeReason`, `turns`, `usage`) at `sessionEnd`. These are the CEL variables of §9.1 plus `summary`, so every source kind judges the same data. Native handlers receive the same `HookRequest`. `session.step` at the tool points is the step of the call. At `afterToolCall`, `session.tainted` does not yet reflect the result being judged, which enters context only after the hooks (Area 4 stage 11).
+- HOOK-020, HOOK-050: a `HookResult` is `{result}` plus exactly the fields its result needs: `labels` (`[{part, labels}]`, indices into the content the hook saw) for `annotate`; `parts` for `rewrite`; `reasonCode` for `block` and `escalate`. Any other shape is malformed.
+- HOOK-021: rewrite parts carry no `provenance` or `labels`; a result that sets them is malformed. Parts map by position: the rewrite's part *i* replaces part *i* of the content the hook saw and keeps its provenance and at least its labels; parts beyond the original count are inserted (least-trusted provenance, union of labels); a shorter list removes the trailing parts.
+- HOOK-101: a model hook asks for structured output conforming to `HookResult` where the provider supports `structuredOutput` (PROV §5); the answer is the `structured` part's value, otherwise the response text parsed as JSON. Anything else is a failure.
+
+**Failure and recording**
+
+- HOOK-051: the `error` event of a failed hook has `source: hook`, `retryable: false`, and one of these codes: `agentry.hook.timeout` (`unavailable`), `agentry.hook.failed` — the handler, endpoint or model call errored (`unavailable`), `agentry.hook.invalid_result` — undeclared or malformed result (`fatal`), `agentry.hook.rule_error` — CEL evaluation error, HOOK-113 (`fatal`), `agentry.hook.content_barred` — HOOK-054 (`policy`). A failure treated as `block` **MUST** also emit a `hook.decision` with `result: block` and the same code as `reasonCode`, and be audited (HOOK-060). A failure treated as `continue` emits only the `error` event.
+- HOOK-052: a failed hook at `onError` or `sessionEnd` still emits its `error` event (HOOK-051); that event **MUST NOT** run `onError` hooks.
+- HOOK-023: the model-facing error for a hook `block` is `{category: policy, code: agentry.hook.blocked, retryable: false}` with no `details`; failures treated as `block` use the same model-facing error.
+- HOOK-060: the `details` of a `hook_decision` audit record are the `hook.decision` payload.
+- HOOK-062: `inputHash` is the SHA-256 of the RFC 8785 canonical JSON of the hook's view (the `variables` of its `HookRequest`), excluding `schemaVersion`, `hook`, `point`, `tenant`, the session and run IDs and `traceContext`. Identical views therefore hash identically across sessions, which replay relies on (EVAL-063).
+
+**Escalation**
+
+- HOOK-034: the pending action raised by a hook escalation holds the content as rewritten by the hooks before it; on approval the next hook sees that content.
+- HOOK-125: when a taint escalation is approved, the call continues at stage 6 (TOOL-036), so `beforeToolCall` hooks run.
+
+**Taint and approval**
+
+- HOOK-126: provenances are recorded in the order they first entered context, without duplicates.
+- HOOK-130–132: approval rules type-check against the `beforeToolCall` variables with `call.arguments` as `map(string, dyn)`, so a missing argument is a run-time error (and escalates, HOOK-132), not a load-time one.
+
+**CEL (§9)**
+
+- HOOK-112: variables are typed with exactly the fields of §9.1; `principal.attributes`, `call.arguments`, `result.output` and `structured` part values are `dyn`. A load-time failure has one of two stages, which CEL rule fixtures (EVAL-005) assert: `compile` — parsing, and the syntactic subset checks (bytes literals, message construction); `type_check` — every other load-time check, including names outside the subset (`timestamp`, `duration`, custom functions). A `matches` pattern that is a literal and not valid RE2 is a `type_check` failure; a non-literal invalid pattern is a run-time error.
+
+**Known fixture limits** (fixtures to follow with Area 7)
+
+- Retrieved content as a taint source (HOOK-120) and taint surviving compaction (HOOK-121) need vector-store stubs and a deterministic way to force compaction, which the fixture format does not yet have.
