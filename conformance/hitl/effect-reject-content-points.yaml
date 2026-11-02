@@ -219,7 +219,6 @@ expect:
           - { type: escalation.raised, payload: { escalation: { pendingActions: [{ id: $actAmc, kind: content, point: afterModelCall }] } } }
           - { type: escalation.resolved }
           - { type: run.ended, payload: { reason: blocked } }
-      eventCount: { $any: true }
     $br:
       state: idle
       events:

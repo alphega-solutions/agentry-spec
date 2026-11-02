@@ -1,0 +1,160 @@
+schemaVersion: "0.1.0"
+id: hitl.effect-never-auto-approved
+title: An escalation left undecided past its TTLs is never approved automatically, under either onExpiry mode
+description: >-
+  update_record has `approval: always`. Both sessions escalate at
+  2026-01-01T00:00Z (suspendedTtl PT72H, idleTtl PT24H) and no reviewer
+  ever decides.
+
+
+  $close (profile default@1, `onExpiry: close`): at 2026-01-04T00:00Z the
+  session closes `expired`.
+
+
+  $reject (profile rejecting@1, `onExpiry: reject`): at
+  2026-01-04T00:00Z the action receives an expiry rejection (`decidedBy:
+  expiry`, type `reject`); the host then resumes it with no decisions, the
+  model receives `agentry.hitl.rejected`, and after a further idleTtl the
+  session closes `expired`.
+
+
+  In neither session is the call ever dispatched (no `tool.call`; the stub
+  has an empty behaviour list), and no `approve` or `edit` decision exists in
+  the audit log; the only decision recorded is the expiry
+  rejection.
+requirements: [HITL-080]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.update_record }
+      - kind: HarnessProfile
+        id: rejecting
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        onExpiry: reject
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1, rejecting@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k2, value: v2 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "The update was not approved." }]
+          usage: { inputTokens: 30, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record: []
+script:
+  - action: run
+    bind: $close
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    expect: { ok: true, endReason: escalated }
+  - action: run
+    bind: $reject
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    profile: rejecting@1
+    input: [{ type: text, text: "Set k2 to v2" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  - clock: { advance: PT72H }
+  - action: resume
+    session: $reject
+    decisions: []
+    expect: { ok: true, endReason: responded }
+  - clock: { advance: PT24H }
+expect:
+  sessions:
+    $close:
+      state: closed
+      closeReason: expired
+      events:
+        mode: subsequence
+        items:
+          - { type: run.ended, payload: { reason: escalated } }
+          - { type: session.closed, timestamp: { $regex: "^2026-01-04T00:00:00" }, payload: { reason: expired } }
+      absentEvents:
+        - { type: tool.call }
+        - { type: escalation.resolved }
+        - { type: run.started, payload: { kind: resume } }
+    $reject:
+      state: closed
+      closeReason: expired
+      events:
+        mode: subsequence
+        items:
+          - { type: run.ended, payload: { reason: escalated } }
+          - { type: run.started, timestamp: { $regex: "^2026-01-04T00:00:00" }, payload: { kind: resume } }
+          - { type: tool.result, payload: { callId: c1, result: { error: { category: policy, code: agentry.hitl.rejected } } } }
+          - { type: run.ended, payload: { reason: responded } }
+          - { type: session.closed, timestamp: { $regex: "^2026-01-05T00:00:00" }, payload: { reason: expired } }
+      absentEvents:
+        - { type: tool.call }
+  stubCalls:
+    update_record: { count: 0 }
+  ports:
+    auditLog:
+      t1:
+        $all:
+          - $count: { of: { type: decision, details: { type: approve } }, equals: 0 }
+          - $count: { of: { type: decision, details: { type: edit } }, equals: 0 }
+          - $count: { of: { type: decision }, equals: 1 }
+          - $contains:
+              - type: decision
+                sessionId: $reject
+                reviewer: { $absent: true }
+                details: { pendingActionId: $act, type: reject, decidedBy: expiry, reviewer: { $absent: true } }

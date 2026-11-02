@@ -1,0 +1,174 @@
+schemaVersion: "0.1.0"
+id: hitl.effect-confirm-recovery
+title: Confirming a recovery action delivers the stated outcome and records it in the idempotency store; the call is never re-dispatched
+description: >-
+  Each session first responds once (so it exists), then the implementation
+  crashes at `after_started_record` while its second run requests
+  update_record (mutating, not idempotent): the started record exists, the
+  call was not dispatched. After a restart and a clock advance past the
+  run lease, resume() performs recovery (HITL-091 as amended, step 4): a
+  `recovery` escalation is raised and that resume() is refused with
+  `conflict` (the action is undecided). The reviewer then confirms the
+  outcome. The update_record stub has an empty behaviour list, so any
+  dispatch fails the test; it is called zero times.
+
+
+  $ok: `confirm` with outcome `succeeded` and a stated output. The model
+  receives an `ok` result with exactly that output, and the idempotency
+  store's record for the action's key is `completed` with that outcome.
+
+
+  $fail: `confirm` with outcome `failed`. The model receives the error
+  `{category: unavailable, code: agentry.hitl.confirmed_failed, retryable:
+  false}` as the call's result (non-retryable tool errors are delivered,
+  Area 4 amendment 2026-11-01, TOOL-053), the turn continues to a
+  response, and the idempotency store records the failure as the outcome.
+requirements: [HITL-060]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        # $ok
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k-ok, value: v1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated." }]
+          usage: { inputTokens: 40, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $fail
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k-fail, value: v1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "The update failed." }]
+          usage: { inputTokens: 40, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record: []
+script:
+  # $ok
+  - action: run
+    bind: $ok
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - crash: { at: after_started_record, session: $ok }
+  - action: run
+    session: $ok
+    principal: p1
+    input: [{ type: text, text: "Set k-ok to v1" }]
+  - restart: {}
+  - clock: { advance: PT1H }
+  - action: resume
+    session: $ok
+    reviewer: r1
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $actOk, payload.escalation.pendingActions.0.idempotencyKey: $keyOk }
+    expect: { ok: false, error: { category: conflict } }
+  - action: resume
+    session: $ok
+    reviewer: r1
+    decisions:
+      - decisionId: "01900000-0000-7000-8000-000000000621"
+        pendingActionId: $actOk
+        type: confirm
+        outcome: succeeded
+        output: { updated: true, confirmedBy: reviewer }
+    expect: { ok: true, endReason: responded }
+  # $fail
+  - action: run
+    bind: $fail
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - crash: { at: after_started_record, session: $fail }
+  - action: run
+    session: $fail
+    principal: p1
+    input: [{ type: text, text: "Set k-fail to v1" }]
+  - restart: {}
+  - clock: { advance: PT1H }
+  - action: resume
+    session: $fail
+    reviewer: r1
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $actFail, payload.escalation.pendingActions.0.idempotencyKey: $keyFail }
+    expect: { ok: false, error: { category: conflict } }
+  - action: resume
+    session: $fail
+    reviewer: r1
+    decisions:
+      - decisionId: "01900000-0000-7000-8000-000000000622"
+        pendingActionId: $actFail
+        type: confirm
+        outcome: failed
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $ok:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: escalation.raised, payload: { escalation: { sources: [recovery], pendingActions: [{ id: $actOk, kind: recovery, tool: update_record, arguments: { key: k-ok, value: v1 } }] } } }
+          - { type: escalation.resolved }
+          - { type: tool.result, payload: { callId: c1, tool: update_record, result: { ok: { output: { updated: true, confirmedBy: reviewer } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call }
+    $fail:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: escalation.raised, payload: { escalation: { sources: [recovery], pendingActions: [{ id: $actFail, kind: recovery, tool: update_record, arguments: { key: k-fail, value: v1 } }] } } }
+          - { type: escalation.resolved }
+          - type: tool.result
+            payload:
+              callId: c1
+              tool: update_record
+              result: { error: { category: unavailable, code: agentry.hitl.confirmed_failed, retryable: false } }
+          - { type: model.request }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call }
+        - { type: run.ended, payload: { reason: failed } }
+  stubCalls:
+    update_record: { count: 0 }
+  ports:
+    idempotencyStore:
+      t1:
+        $keyOk: { state: completed, outcome: { ok: { output: { updated: true, confirmedBy: reviewer } } } }
+        $keyFail:
+          state: completed
+          outcome: { error: { category: unavailable, code: agentry.hitl.confirmed_failed, retryable: false } }
+  providerRequests:
+    scripted-a:
+      - {}
+      - {}
+      - messages:
+          $contains:
+            - role: tool
+              parts: [{ type: tool_result, callId: c1, result: { ok: { output: { updated: true, confirmedBy: reviewer } } } }]
+      - {}
+      - {}
+      - messages:
+          $contains:
+            - role: tool
+              parts: [{ type: tool_result, callId: c1, result: { error: { category: unavailable, code: agentry.hitl.confirmed_failed, retryable: false } } }]
