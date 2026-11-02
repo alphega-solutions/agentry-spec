@@ -1,0 +1,187 @@
+schemaVersion: "0.1.0"
+id: orchestration.child-providers-intersect
+title: A child may use only providers allowed both to its own persona and to its parent
+description: >-
+  helper@1 allows scripted-a and scripted-b and has primary model
+  scripted-b/model-b with fallback scripted-a/model-a — valid on its own
+  (CFG-042). The parent persona `coordinator` allows only scripted-a
+  (persona `allowedProviders`, merge `intersect`, CFG-080; the policy
+  bundle sets none, so its layer does not narrow either session).
+
+
+  The child's effective allowed providers are {scripted-a, scripted-b} ∩
+  {scripted-a} = {scripted-a} (ORCH-014). Its primary model's provider is
+  therefore not allowed, and the child runs on the first of its models,
+  in order, that the intersection allows (Area 8 amendment, "Readings
+  settled with the Area 8 fixtures", ORCH-014/PROV-023): its fallback
+  scripted-a/model-a. Running on a model other than its primary, the
+  child emits PROV-051's `policy.decision` (kind `routing`, outcome
+  `switch`) before its model request ("Further readings settled in
+  review"); its model calls go to scripted-a/model-a, scripted-b never
+  receives a request from it, and the child responds.
+
+
+  Control: a root session of helper@1 under the same snapshot calls its
+  primary, scripted-b/model-b, with no routing switch.
+
+
+  Load-time rule: every persona reachable through an agent tool must have
+  at least one model allowed through the intersection with every
+  possible (transitive) caller's allowed providers. A later load adds
+  narrow@1 (allows only scripted-b; model scripted-b/model-b, no
+  fallbacks — valid on its own under PROV-023), the agent tool ask_narrow
+  (→ narrow@1), and the persona narrow_caller@1, which allows only
+  scripted-a and has ask_narrow in its allowlist. narrow's intersection
+  with its caller is empty, so no model of narrow's is allowed through
+  it: a configuration error, and the previous snapshot stays in force.
+
+  Scripted responses: scripted-a 3 (parent, child, parent), scripted-b 1
+  (control). Stubs: lookup none (empty list; never called).
+requirements: [ORCH-014]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Persona
+        id: helper
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You look things up."
+        tools: [lookup@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        allowedProviders: [scripted-a, scripted-b]
+        model:
+          provider: scripted-b
+          name: model-b
+          fallbacks:
+            - { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: ask_helper
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the helper persona to look something up.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: read
+        binding: { kind: agent, persona: helper@1 }
+      - kind: Persona
+        id: coordinator
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You coordinate helpers."
+        tools: [ask_helper@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        allowedProviders: [scripted-a]
+        model: { provider: scripted-a, name: model-a }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # parent, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_helper, arguments: { task: "SYN-CHILD-TASK find record a" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # child, step 1 (on its allowed fallback)
+        - parts: [{ type: text, text: "Record a holds A." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # parent, step 2
+        - parts: [{ type: text, text: "The helper says record a holds A." }]
+          usage: { inputTokens: 40, outputTokens: 8, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      responses:
+        # control root helper session only
+        - parts: [{ type: text, text: "Hello from scripted-b." }]
+          usage: { inputTokens: 10, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup: []
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: coordinator@1
+    input: [{ type: text, text: "Ask the helper to find record a" }]
+    capture:
+      - event: { type: tool.call, payload: { callId: c1, tool: ask_helper } }
+        bind: { payload.childSessionId: $child }
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $ctl
+    tenant: t1
+    principal: p1
+    persona: helper@1
+    input: [{ type: text, text: "SYN-CONTROL-REQUEST" }]
+    expect: { ok: true, endReason: responded }
+  # A reachable persona with no model allowed through its caller.
+  - load:
+      artifacts:
+        - kind: Persona
+          id: narrow
+          version: 1
+          schemaVersion: "0.1.0"
+          instructions: "You look things up."
+          tools: [lookup@1]
+          defaultProfile: default@1
+          allowedProfiles: [default@1]
+          allowedProviders: [scripted-b]
+          model: { provider: scripted-b, name: model-b }
+        - kind: Tool
+          id: ask_narrow
+          version: 1
+          schemaVersion: "0.1.0"
+          description: Ask the narrow persona to look something up.
+          input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+          effect: read
+          binding: { kind: agent, persona: narrow@1 }
+        - kind: Persona
+          id: narrow_caller
+          version: 1
+          schemaVersion: "0.1.0"
+          instructions: "You coordinate the narrow helper."
+          tools: [ask_narrow@1]
+          defaultProfile: default@1
+          allowedProfiles: [default@1]
+          allowedProviders: [scripted-a]
+          model: { provider: scripted-a, name: model-a }
+    expect: { ok: false, error: { category: configuration } }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: c1, tool: ask_helper, result: { ok: { $any: true } } } }
+          - { type: run.ended, payload: { reason: responded } }
+    $child:
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, payload: { persona: helper@1, parent: { sessionId: $s, callId: c1 } } }
+          - { type: policy.decision, payload: { kind: routing, outcome: switch } }
+          - { type: model.request, payload: { provider: scripted-a, model: model-a } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: model.request, payload: { provider: scripted-b } }
+    $ctl:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, payload: { provider: scripted-b, model: model-b, role: primary } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: policy.decision, payload: { kind: routing } }
+  providerRequests:
+    scripted-a: { count: 3 }
+    scripted-b:
+      - messages:
+          $contains:
+            - role: principal
+              parts: [{ type: text, text: "SYN-CONTROL-REQUEST" }]

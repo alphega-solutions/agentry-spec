@@ -1,0 +1,406 @@
+schemaVersion: "0.1.0"
+id: orchestration.return-error-reasons
+title: A child run ending `blocked` or at a limit returns the mapped delegation error, the child is closed, and the parent run continues to a response
+description: >-
+  The parent calls five agent tools, one per step, each bound to a child
+  persona that ends its run for a different reason:
+
+  - ask_guarded → guarded@1, whose required native hook at beforeResponse
+    blocks its answer: the child run ends `blocked`. The parent receives
+    `policy` (`agentry.delegation.blocked`); the child's fallback message
+    (SYN-CHILD-FALLBACK-4471) is not used: it is sent to no model and no
+    stub.
+  - ask_stepper → stepper@1 (profile stepLimit 1): its step 1 requests a
+    lookup, so step 2 is never started and the run ends `step_limit`.
+  - ask_spender → spender@1 (profile token budget 30): its step 1 uses 45
+    tokens, so the run ends `budget_exhausted` without a step 2.
+  - ask_bulky → bulky@1 (profile limits.partSize 512): its fetch_big result
+    is about 1 KiB, replaced by `limit` (`agentry.tool.result_too_large`),
+    and the run ends `context_limit` (TOOL-072 as amended 2026-11-01).
+  - ask_sleeper → sleeper@1 (profile timeouts.run PT10S, timeouts.tool
+    PT1M): its slow_op call takes 60 s on the virtual clock, so the child's
+    run ends `timeout` at 10 s and the stub receives the cancellation. The
+    parent call's own deadline (the parent profile's PT30S) is later, so
+    the child's run timeout is reached first and the parent call does not
+    itself time out.
+
+  Each of the four limit reasons gives `unavailable`, `retryable: false`
+  (`agentry.delegation.limit`) (ORCH-050). Each child is closed with reason
+  `completed`: all five end reasons leave a session idle (CORE-020), and
+  ORCH-050 reserves `failed` for a `failed` run (that row is covered by
+  tool.agent-error-result-not-fatal). None of these errors ends the parent
+  run (ORCH-051): the parent model receives all five results and the
+  parent run responds, leaving the parent idle.
+requirements: [ORCH-050, ORCH-051]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      # Child profiles
+      - kind: HarnessProfile
+        id: child-steps
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 1
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+      - kind: HarnessProfile
+        id: child-budget
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        budget: { tokens: 30 }
+        timeouts: { run: PT5M, tool: PT30S }
+      - kind: HarnessProfile
+        id: child-small
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        limits: { partSize: 512, sessionSize: 10485760 }
+      - kind: HarnessProfile
+        id: child-quick
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        budget: { tokens: 100000 }
+        timeouts: { run: PT10S, tool: PT1M }
+      # Child tools
+      - kind: Tool
+        id: tally
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Tally a record.
+        input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }
+        effect: read
+        binding: { kind: native, handler: test.tally }
+      - kind: Tool
+        id: fetch_big
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Fetch a large record.
+        input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }
+        effect: read
+        binding: { kind: native, handler: test.fetch_big }
+      - kind: Tool
+        id: slow_op
+        version: 1
+        schemaVersion: "0.1.0"
+        description: A slow read.
+        input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }
+        effect: read
+        binding: { kind: native, handler: test.slow_op }
+      - kind: Hook
+        id: deny-response
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeResponse]
+        results: [block]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.deny-response }
+      # Child personas
+      - kind: Persona
+        id: guarded
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You answer questions."
+        tools: [lookup@1]
+        requiredHooks: [deny-response@1]
+        fallbackMessage: "SYN-CHILD-FALLBACK-4471"
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Persona
+        id: stepper
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You look things up."
+        tools: [lookup@1]
+        defaultProfile: child-steps@1
+        allowedProfiles: [child-steps@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Persona
+        id: spender
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You tally records."
+        tools: [tally@1]
+        defaultProfile: child-budget@1
+        allowedProfiles: [child-budget@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Persona
+        id: bulky
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You fetch records."
+        tools: [fetch_big@1]
+        defaultProfile: child-small@1
+        allowedProfiles: [child-small@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Persona
+        id: sleeper
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You run slow reads."
+        tools: [slow_op@1]
+        defaultProfile: child-quick@1
+        allowedProfiles: [child-quick@1]
+        model: { provider: scripted-a, name: model-a }
+      # Agent tools
+      - kind: Tool
+        id: ask_guarded
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the guarded persona.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: read
+        binding: { kind: agent, persona: guarded@1 }
+      - kind: Tool
+        id: ask_stepper
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the stepper persona.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: read
+        binding: { kind: agent, persona: stepper@1 }
+      - kind: Tool
+        id: ask_spender
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the spender persona.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: read
+        binding: { kind: agent, persona: spender@1 }
+      - kind: Tool
+        id: ask_bulky
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the bulky persona.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: read
+        binding: { kind: agent, persona: bulky@1 }
+      - kind: Tool
+        id: ask_sleeper
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the sleeper persona.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: read
+        binding: { kind: agent, persona: sleeper@1 }
+      # Parent persona: sees every child tool, so children are not narrowed (ORCH-013).
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, tally@1, fetch_big@1, slow_op@1, ask_guarded@1, ask_stepper@1, ask_spender@1, ask_bulky@1, ask_sleeper@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model: { provider: scripted-a, name: model-a }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # 1. parent, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_guarded, arguments: { task: "Answer q1" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 2. guarded child, step 1 (blocked by deny-response at beforeResponse)
+        - parts: [{ type: text, text: "Draft answer." }]
+          usage: { inputTokens: 10, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 3. parent, step 2
+        - parts: [{ type: tool_call, callId: c2, tool: ask_stepper, arguments: { task: "Look up a" } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 4. stepper child, step 1 (its last allowed step)
+        - parts: [{ type: tool_call, callId: s1, tool: lookup, arguments: { key: a } }]
+          usage: { inputTokens: 10, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 5. parent, step 3
+        - parts: [{ type: tool_call, callId: c3, tool: ask_spender, arguments: { task: "Tally b" } }]
+          usage: { inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 6. spender child, step 1 (45 tokens, over its budget of 30)
+        - parts: [{ type: tool_call, callId: b1, tool: tally, arguments: { key: b } }]
+          usage: { inputTokens: 35, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 7. parent, step 4
+        - parts: [{ type: tool_call, callId: c4, tool: ask_bulky, arguments: { task: "Fetch big" } }]
+          usage: { inputTokens: 50, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 8. bulky child, step 1
+        - parts: [{ type: tool_call, callId: f1, tool: fetch_big, arguments: { key: big } }]
+          usage: { inputTokens: 10, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 9. parent, step 5
+        - parts: [{ type: tool_call, callId: c5, tool: ask_sleeper, arguments: { task: "Read z slowly" } }]
+          usage: { inputTokens: 60, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 10. sleeper child, step 1
+        - parts: [{ type: tool_call, callId: z1, tool: slow_op, arguments: { key: z } }]
+          usage: { inputTokens: 10, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 11. parent, step 6
+        - parts: [{ type: text, text: "None of the helpers could finish." }]
+          usage: { inputTokens: 70, outputTokens: 7, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "A" } }
+      update_record: []
+      # tally: default stub (the spender's call may or may not be dispatched once its budget is reached)
+      fetch_big:
+        - ok:
+            output:
+              text: >-
+                SYN-BIG-C050 lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore
+                lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore
+                lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore
+                lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore
+                lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore
+                lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore
+                lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore
+                lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore
+                lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore
+                lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore
+                SYN-BIG-C050-END
+      slow_op:
+        - { ok: { output: { value: "Z" } }, delayMs: 60000 }
+    nativeHooks:
+      deny-response:
+        - { result: block, reasonCode: test.guard.blocked }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Ask each helper in turn" }]
+    capture:
+      - event: { type: tool.call, payload: { tool: ask_guarded } }
+        bind: { payload.childSessionId: $guarded }
+      - event: { type: tool.call, payload: { tool: ask_stepper } }
+        bind: { payload.childSessionId: $stepper }
+      - event: { type: tool.call, payload: { tool: ask_spender } }
+        bind: { payload.childSessionId: $spender }
+      - event: { type: tool.call, payload: { tool: ask_bulky } }
+        bind: { payload.childSessionId: $bulky }
+      - event: { type: tool.call, payload: { tool: ask_sleeper } }
+        bind: { payload.childSessionId: $sleeper }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: tool.result
+            payload: { callId: c1, tool: ask_guarded, result: { error: { category: policy, code: agentry.delegation.blocked } } }
+          - type: tool.result
+            payload: { callId: c2, tool: ask_stepper, result: { error: { category: unavailable, code: agentry.delegation.limit, retryable: false } } }
+          - type: tool.result
+            payload: { callId: c3, tool: ask_spender, result: { error: { category: unavailable, code: agentry.delegation.limit, retryable: false } } }
+          - type: tool.result
+            payload: { callId: c4, tool: ask_bulky, result: { error: { category: unavailable, code: agentry.delegation.limit, retryable: false } } }
+          - type: tool.result
+            payload: { callId: c5, tool: ask_sleeper, result: { error: { category: unavailable, code: agentry.delegation.limit, retryable: false } } }
+          - { type: model.request, step: 6 }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: run.ended, payload: { reason: failed } }
+        - { type: tool.result, payload: { result: { ok: { $any: true } } } }
+        - { type: tool.result, payload: { result: { error: { code: agentry.tool.timeout } } } }
+    $guarded:
+      state: closed
+      closeReason: completed
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: deny-response@1, point: beforeResponse, result: block } }
+          - { type: run.ended, payload: { reason: blocked } }
+          - { type: session.closed, payload: { reason: completed } }
+    $stepper:
+      state: closed
+      closeReason: completed
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, step: 1, payload: { callId: s1 } }
+          - { type: run.ended, payload: { reason: step_limit } }
+          - { type: session.closed, payload: { reason: completed } }
+      absentEvents:
+        - { type: model.request, step: 2 }
+    $spender:
+      state: closed
+      closeReason: completed
+      events:
+        mode: subsequence
+        items:
+          - { type: run.ended, payload: { reason: budget_exhausted } }
+          - { type: session.closed, payload: { reason: completed } }
+      absentEvents:
+        - { type: model.request, step: 2 }
+    $bulky:
+      state: closed
+      closeReason: completed
+      events:
+        mode: subsequence
+        items:
+          - type: tool.result
+            payload: { callId: f1, result: { error: { category: limit, code: agentry.tool.result_too_large } } }
+          - { type: run.ended, payload: { reason: context_limit } }
+          - { type: session.closed, payload: { reason: completed } }
+      absentEvents:
+        - { type: model.request, step: 2 }
+    $sleeper:
+      state: closed
+      closeReason: completed
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: z1, tool: slow_op } }
+          - { type: run.ended, payload: { reason: timeout } }
+          - { type: session.closed, payload: { reason: completed } }
+      absentEvents:
+        - { type: model.request, step: 2 }
+  stubCalls:
+    lookup: [{ arguments: { key: a }, context: { sessionId: $stepper } }]
+    update_record: { count: 0 }
+    fetch_big: [{ arguments: { key: big }, context: { sessionId: $bulky } }]
+    slow_op: [{ arguments: { key: z }, context: { sessionId: $sleeper }, cancelled: true, completed: false }]
+    deny-response: { count: 1 }
+  providerRequests:
+    scripted-a:
+      - {}
+      - {}
+      - {}
+      - {}
+      - {}
+      - {}
+      - {}
+      - {}
+      - {}
+      - {}
+      - messages:
+          $contains:
+            - role: tool
+              parts: [{ type: tool_result, callId: c1, result: { error: { category: policy, code: agentry.delegation.blocked } } }]
+            - role: tool
+              parts: [{ type: tool_result, callId: c2, result: { error: { category: unavailable, code: agentry.delegation.limit } } }]
+            - role: tool
+              parts: [{ type: tool_result, callId: c3, result: { error: { category: unavailable, code: agentry.delegation.limit } } }]
+            - role: tool
+              parts: [{ type: tool_result, callId: c4, result: { error: { category: unavailable, code: agentry.delegation.limit } } }]
+            - role: tool
+              parts: [{ type: tool_result, callId: c5, result: { error: { category: unavailable, code: agentry.delegation.limit } } }]
+  noTransmittedContent:
+    - "SYN-CHILD-FALLBACK-4471"

@@ -1,0 +1,218 @@
+schemaVersion: "0.1.0"
+id: orchestration.escalate-chain-reviewer-rules
+title: Reviewer rules from every session in the chain apply to a delegated action, with the highest `requiredApprovals`
+description: >-
+  The root persona (assistant) declares the `approval` reviewer rule
+  "'approver' in reviewer.roles" with requiredApprovals 3; the child
+  persona (helper) declares "'records' in reviewer.roles" with
+  requiredApprovals 2. The bundle declares none. The helper calls
+  file_record (`approval: always`), and the escalation is mirrored on the
+  root.
+
+  The root's mirrored action lists both rules, root first then the
+  helper's (Area 8 amendment, "Further readings settled in review",
+  ORCH-060/HITL-010), and requires 3 approvals — the highest in the chain, the root's own
+  (ORCH-062). Decisions against the root's escalation: rA (`approver`
+  only) is refused with `unauthorized` (`agentry.hitl.reviewer_refused`),
+  so the child persona's rule applies at the root; rR (`records` only) is
+  refused, so the root's rule applies too. rB1 and rB2 (both roles)
+  approve, and resume() still fails with `conflict` (`agentry.hitl.pending`):
+  two approvals, which would satisfy the child's own requirement, are not
+  enough. rB3's approval with resume() is accepted; the helper resumes,
+  file_record is dispatched once, and the root responds.
+
+  The owner's (helper's) own escalation is an ordinary one (`delegated`
+  absent), and its copy of the action carries the same chain-effective
+  reviewer requirements: 3 approvals and the rules in the same order,
+  root first (Area 8 amendment: every level's copy of an action carries
+  the chain-effective `reviewerRequirements`). Decisions are submitted
+  only at the root (ORCH-063).
+requirements: [ORCH-062]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: file_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: File a record.
+        input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }
+        effect: mutating
+        approval: always
+        binding: { kind: native, handler: test.file_record }
+      - kind: Persona
+        id: helper
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You file records."
+        tools: [file_record@1]
+        reviewerRules:
+          approval: [{ rule: "'records' in reviewer.roles", requiredApprovals: 2 }]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: ask_helper
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the helper persona to file a record.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: mutating
+        binding: { kind: agent, persona: helper@1 }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, file_record@1, ask_helper@1]
+        reviewerRules:
+          approval: [{ rule: "'approver' in reviewer.roles", requiredApprovals: 3 }]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model: { provider: scripted-a, name: model-a }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: rA, subject: reviewer-a, assurance: multi_factor, roles: [approver] }
+        - { id: rR, subject: reviewer-r, assurance: multi_factor, roles: [records] }
+        - { id: rB1, subject: reviewer-b1, assurance: multi_factor, roles: [approver, records] }
+        - { id: rB2, subject: reviewer-b2, assurance: multi_factor, roles: [approver, records] }
+        - { id: rB3, subject: reviewer-b3, assurance: multi_factor, roles: [approver, records] }
+  providers:
+    scripted-a:
+      responses:
+        # 1. root, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_helper, arguments: { task: "File record k1" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 2. helper, step 1 — approval: always escalates
+        - parts: [{ type: tool_call, callId: h1, tool: file_record, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 3. helper, step 2 (resume run)
+        - parts: [{ type: text, text: "Filed k1." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 4. root, step 2 (resume run)
+        - parts: [{ type: text, text: "Record k1 is filed." }]
+          usage: { inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      file_record:
+        - ok: { output: { filed: "k1" } }
+      lookup: []
+      update_record: []
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Get record k1 filed" }]
+    capture:
+      - event: { type: tool.call, payload: { tool: ask_helper } }
+        bind: { payload.childSessionId: $h }
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $esc, payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  - action: decide
+    session: $s
+    reviewer: rA
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000c61", pendingActionId: $act, type: approve }
+    expect: { ok: false, error: { category: unauthorized, code: agentry.hitl.reviewer_refused, details: { decisionId: "01900000-0000-7000-8000-000000000c61" } }, newEvents: 0 }
+  - action: decide
+    session: $s
+    reviewer: rR
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000c62", pendingActionId: $act, type: approve }
+    expect: { ok: false, error: { category: unauthorized, code: agentry.hitl.reviewer_refused, details: { decisionId: "01900000-0000-7000-8000-000000000c62" } }, newEvents: 0 }
+  - action: decide
+    session: $s
+    reviewer: rB1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000c63", pendingActionId: $act, type: approve }
+    expect: { ok: true, newEvents: 0 }
+  - action: decide
+    session: $s
+    reviewer: rB2
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000c64", pendingActionId: $act, type: approve }
+    expect: { ok: true, newEvents: 0 }
+  - action: resume
+    session: $s
+    reviewer: rB2
+    expect: { ok: false, error: { category: conflict, code: agentry.hitl.pending }, newEvents: 0 }
+  - action: resume
+    session: $s
+    reviewer: rB3
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000c65", pendingActionId: $act, type: approve }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            payload:
+              escalation:
+                id: $esc
+                pendingActions:
+                  - id: $act
+                    source: approval
+                    delegated: true
+                    chain: [$h]
+                    reviewerRequirements:
+                      requiredApprovals: 3
+                      selfApprovalAllowed: false
+                      rules: ["'approver' in reviewer.roles", "'records' in reviewer.roles"]
+          - { type: run.ended, payload: { reason: escalated } }
+          - type: escalation.resolved
+            payload:
+              escalationId: $esc
+              decisions: ["01900000-0000-7000-8000-000000000c63", "01900000-0000-7000-8000-000000000c64", "01900000-0000-7000-8000-000000000c65"]
+          - { type: tool.result, payload: { callId: c1, tool: ask_helper, result: { ok: { output: { text: "Filed k1." } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+    $h:
+      state: closed
+      closeReason: completed
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            payload:
+              escalation:
+                sessionId: $h
+                pendingActions:
+                  - id: $act
+                    source: approval
+                    callId: h1
+                    tool: file_record
+                    delegated: { $absent: true }
+                    chain: { $absent: true }
+                    reviewerRequirements:
+                      requiredApprovals: 3
+                      selfApprovalAllowed: false
+                      rules: ["'approver' in reviewer.roles", "'records' in reviewer.roles"]
+          - { type: run.ended, payload: { reason: escalated } }
+          # dispatched only after the approvals, in the resume run
+          - { type: tool.call, payload: { callId: h1, tool: file_record, arguments: { key: k1 } } }
+          - { type: run.ended, payload: { reason: responded } }
+  stubCalls:
+    file_record: [{ arguments: { key: k1 }, context: { sessionId: $h } }]
+  providerRequests:
+    scripted-a: { count: 4 }
+  ports:
+    auditLog:
+      t1:
+        $all:
+          - $count: { of: { type: decision, sessionId: $s }, equals: 3 }
+          - $count: { of: { type: decision }, equals: 3 }

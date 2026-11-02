@@ -1,0 +1,82 @@
+schemaVersion: "0.1.0"
+id: orchestration.govern-agent-reach-cycle
+title: Reachable tools are computed transitively through nested agent tools and terminate on persona cycles; a mutating tool reachable only through the chain or the cycle forces `mutating`
+description: >-
+  ORCH-020 computes an agent tool's reachable tools from the child persona's
+  allowlist plus, for each agent tool in it, that tool's reachable tools,
+  until no new tools are added. Direct and transitive egress cases are
+  covered by `cfg.semantic-agent-tool-effect`; this fixture covers
+  transitive `mutating` and cycles.
+
+  Setup (loads): `writer@1` allows the mutating `update_record`, and
+  `ask_writer` (→ writer) is declared `mutating`.
+
+  - Nested: `relay@1` allows only `ask_writer`. `ask_relay` (→ relay)
+    declared `read` is rejected — update_record is reachable through
+    ask_writer → writer — and loads when declared `mutating`.
+  - Read-only cycle: `ping@1` allows `lookup` and `ask_pong`; `pong@1`
+    allows only `ask_ping`. Both agent tools are `read` and nothing
+    mutating or egress is reachable, so the configuration loads: the
+    computation terminates on the cycle (CFG-012 allows the cycle).
+  - Mutating cycle: `alpha@1` allows `lookup` and `ask_beta`; `beta@1`
+    allows `ask_alpha` and `update_record`. `ask_beta` is declared
+    `mutating`. `ask_alpha` declared `read` is rejected: alpha's own
+    allowlist has nothing mutating except through the agent tool, and
+    update_record is reached only through ask_beta → beta, which closes the
+    cycle back to ask_alpha. Declared `mutating`, it loads.
+
+  Each rejection is a configuration error naming the agent tool and its
+  `/effect` field (CFG-032 as amended 2026-11-01; Area 8 amendment,
+  "Readings settled with the Area 8 fixtures": ORCH-020 errors name the
+  agent tool whose declaration is too weak, not the persona that makes
+  the tool reachable).
+requirements: [ORCH-020]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - { kind: Persona, id: writer, version: 1, schemaVersion: "0.1.0", instructions: "You update records.", tools: [update_record@1], defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a } }
+      - { kind: Tool, id: ask_writer, version: 1, schemaVersion: "0.1.0", description: Ask the writer persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: mutating, binding: { kind: agent, persona: writer@1 } }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  # Nested: update_record reachable through ask_writer.
+  - load:
+      artifacts:
+        - { kind: Persona, id: relay, version: 1, schemaVersion: "0.1.0", instructions: "You pass work to the writer.", tools: [ask_writer@1], defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a } }
+        - { kind: Tool, id: ask_relay, version: 1, schemaVersion: "0.1.0", description: Ask the relay persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: read, binding: { kind: agent, persona: relay@1 } }
+    expect: { ok: false, error: { category: configuration, details: { artifact: ask_relay@1, field: /effect } } }
+  - load:
+      artifacts:
+        - { kind: Persona, id: relay, version: 1, schemaVersion: "0.1.0", instructions: "You pass work to the writer.", tools: [ask_writer@1], defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a } }
+        - { kind: Tool, id: ask_relay, version: 1, schemaVersion: "0.1.0", description: Ask the relay persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: mutating, binding: { kind: agent, persona: relay@1 } }
+    expect: { ok: true }
+  # Read-only cycle: terminates and loads.
+  - load:
+      artifacts:
+        - { kind: Persona, id: ping, version: 1, schemaVersion: "0.1.0", instructions: "You ask pong.", tools: [lookup@1, ask_pong@1], defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a } }
+        - { kind: Persona, id: pong, version: 1, schemaVersion: "0.1.0", instructions: "You ask ping.", tools: [ask_ping@1], defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a } }
+        - { kind: Tool, id: ask_ping, version: 1, schemaVersion: "0.1.0", description: Ask the ping persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: read, binding: { kind: agent, persona: ping@1 } }
+        - { kind: Tool, id: ask_pong, version: 1, schemaVersion: "0.1.0", description: Ask the pong persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: read, binding: { kind: agent, persona: pong@1 } }
+    expect: { ok: true }
+  # Mutating cycle: update_record reachable from ask_alpha only through the cycle.
+  - load:
+      artifacts:
+        - { kind: Persona, id: alpha, version: 1, schemaVersion: "0.1.0", instructions: "You ask beta.", tools: [lookup@1, ask_beta@1], defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a } }
+        - { kind: Persona, id: beta, version: 1, schemaVersion: "0.1.0", instructions: "You ask alpha or update records.", tools: [ask_alpha@1, update_record@1], defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a } }
+        - { kind: Tool, id: ask_alpha, version: 1, schemaVersion: "0.1.0", description: Ask the alpha persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: read, binding: { kind: agent, persona: alpha@1 } }
+        - { kind: Tool, id: ask_beta, version: 1, schemaVersion: "0.1.0", description: Ask the beta persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: mutating, binding: { kind: agent, persona: beta@1 } }
+    expect: { ok: false, error: { category: configuration, details: { artifact: ask_alpha@1, field: /effect } } }
+  - load:
+      artifacts:
+        - { kind: Persona, id: alpha, version: 1, schemaVersion: "0.1.0", instructions: "You ask beta.", tools: [lookup@1, ask_beta@1], defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a } }
+        - { kind: Persona, id: beta, version: 1, schemaVersion: "0.1.0", instructions: "You ask alpha or update records.", tools: [ask_alpha@1, update_record@1], defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a } }
+        - { kind: Tool, id: ask_alpha, version: 1, schemaVersion: "0.1.0", description: Ask the alpha persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: mutating, binding: { kind: agent, persona: alpha@1 } }
+        - { kind: Tool, id: ask_beta, version: 1, schemaVersion: "0.1.0", description: Ask the beta persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: mutating, binding: { kind: agent, persona: beta@1 } }
+    expect: { ok: true }
+expect: {}

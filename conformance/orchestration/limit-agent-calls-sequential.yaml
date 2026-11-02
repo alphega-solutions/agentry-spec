@@ -1,0 +1,139 @@
+schemaVersion: "0.1.0"
+id: orchestration.limit-agent-calls-sequential
+title: Two agent calls in one step run one at a time, in request order
+description: >-
+  In one step the parent requests ask_helper (c1), note (c2, a read tool
+  whose default stub answers at once) and ask_helper (c3). Each helper
+  child calls lookup, whose stub answers after 1000 ms on the virtual
+  clock.
+
+  Run in request order and one at a time, the first child $a is created
+  at +0s and closes at +1s; only then is the second child $b created, at
+  +1s, closing at +2s. Run in parallel, $b would be created at +0s. The
+  lookup calls are recorded in the same order: first from $a (key a), then
+  from $b (key b). The parent's results reach its model together, in
+  request order (TOOL-032).
+
+  Other tool calls in the step MAY run in parallel with the agent calls
+  (ORCH-040); that permission is not observable as an obligation, so
+  nothing about the timing of c2 is asserted.
+
+  Scripted responses (scripted-a, in call order): 1 parent step 1 (three
+  calls); 2 $a step 1; 3 $a step 2; 4 $b step 1; 5 $b step 2; 6 parent
+  step 2.
+requirements: [ORCH-040]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - { kind: Tool, id: note, version: 1, schemaVersion: "0.1.0", description: Read a note., input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }, effect: read, binding: { kind: native, handler: test.note } }
+      - { kind: Persona, id: helper, version: 1, schemaVersion: "0.1.0", instructions: "You look things up.", tools: [lookup@1], defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a } }
+      - { kind: Tool, id: ask_helper, version: 1, schemaVersion: "0.1.0", description: Ask the helper persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: read, binding: { kind: agent, persona: helper@1 } }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, note@1, ask_helper@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # 1: parent, step 1
+        - parts:
+            - { type: tool_call, callId: c1, tool: ask_helper, arguments: { task: "Find a" } }
+            - { type: tool_call, callId: c2, tool: note, arguments: { key: n } }
+            - { type: tool_call, callId: c3, tool: ask_helper, arguments: { task: "Find b" } }
+          usage: { inputTokens: 20, outputTokens: 15, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 2: $a, step 1
+        - parts: [{ type: tool_call, callId: h1, tool: lookup, arguments: { key: a } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 3: $a, step 2
+        - parts: [{ type: text, text: "a holds A." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 4: $b, step 1
+        - parts: [{ type: tool_call, callId: h1, tool: lookup, arguments: { key: b } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 5: $b, step 2
+        - parts: [{ type: text, text: "b holds B." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 6: parent, step 2
+        - parts: [{ type: text, text: "a holds A and b holds B." }]
+          usage: { inputTokens: 50, outputTokens: 8, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - { ok: { output: { value: "A" } }, delayMs: 1000 }
+        - { ok: { output: { value: "B" } }, delayMs: 1000 }
+      update_record: []
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Have helpers find a and b, and read note n" }]
+    capture:
+      - event: { type: tool.call, payload: { callId: c1, tool: ask_helper } }
+        bind: { payload.childSessionId: $a }
+      - event: { type: tool.call, payload: { callId: c3, tool: ask_helper } }
+        bind: { payload.childSessionId: $b }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: c1, result: { ok: { output: { text: "a holds A." } } } } }
+          - { type: tool.result, payload: { callId: c3, result: { ok: { output: { text: "b holds B." } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+    $a:
+      state: closed
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, timestamp: { $regex: "^2026-01-01T00:00:00" }, payload: { parent: { sessionId: $s, callId: c1 } } }
+          - { type: session.closed, timestamp: { $regex: "^2026-01-01T00:00:01" } }
+    $b:
+      state: closed
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, timestamp: { $regex: "^2026-01-01T00:00:01" }, payload: { parent: { sessionId: $s, callId: c3 } } }
+          - { type: session.closed, timestamp: { $regex: "^2026-01-01T00:00:02" } }
+  stubCalls:
+    lookup:
+      - { arguments: { key: a }, context: { sessionId: $a } }
+      - { arguments: { key: b }, context: { sessionId: $b } }
+    note: { count: 1 }
+  providerRequests:
+    scripted-a:
+      - {}
+      - { messages: { $contains: [{ role: principal, parts: [{ type: structured, value: { task: "Find a" } }] }] } }
+      - {}
+      - { messages: { $contains: [{ role: principal, parts: [{ type: structured, value: { task: "Find b" } }] }] } }
+      - {}
+      - messages:
+          $contains:
+            - role: tool
+              parts:
+                - { type: tool_result, callId: c1 }
+                - { type: tool_result, callId: c2 }
+                - { type: tool_result, callId: c3 }

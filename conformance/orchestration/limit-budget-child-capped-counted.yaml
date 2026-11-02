@@ -1,0 +1,199 @@
+schemaVersion: "0.1.0"
+id: orchestration.limit-budget-child-capped-counted
+title: A child's budget is capped by the parent's remaining budget, its usage counts toward the parent, and a parent exhausted by its child ends `budget_exhausted` after the result
+description: >-
+  Each root run tightens its token budget to 100 (run request). The helper
+  child's own profile (default@1) allows 100,000 tokens per turn. Token
+  usage counts inputTokens + outputTokens (PROV-071).
+
+  - $s1: the parent's step 1 uses 25 tokens, leaving 75 when the child
+    starts, so the child's budget is min(100000, 75) = 75 (ORCH-041). The
+    child's step 1 uses 50 and step 2 uses 30 (80 > 75): its run ends
+    `budget_exhausted` with no third model request — under its own budget
+    it would have continued. ask_helper's result is `unavailable`
+    `agentry.delegation.limit`, `retryable: false`. The child's 80 tokens
+    also count toward the parent (25 + 80 = 105 > 100), so the parent run
+    ends `budget_exhausted` right after that `tool.result`, with no second
+    parent model request (ORCH-042).
+  - $s2: the child uses 50 tokens and responds (50 < 75). The parent's
+    step 2 uses 30: 25 + 50 + 30 = 105 > 100, so the parent run ends
+    `budget_exhausted` with no third model request. Counting only its own
+    calls (55) it would have continued.
+
+  - $s3 (boundary): usage equal to a budget reaches it (Area 8
+    amendment, "Readings settled with the Area 8 fixtures":
+    CFG-091/ORCH-042, a budget is reached when usage is equal to or
+    greater than it). The parent's step 1 uses 25 (child budget 75); the
+    child's step 1 uses 50 and its step 2 uses 25, exactly 75: its run
+    ends `budget_exhausted` with no third model request, and the parent
+    receives `agentry.delegation.limit`. The parent's usage is then 25 +
+    75 = 100, exactly its budget, so the parent run ends
+    `budget_exhausted` after that `tool.result` with no second parent
+    model request.
+
+  Only token budgets are exercised; cost budgets follow the same rule
+  (ORCH-042) but need priced models (orchestration.govern-cost-reachable-models).
+
+  Scripted responses (scripted-a, in call order): 1 $s1 parent step 1; 2
+  $s1 child step 1; 3 $s1 child step 2 (exhausts); 4 $s2 parent step 1; 5
+  $s2 child step 1; 6 $s2 parent step 2 (exhausts); 7 $s3 parent step 1;
+  8 $s3 child step 1; 9 $s3 child step 2 (child and parent reach their
+  budgets exactly). lookup uses the default stub.
+requirements: [ORCH-041, ORCH-042]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - { kind: Persona, id: helper, version: 1, schemaVersion: "0.1.0", instructions: "You look things up.", tools: [lookup@1], defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a } }
+      - { kind: Tool, id: ask_helper, version: 1, schemaVersion: "0.1.0", description: Ask the helper persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: read, binding: { kind: agent, persona: helper@1 } }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, ask_helper@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # 1: $s1 parent, step 1 (25)
+        - parts: [{ type: tool_call, callId: c1, tool: ask_helper, arguments: { task: "Find a and b" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 2: $s1 child, step 1 (50; child 50 of 75)
+        - parts: [{ type: tool_call, callId: h1, tool: lookup, arguments: { key: a } }]
+          usage: { inputTokens: 40, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 3: $s1 child, step 2 (30; child 80 > 75; parent 105 > 100)
+        - parts: [{ type: tool_call, callId: h2, tool: lookup, arguments: { key: b } }]
+          usage: { inputTokens: 20, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 4: $s2 parent, step 1 (25)
+        - parts: [{ type: tool_call, callId: c1, tool: ask_helper, arguments: { task: "Find a" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 5: $s2 child, step 1 (50; child 50 of 75)
+        - parts: [{ type: text, text: "a holds A." }]
+          usage: { inputTokens: 40, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 6: $s2 parent, step 2 (30; parent 105 > 100)
+        - parts: [{ type: tool_call, callId: c2, tool: lookup, arguments: { key: c } }]
+          usage: { inputTokens: 20, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 7: $s3 parent, step 1 (25)
+        - parts: [{ type: tool_call, callId: c1, tool: ask_helper, arguments: { task: "Find d and e" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 8: $s3 child, step 1 (50; child 50 of 75)
+        - parts: [{ type: tool_call, callId: h1, tool: lookup, arguments: { key: d } }]
+          usage: { inputTokens: 40, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 9: $s3 child, step 2 (25; child 75 = 75; parent 100 = 100)
+        - parts: [{ type: tool_call, callId: h2, tool: lookup, arguments: { key: e } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record: []
+script:
+  - action: run
+    bind: $s1
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    overrides: { budget: { tokens: 100 } }
+    input: [{ type: text, text: "Have the helper find a and b" }]
+    capture:
+      - event: { type: tool.call, payload: { callId: c1, tool: ask_helper } }
+        bind: { payload.childSessionId: $c1 }
+    expect: { ok: true, endReason: budget_exhausted }
+  - action: run
+    bind: $s2
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    overrides: { budget: { tokens: 100 } }
+    input: [{ type: text, text: "Have the helper find a, then look up c" }]
+    capture:
+      - event: { type: tool.call, payload: { callId: c1, tool: ask_helper } }
+        bind: { payload.childSessionId: $c2 }
+    expect: { ok: true, endReason: budget_exhausted }
+  - action: run
+    bind: $s3
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    overrides: { budget: { tokens: 100 } }
+    input: [{ type: text, text: "Have the helper find d and e" }]
+    capture:
+      - event: { type: tool.call, payload: { callId: c1, tool: ask_helper } }
+        bind: { payload.childSessionId: $c3 }
+    expect: { ok: true, endReason: budget_exhausted }
+expect:
+  sessions:
+    $s1:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: ask_helper, childSessionId: $c1 } }
+          - type: tool.result
+            payload:
+              callId: c1
+              tool: ask_helper
+              result: { error: { category: unavailable, code: agentry.delegation.limit, retryable: false } }
+          - { type: run.ended, payload: { reason: budget_exhausted } }
+      absentEvents:
+        - { type: model.request, step: 2 }
+    $c1:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, step: 2 }
+          - { type: run.ended, payload: { reason: budget_exhausted } }
+      absentEvents:
+        - { type: model.request, step: 3 }
+    $s2:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: c1, tool: ask_helper, result: { ok: { output: { text: "a holds A." } } } } }
+          - { type: model.request, step: 2 }
+          - { type: run.ended, payload: { reason: budget_exhausted } }
+      absentEvents:
+        - { type: model.request, step: 3 }
+    $c2:
+      events:
+        mode: subsequence
+        items:
+          - { type: run.ended, payload: { reason: responded } }
+    $s3:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: tool.result
+            payload:
+              callId: c1
+              tool: ask_helper
+              result: { error: { category: unavailable, code: agentry.delegation.limit, retryable: false } }
+          - { type: run.ended, payload: { reason: budget_exhausted } }
+      absentEvents:
+        - { type: model.request, step: 2 }
+    $c3:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, step: 2 }
+          - { type: run.ended, payload: { reason: budget_exhausted } }
+      absentEvents:
+        - { type: model.request, step: 3 }
+  providerRequests:
+    scripted-a: { count: 9 }

@@ -283,7 +283,7 @@ $defs:
     additionalProperties: false
     properties:
       parts:
-        description: Content parts the model returns; provenance and labels may be omitted (the harness assigns them).
+        description: Content parts the model returns; provenance and labels may be omitted (the harness assigns them). `image` and `file` parts reference blobs seeded in `setup.ports.blobStore`.
         type: array
         items: { type: object, required: [type] }
       deltas:

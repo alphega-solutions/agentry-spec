@@ -1,0 +1,136 @@
+schemaVersion: "0.1.0"
+id: orchestration.limit-depth-cycle-audited
+title: A delegation cycle runs to the default depth limit, and the call that would go deeper is stopped at stage 1 with an audited `depth` decision
+description: >-
+  `echo@1` allows only `ask_echo`, which delegates to echo itself — a
+  delegation cycle (CFG-012). No profile sets `delegation.maxDepth`, so
+  every effective limit is the default 2.
+
+  The root (depth 0) calls ask_echo (c1): child $c1 is created at depth 1.
+  $c1 calls ask_echo (e1): grandchild $c2 is created at depth 2 — allowed,
+  the limit is inclusive. $c2 calls ask_echo (e2), which would create a
+  session at depth 3: the call is stopped at pipeline stage 1 with a
+  `policy` error `agentry.delegation.depth`, and a `policy.decision` (kind
+  `depth`, outcome `block`, the call's `callId` and `tool`) is emitted and
+  written to the audit log as a `policy_decision` record linked to that
+  event (ORCH-031 as amended 2026-11-02). It is not dispatched: no
+  `tool.call`, no started record, no fourth session, no further model
+  request. The error is delivered to $c2's model, and every run responds.
+
+  Scripted responses (scripted-a, in call order): 1 root step 1; 2 $c1
+  step 1; 3 $c2 step 1 (e2, stopped); 4 $c2 step 2; 5 $c1 step 2; 6 root
+  step 2.
+requirements: [ORCH-030, ORCH-031]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - { kind: Tool, id: ask_echo, version: 1, schemaVersion: "0.1.0", description: Ask the echo persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: read, binding: { kind: agent, persona: echo@1 } }
+      - { kind: Persona, id: echo, version: 1, schemaVersion: "0.1.0", instructions: "You pass the task on.", tools: [ask_echo@1], defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a } }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, ask_echo@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # 1: root, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_echo, arguments: { task: "level 1" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 2: $c1 (depth 1), step 1
+        - parts: [{ type: tool_call, callId: e1, tool: ask_echo, arguments: { task: "level 2" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 3: $c2 (depth 2), step 1 — would create depth 3
+        - parts: [{ type: tool_call, callId: e2, tool: ask_echo, arguments: { task: "level 3" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 4: $c2, step 2
+        - parts: [{ type: text, text: "Too deep to delegate." }]
+          usage: { inputTokens: 30, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 5: $c1, step 2
+        - parts: [{ type: text, text: "Level 2 could not go deeper." }]
+          usage: { inputTokens: 30, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 6: root, step 2
+        - parts: [{ type: text, text: "The chain stopped at level 2." }]
+          usage: { inputTokens: 30, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - load: {}
+    bind: $h
+    expect: { ok: true }
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Pass this down the chain" }]
+    capture:
+      - event: { type: tool.call, payload: { callId: c1, tool: ask_echo } }
+        bind: { payload.childSessionId: $c1 }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: ask_echo, childSessionId: $c1 } }
+          - { type: tool.result, payload: { callId: c1, result: { ok: { output: { text: "Level 2 could not go deeper." } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+    $c1:
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, payload: { persona: echo@1, parent: { sessionId: $s, callId: c1, tool: ask_echo, depth: 1 } } }
+          - { type: tool.call, payload: { callId: e1, tool: ask_echo, childSessionId: $c2 } }
+          - { type: tool.result, payload: { callId: e1, result: { ok: { output: { text: "Too deep to delegate." } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+    $c2:
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, payload: { persona: echo@1, parent: { sessionId: $c1, callId: e1, tool: ask_echo, depth: 2 } } }
+          - { type: policy.decision, eventId: $eDepth, payload: { kind: depth, outcome: block, callId: e2, tool: ask_echo } }
+          - { type: tool.result, payload: { callId: e2, tool: ask_echo, result: { error: { category: policy, code: agentry.delegation.depth } } } }
+          - { type: model.request, step: 2 }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call }
+  ports:
+    eventLog:
+      t1:
+        $c2:
+          $count: { of: { type: policy.decision, payload: { kind: depth } }, equals: 1 }
+    auditLog:
+      t1:
+        $contains:
+          - { type: policy_decision, tenant: t1, sessionId: $c2, snapshotHash: $h, principalRef: { subject: user-1, tenant: t1 }, eventIds: { $contains: [$eDepth] } }
+  providerRequests:
+    scripted-a:
+      - {}
+      - {}
+      - {}
+      - messages:
+          $contains:
+            - role: tool
+              parts:
+                - { type: tool_result, callId: e2, result: { error: { category: policy, code: agentry.delegation.depth } } }
+      - {}
+      - {}

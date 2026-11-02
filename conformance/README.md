@@ -15,6 +15,7 @@ Data-only test cases every agentry implementation must pass (Area 11). An implem
 | `hooks/` | Area 5 fixtures |
 | `hitl/` | Area 6 fixtures |
 | `context/` | Area 7 fixtures |
+| `orchestration/` | Area 8 fixtures |
 | `cel/` | CEL rule fixtures (EVAL-005, HOOK-110–115) |
 | `coverage.yaml` | Which areas have complete fixtures, and therefore enforced coverage |
 
@@ -26,7 +27,7 @@ A fixture has three parts:
 2. **`script`** — ordered steps: host actions (`run`, `resume`, `decide`, `close`, `cancel`, `getReviewerView`, `listPendingEscalations`), configuration loads, clock advances, crashes, restarts, abandoned streams, concurrent actions.
 3. **`expect`** — event patterns per session, session states, step outcomes, captured provider requests and stub calls, port contents, and content that must never be persisted.
 
-Placeholders (`$session`, `$run1`) bind on first match in `expect`, or through a step's `capture`, and must match consistently: a placeholder binds the whole value at its first match (scalar, object or array), and every later occurrence must equal that value exactly — deep equality, not the partial matching used for objects written out in an expectation. A placeholder used in a step must be captured by an earlier step. Placeholders may be map keys (e.g. an idempotency key under `ports.idempotencyStore`). `expect` is evaluated in document order, depth-first; a placeholder key must be bound (earlier in document order, or by a capture) before a matcher such as `$absent` is applied to the value under it.
+A step's captures are processed in order, so a capture may use `session:` with a placeholder bound by an earlier capture of the same step (e.g. a child session). Placeholders (`$session`, `$run1`) bind on first match in `expect`, or through a step's `capture`, and must match consistently: a placeholder binds the whole value at its first match (scalar, object or array), and every later occurrence must equal that value exactly — deep equality, not the partial matching used for objects written out in an expectation. A placeholder used in a step must be captured by an earlier step. Placeholders may be map keys (e.g. an idempotency key under `ports.idempotencyStore`). `expect` is evaluated in document order, depth-first; a placeholder key must be bound (earlier in document order, or by a capture) before a matcher such as `$absent` is applied to the value under it.
 
 Matchers: `{"$any": true}`, `{"$absent": true}`, `{"$regex": "..."}`, `{"$len": n}`, `{"$contains": [...]}` (each item matches a distinct element), `{"$not": m}`, `{"$every": m}`, `{"$gte": n}`, `{"$lte": n}`, `{"$all": [m1, m2]}`, and `{"$count": {"of": m, "equals"|"gte"|"lte": n}}`, which counts the array elements matching `m`. Write "no element matches" and "exactly one matches" with `$count`, never as `$not` around `$contains`. Matcher names are reserved and are never placeholders; any other `$`-key must be a placeholder.
 

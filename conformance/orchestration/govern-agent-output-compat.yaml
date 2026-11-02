@@ -1,0 +1,110 @@
+schemaVersion: "0.1.0"
+id: orchestration.govern-agent-output-compat
+title: An agent tool declaring `output` requires the child persona to declare a compatible output schema
+description: >-
+  `ask_helper` (→ helper@1) declares `output`: an object with a required
+  string `answer`. ORCH-021's compatibility is equality of the two
+  schemas' RFC 8785 canonical JSON (Area 8 amendment, "Readings settled
+  with the Area 8 fixtures"), and every rejection names the agent tool and
+  its `/output` field (`details: { artifact: ask_helper@1, field: /output
+  }`).
+
+  - helper declares no output schema → rejected;
+  - helper declares an output schema whose `answer` is an integer (a JSON
+    type mismatch) → rejected;
+  - helper declares an output schema that adds `maxLength: 200` to
+    `answer` — every value it allows also satisfies the tool's `output`,
+    so it is semantically compatible, but its canonical JSON differs →
+    rejected;
+  - helper declares an output schema identical to the tool's `output` →
+    loads;
+  - helper declares the same schema with its keys written in a different
+    order (canonical JSON sorts keys, so the two are equal) → loads.
+
+  Control: in setup, helper (no output schema) and an agent tool without
+  `output` load.
+requirements: [ORCH-021]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - { kind: Persona, id: helper, version: 1, schemaVersion: "0.1.0", instructions: "You answer questions.", tools: [lookup@1], defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a } }
+      - { kind: Tool, id: ask_plain, version: 1, schemaVersion: "0.1.0", description: Ask the helper persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: read, binding: { kind: agent, persona: helper@1 } }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  # No child output schema.
+  - load:
+      artifacts:
+        - kind: Tool
+          id: ask_helper
+          version: 1
+          schemaVersion: "0.1.0"
+          description: Ask the helper persona for an answer.
+          input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+          output: { type: object, additionalProperties: false, required: [answer], properties: { answer: { type: string } } }
+          effect: read
+          binding: { kind: agent, persona: helper@1 }
+    expect: { ok: false, error: { category: configuration, details: { artifact: ask_helper@1, field: /output } } }
+  # Incompatible child output schema (type mismatch).
+  - load:
+      artifacts:
+        - { kind: Persona, id: helper, version: 1, schemaVersion: "0.1.0", instructions: "You answer questions.", tools: [lookup@1], defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a }, outputSchema: { type: object, additionalProperties: false, required: [answer], properties: { answer: { type: integer } } } }
+        - kind: Tool
+          id: ask_helper
+          version: 1
+          schemaVersion: "0.1.0"
+          description: Ask the helper persona for an answer.
+          input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+          output: { type: object, additionalProperties: false, required: [answer], properties: { answer: { type: string } } }
+          effect: read
+          binding: { kind: agent, persona: helper@1 }
+    expect: { ok: false, error: { category: configuration, details: { artifact: ask_helper@1, field: /output } } }
+  # Semantically compatible but unequal (extra maxLength) → rejected.
+  - load:
+      artifacts:
+        - { kind: Persona, id: helper, version: 1, schemaVersion: "0.1.0", instructions: "You answer questions.", tools: [lookup@1], defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a }, outputSchema: { type: object, additionalProperties: false, required: [answer], properties: { answer: { type: string, maxLength: 200 } } } }
+        - kind: Tool
+          id: ask_helper
+          version: 1
+          schemaVersion: "0.1.0"
+          description: Ask the helper persona for an answer.
+          input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+          output: { type: object, additionalProperties: false, required: [answer], properties: { answer: { type: string } } }
+          effect: read
+          binding: { kind: agent, persona: helper@1 }
+    expect: { ok: false, error: { category: configuration, details: { artifact: ask_helper@1, field: /output } } }
+  # Identical child output schema.
+  - load:
+      artifacts:
+        - { kind: Persona, id: helper, version: 1, schemaVersion: "0.1.0", instructions: "You answer questions.", tools: [lookup@1], defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a }, outputSchema: { type: object, additionalProperties: false, required: [answer], properties: { answer: { type: string } } } }
+        - kind: Tool
+          id: ask_helper
+          version: 1
+          schemaVersion: "0.1.0"
+          description: Ask the helper persona for an answer.
+          input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+          output: { type: object, additionalProperties: false, required: [answer], properties: { answer: { type: string } } }
+          effect: read
+          binding: { kind: agent, persona: helper@1 }
+    expect: { ok: true }
+  # The same schema with keys in another order: equal canonical JSON → loads.
+  - load:
+      artifacts:
+        - { kind: Persona, id: helper, version: 1, schemaVersion: "0.1.0", instructions: "You answer questions.", tools: [lookup@1], defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a }, outputSchema: { properties: { answer: { type: string } }, required: [answer], additionalProperties: false, type: object } }
+        - kind: Tool
+          id: ask_helper
+          version: 1
+          schemaVersion: "0.1.0"
+          description: Ask the helper persona for an answer.
+          input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+          output: { type: object, additionalProperties: false, required: [answer], properties: { answer: { type: string } } }
+          effect: read
+          binding: { kind: agent, persona: helper@1 }
+    expect: { ok: true }
+expect: {}

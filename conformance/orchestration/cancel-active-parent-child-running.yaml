@@ -1,0 +1,193 @@
+schemaVersion: "0.1.0"
+id: orchestration.cancel-active-parent-child-running
+title: cancel() on an active root while a descendant is running cancels the descendants first, deepest first, each closed `cancelled`, before the root's run ends `cancelled`
+description: >-
+  A three-level chain: the root (assistant) calls ask_mid (agent → mid@1),
+  mid calls ask_leaf (agent → leaf@1), and leaf calls lookup, whose stub
+  hangs until cancelled. All agent tools are `read`, since only lookup is
+  reachable. Child tools are the child allowlist intersected with the
+  parent's visible tools (ORCH-013), so the root's and mid's allowlists
+  include lookup and ask_leaf.
+
+
+  cancel() on the root starts once leaf's tool.call for l1 is persisted
+  (startAfter; l1 and lookup occur only in leaf), so leaf's call is in
+  flight. The lookup call receives the cancellation signal (`cancelled:
+  true`, `completed: false`). Every descendant is cancelled and closed
+  `cancelled` deepest first — leaf, then mid — before the root (ORCH-070):
+  each descendant's run ends `cancelled`; the root's run ends `cancelled`
+  and the root closes `cancelled` (CORE-070). Cross-session order is
+  observed through a telemetry `sessionEnd` hook, on-end, required by the
+  policy bundle and so run by every session (ORCH-015), whose native stub
+  records invocations in call order. No further model call is made in any
+  session (the scripted provider holds only the three responses
+  consumed). The root's and mid's pending agent calls get no `tool.result`
+  (no result for c1 in the root, none for m1 in mid): an agent call
+  pending when its session is cancelled gets none (Area 8 amendment,
+  "Readings settled with the Area 8 fixtures", ORCH-070/TOOL-034). The
+  leaf's own lookup result is not asserted.
+requirements: [ORCH-070]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Hook
+        id: on-end
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [sessionEnd]
+        results: [annotate]
+        purpose: telemetry
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.on_end }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        requiredHooks: [on-end@1]
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+      - kind: Persona
+        id: leaf
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You look things up."
+        tools: [lookup@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: ask_leaf
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the leaf persona to look something up.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: read
+        binding: { kind: agent, persona: leaf@1 }
+      - kind: Persona
+        id: mid
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You delegate lookups."
+        tools: [lookup@1, ask_leaf@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: ask_mid
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the mid persona to get something looked up.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: read
+        binding: { kind: agent, persona: mid@1 }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, ask_mid@1, ask_leaf@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+  providers:
+    scripted-a:
+      responses:
+        # root, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_mid, arguments: { task: "Find record a" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # mid (depth 1), step 1
+        - parts: [{ type: tool_call, callId: m1, tool: ask_leaf, arguments: { task: "Find record a" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # leaf (depth 2), step 1: lookup hangs
+        - parts: [{ type: tool_call, callId: l1, tool: lookup, arguments: { key: a } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - { hang: true }
+      update_record: []
+script:
+  - concurrently:
+      - action: run
+        bind: $s
+        tenant: t1
+        principal: p1
+        persona: assistant@1
+        input: [{ type: text, text: "Find record a through the helpers" }]
+        expect: { ok: true, endReason: cancelled }
+      - action: cancel
+        session: $s
+        startAfter: { type: tool.call, payload: { callId: l1, tool: lookup } }
+        expect: { ok: true }
+expect:
+  sessions:
+    $s:
+      state: closed
+      closeReason: cancelled
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, runId: $r, payload: { callId: c1, tool: ask_mid, childSessionId: $mid } }
+          - { type: run.ended, runId: $r, payload: { reason: cancelled } }
+          - { type: session.closed, payload: { reason: cancelled } }
+      absentEvents:
+        - { type: model.request, step: 2 }
+        - { type: turn.completed }
+        - { type: tool.result, payload: { callId: c1 } }
+    $mid:
+      state: closed
+      closeReason: cancelled
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, payload: { parent: { sessionId: $s, runId: $r, callId: c1, depth: 1 } } }
+          - { type: tool.call, runId: $mr, payload: { callId: m1, tool: ask_leaf, childSessionId: $leaf } }
+          - { type: run.ended, runId: $mr, payload: { reason: cancelled } }
+          - { type: session.closed, payload: { reason: cancelled } }
+      absentEvents:
+        - { type: model.request, step: 2 }
+        - { type: tool.result, payload: { callId: m1 } }
+    $leaf:
+      state: closed
+      closeReason: cancelled
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, payload: { parent: { sessionId: $mid, runId: $mr, callId: m1, depth: 2 } } }
+          - { type: tool.call, runId: $lr, payload: { callId: l1, tool: lookup } }
+          - { type: run.ended, runId: $lr, payload: { reason: cancelled } }
+          - { type: session.closed, payload: { reason: cancelled } }
+      absentEvents:
+        - { type: model.request, step: 2 }
+  stubCalls:
+    lookup:
+      - { arguments: { key: a }, cancelled: true, completed: false, context: { sessionId: $leaf, runId: $lr } }
+    on-end:
+      - { arguments: { point: sessionEnd, sessionId: $leaf, summary: { closeReason: cancelled } } }
+      - { arguments: { point: sessionEnd, sessionId: $mid, summary: { closeReason: cancelled } } }
+      - { arguments: { point: sessionEnd, sessionId: $s, summary: { closeReason: cancelled } } }
+    update_record: { count: 0 }
+  providerRequests:
+    scripted-a: { count: 3 }

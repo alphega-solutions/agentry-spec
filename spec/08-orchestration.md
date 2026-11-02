@@ -155,3 +155,56 @@ All rules here are new; this is a Tier 3 area. Rules that amend approved areas a
 ## Appendix A — Workflow engines (informative)
 
 Hosts interact only with root sessions (ORCH-006), so the integration patterns in Area 6 Appendix A apply unchanged: a delegation chain behaves, from outside, as one session that may suspend for decisions. Deterministic multi-agent pipelines — run persona A, then persona B — belong in the workflow engine as separate root sessions, not in delegation.
+
+## Amendment 2026-11-02 — from Phase 4 (schemas and fixtures)
+
+Schemas: the `session.created` `parent` block and `tool.call` `childSessionId` in `schemas/core/v1/event.yaml`; `delegation.maxDepth` in `schemas/config/v1/harness-profile.yaml`; delegated pending actions (`delegated`, `chain`) in `schemas/core/v1/hitl.yaml`.
+
+**The child's input and output**
+
+- ORCH-010: the child's first message is one `principal`-role message with one `structured` part whose `value` is the validated arguments, carrying the provenance and labels of ORCH-011.
+- ORCH-050: for `responded`, the agent tool's `ok` output is the child's `structured` part's `value` when the child persona has an output schema, and otherwise `{ "text": <the response's text parts joined with a newline> }`.
+- ORCH-052, HOOK-120: the parent's `tool_result` part has provenance `agent:<persona id>` and the union of the labels the child saw; the `tool.result` event's `provenances` lists `agent:<persona id>` followed by every untrusted provenance the child saw, in order of first entry. The result is **trusted** — it does not taint the parent — only if the child was never tainted; otherwise it taints the parent, whose taint provenances gain `agent:<persona id>` and the child's tainting provenances.
+
+**Host operations and errors**
+
+- ORCH-006: every host operation on a child session — including `getReviewerView` — is refused with `conflict` (`agentry.delegation.child_session`); `listPendingEscalations` never returns a child's escalation (ORCH-063).
+- ORCH-031: the depth `policy.decision` has kind `depth`, outcome `block`, and the call's `callId` and `tool`.
+
+**Escalations (ORCH-060–066)**
+
+- A mirrored pending action has the owning session's action ID, `delegated: true` and `chain` (the child session IDs from the nearest child down to the owner), and the record's `expiresAt` is the chain's earliest expiry (ORCH-065). The owner's own escalation is an ordinary one (`delegated` absent).
+- Each ancestor's escalation record carries its own `id`, `sessionId`, `runId`, `turn`, `step` and `snapshotHash`; `taintProvenances` are each session's own.
+- On an accepted `resume()` of the root, every session in the chain starts a new run at once, from the root down to the owner; each emits `run.started` and then `escalation.resolved` listing the decision IDs applied to the actions it mirrored or owned. The owner continues its turn; each ancestor waits in its pending agent call. If a descendant escalates again, the new escalation propagates (ORCH-060) and ends each waiting ancestor's new run `escalated`.
+- Mirrored actions carry the owner's full action contents (`callId`, `tool`, `arguments`, and so on). Every level's copy of an action carries the chain-effective `reviewerRequirements` (ORCH-062). Expiry rejections are recorded once, on the root escalation, and applied down the chain on resume.
+
+**Ordering**
+
+- ORCH-001, ORCH-080: the parent's `tool.call` for an agent tool, carrying `childSessionId`, is appended before the child's `session.created`. The child's events are in its own sequence (CORE-160) and its session appears under its own ID in every port.
+
+**Readings settled with the Area 8 fixtures**
+
+- ORCH-050: a child whose run ends `responded`, `blocked`, `step_limit`, `budget_exhausted`, `context_limit` or `timeout` is closed `completed`; `failed` closes it `failed`. When the child's response has `image` or `file` parts and the child has no output schema, the `{text}` output also carries `files`: their blob references in order (ORCH-052, CORE-112).
+- ORCH-021: an agent tool's `output` and the child persona's output schema are compatible when their RFC 8785 canonical JSON is equal. ORCH-020 and ORCH-021 errors name the agent tool (`details.artifact`) and the field (`/effect`, `/egress`, `/output`).
+- ORCH-014, PROV-023: every persona reachable through an agent tool **MUST** have at least one model (primary or fallback) whose provider is in the intersection of its own and every possible caller's allowed providers; otherwise the configuration is rejected. At run time the child uses the first of its models, in order, that the intersection allows (PROV-051).
+- ORCH-043, ORCH-044: the parent call's remaining deadline counts only time the chain is not `suspended`. A child whose run timeout is capped by that deadline ends `timeout` when it elapses and returns `agentry.delegation.limit`; an agent call never ends with `agentry.tool.timeout`.
+- CFG-091, ORCH-042: a budget is reached when usage is equal to or greater than it.
+- ORCH-070, TOOL-034: an agent call pending when its session is cancelled, closed or expires gets no `tool.result`. A parent that expires on its own (for example after `onExpiry: reject` and a further `idleTtl`) cancels its descendants first per ORCH-070; ORCH-066 applies only to the chain's escalation expiring under `close`.
+
+**Known fixture limits**
+
+- The trace-id equality of ORCH-004 is not expressible: a placeholder binds a whole value, so a child's trace-id cannot be compared with its parent's. Fixtures check only that each trace context is well formed.
+- Crash points reach a child only at its first stub dispatch (`after_dispatch`, `after_outcome_recorded`), since a crash fires at the first occurrence during the root's action; a crash at a child's model request or `tool.call` append is not expressible.
+- Events of different sessions have no common order; cross-session order is shown through a shared scripted provider's request order or an ordered hook stub's calls.
+
+**Further readings settled in review**
+
+- ORCH-002, ORCH-071, TOOL-034: re-dispatching an agent call re-attaches to the recorded child and emits **no** new `tool.call`; the original `tool.call` stands (an exception to TOOL-034's one `tool.call` per dispatch). If the crash came after the started record but before the child existed, re-dispatch creates the child under the recorded ID and emits its `session.created` then. The parent records the agent call's outcome in the idempotency store before the child is closed, so a re-attach never finds a closed child without a recorded outcome.
+- ORCH-064: the amendment's "every session in the chain starts a new run at once, from the root down to the owner" replaces the base text's "resume each ancestor in turn as its child's result becomes available".
+- ORCH-040, TOOL-033: when an agent call's child escalates, the step's later agent calls are not started until that escalation is resolved; the step's other tool calls complete as TOOL-033 says. The parent's escalation holds the mirrored actions and any of its own, in request order. After resume and the child's return, the next agent call starts, and may escalate in turn.
+- ORCH-060, HITL-010: at each level, `taintProvenances` lists the session's own tainting provenances followed by those of the owner of every mirrored `taint` action, in order of first entry, without duplicates; it is never empty when a `taint` action is present. The chain-effective reviewer rules are listed root first (its layers in HITL order), then each descendant's down to the owner.
+- ORCH-065, HITL-082: in a chain under `onExpiry: reject`, the root's `idleTtl` governs the further wait after expiry rejections; descendants never expire on their own schedule.
+- ORCH-006: a host operation naming a session of another tenant is `not_found` (ADR-0014); otherwise one naming a child is refused with `conflict` (`agentry.delegation.child_session`) whatever the child's state, before any other check.
+- ORCH-014: "every possible caller" is transitive: every persona from which the child is reachable through agent tools. PROV-023 continues to apply to each persona's own models; the intersection rule adds that at least one of them is allowed through every caller. A child that runs on a model other than its primary emits PROV-051's `policy.decision`.
+- ORCH-052, HOOK-120: every result from a tainted child — `ok` or error — taints the parent. A `{text}` output whose child response has no text parts has `text: ""`.
+- Known fixture limits: the root-to-owner order in which a resumed chain starts its runs, the ordering of a parent's `tool.call` before its child's `session.created`, and "deepest first" in ORCH-071 recovery are not observable across sessions; fixtures show only what a shared provider's request order or ordered hook calls reveal.

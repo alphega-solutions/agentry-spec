@@ -1,0 +1,180 @@
+schemaVersion: "0.1.0"
+id: orchestration.govern-cost-reachable-models
+title: A cost budget for the parent requires a price for every model reachable through delegation, at load and in run requests
+description: >-
+  The deployment's price table prices `scripted-a/model-a` and
+  `scripted-b/model-b` (the assistant's primary and fallback). The
+  assistant can call `ask_helper` (→ helper@1, model `scripted-a/model-h`).
+  helper runs with profile `plain@1`, which sets no cost budget, so every
+  rejection below comes only from delegation (ORCH-023), never from
+  helper's own configuration.
+
+  - Run request on the assistant setting `budget.cost` while model-h is
+    unpriced → `invalid_input` (PROV-073, run-request branch).
+  - Loading `default@1` (the assistant's profile) with `budget.cost` while
+    model-h is unpriced → configuration error.
+  - Pricing model-h and loading the costed profile → loads; a run request
+    tightening `budget.cost` is then accepted and the run responds (control
+    for the first case).
+  - Grandchild: helper gains `ask_deep` (→ deep@1, model
+    `scripted-a/model-d`, unpriced) → configuration error, because model-d
+    is reachable from the assistant through two delegations. Pricing
+    model-d → loads.
+requirements: [ORCH-023, PROV-073]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+        priceTable:
+          currency: USD
+          models:
+            - { provider: scripted-a, name: model-a, input: 1, cachedInput: 0.1, output: 2, reasoning: 2 }
+            - { provider: scripted-b, name: model-b, input: 1, cachedInput: 0.1, output: 2, reasoning: 2 }
+      - { kind: HarnessProfile, id: plain, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, budget: { tokens: 100000 }, timeouts: { run: PT5M, tool: PT30S } }
+      - { kind: Persona, id: helper, version: 1, schemaVersion: "0.1.0", instructions: "You look things up.", tools: [lookup@1], defaultProfile: plain@1, allowedProfiles: [plain@1], model: { provider: scripted-a, name: model-h } }
+      - { kind: Tool, id: ask_helper, version: 1, schemaVersion: "0.1.0", description: Ask the helper persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: read, binding: { kind: agent, persona: helper@1 } }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, ask_helper@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # assistant (control run), step 1
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  # Run request with a cost budget; model-h unpriced.
+  - action: run
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    overrides: { budget: { cost: 1 } }
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: false, error: { category: invalid_input }, newEvents: 0 }
+  # Profile cost budget; model-h unpriced.
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, deliveryMode: buffered, budget: { tokens: 100000, cost: 5 }, timeouts: { run: PT5M, tool: PT30S }, retry: { unavailable: 2 }, outputRetryLimit: 2, limits: { partSize: 1048576, sessionSize: 10485760 }, defaultAttachmentLabels: [] }
+    expect: { ok: false, error: { category: configuration } }
+  # model-h priced: loads.
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, deliveryMode: buffered, budget: { tokens: 100000, cost: 5 }, timeouts: { run: PT5M, tool: PT30S }, retry: { unavailable: 2 }, outputRetryLimit: 2, limits: { partSize: 1048576, sessionSize: 10485760 }, defaultAttachmentLabels: [] }
+        - kind: Deployment
+          id: test
+          version: 1
+          schemaVersion: "0.1.0"
+          environment: test
+          policyBundles: [org@1]
+          attachmentSources: [upload, email]
+          providers:
+            - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+            - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          ports:
+            eventLog: { adapter: memory, region: test-region }
+            checkpointStore: { adapter: memory, region: test-region }
+            idempotencyStore: { adapter: memory, region: test-region }
+            snapshotStore: { adapter: memory, region: test-region }
+            blobStore: { adapter: memory, region: test-region }
+            auditLog: { adapter: memory, region: test-region }
+            secrets: { adapter: memory, region: test-region }
+          retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+          priceTable:
+            currency: USD
+            models:
+              - { provider: scripted-a, name: model-a, input: 1, cachedInput: 0.1, output: 2, reasoning: 2 }
+              - { provider: scripted-b, name: model-b, input: 1, cachedInput: 0.1, output: 2, reasoning: 2 }
+              - { provider: scripted-a, name: model-h, input: 1, cachedInput: 0.1, output: 2, reasoning: 2 }
+    expect: { ok: true }
+  # Control: a run request tightening the cost budget is accepted.
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    overrides: { budget: { cost: 1 } }
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  # Grandchild with an unpriced model.
+  - load:
+      artifacts:
+        - { kind: Persona, id: deep, version: 1, schemaVersion: "0.1.0", instructions: "You dig deeper.", tools: [lookup@1], defaultProfile: plain@1, allowedProfiles: [plain@1], model: { provider: scripted-a, name: model-d } }
+        - { kind: Tool, id: ask_deep, version: 1, schemaVersion: "0.1.0", description: Ask the deep persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: read, binding: { kind: agent, persona: deep@1 } }
+        - { kind: Persona, id: helper, version: 1, schemaVersion: "0.1.0", instructions: "You look things up.", tools: [lookup@1, ask_deep@1], defaultProfile: plain@1, allowedProfiles: [plain@1], model: { provider: scripted-a, name: model-h } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Persona, id: deep, version: 1, schemaVersion: "0.1.0", instructions: "You dig deeper.", tools: [lookup@1], defaultProfile: plain@1, allowedProfiles: [plain@1], model: { provider: scripted-a, name: model-d } }
+        - { kind: Tool, id: ask_deep, version: 1, schemaVersion: "0.1.0", description: Ask the deep persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: read, binding: { kind: agent, persona: deep@1 } }
+        - { kind: Persona, id: helper, version: 1, schemaVersion: "0.1.0", instructions: "You look things up.", tools: [lookup@1, ask_deep@1], defaultProfile: plain@1, allowedProfiles: [plain@1], model: { provider: scripted-a, name: model-h } }
+        - kind: Deployment
+          id: test
+          version: 1
+          schemaVersion: "0.1.0"
+          environment: test
+          policyBundles: [org@1]
+          attachmentSources: [upload, email]
+          providers:
+            - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+            - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          ports:
+            eventLog: { adapter: memory, region: test-region }
+            checkpointStore: { adapter: memory, region: test-region }
+            idempotencyStore: { adapter: memory, region: test-region }
+            snapshotStore: { adapter: memory, region: test-region }
+            blobStore: { adapter: memory, region: test-region }
+            auditLog: { adapter: memory, region: test-region }
+            secrets: { adapter: memory, region: test-region }
+          retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+          priceTable:
+            currency: USD
+            models:
+              - { provider: scripted-a, name: model-a, input: 1, cachedInput: 0.1, output: 2, reasoning: 2 }
+              - { provider: scripted-b, name: model-b, input: 1, cachedInput: 0.1, output: 2, reasoning: 2 }
+              - { provider: scripted-a, name: model-h, input: 1, cachedInput: 0.1, output: 2, reasoning: 2 }
+              - { provider: scripted-a, name: model-d, input: 1, cachedInput: 0.1, output: 2, reasoning: 2 }
+    expect: { ok: true }
+expect:
+  sessions:
+    $s:
+      state: idle
+  providerRequests:
+    scripted-a: { count: 1 }

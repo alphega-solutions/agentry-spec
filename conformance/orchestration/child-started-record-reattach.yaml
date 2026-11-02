@@ -1,0 +1,167 @@
+schemaVersion: "0.1.0"
+id: orchestration.child-started-record-reattach
+title: A read-only agent call records a started record holding the child ID, and recovery re-attaches to that child instead of creating another
+description: >-
+  ask_helper is an agent tool declared `effect: read` (its child persona
+  only reaches the read tool lookup). Even so, the call gets a started
+  record in the idempotency store holding the child session ID (ORCH-002,
+  "whatever the agent tool's effect"); the final record is `completed`,
+  still holding that `childSessionId`, which is the one on the parent's
+  `tool.call`.
+
+
+  Turn 1: the parent calls ask_helper (c1); the child calls lookup (h1). A
+  crash is armed at `after_dispatch` for the parent's run. The first
+  scripted stub to run during that action is the child's lookup (an agent
+  call has no stub, and its own dispatch cannot complete before the child's
+  tool returns), so the crash happens with lookup dispatched but its result
+  lost. After the restart, a host `run()` on the parent triggers recovery
+  (HITL-092). The parent's in-flight agent call is re-dispatched under its
+  started record, which re-attaches it to the recorded child (ORCH-002,
+  TOOL-062's idempotent branch); the child's in-flight read call is
+  re-dispatched (HITL-091 step 2, as amended), the child responds and
+  closes, and its result reaches the parent's c1, so the orphaned parent
+  run continues (same run, no new `run.started`) and responds. The host's
+  own run then responds.
+
+
+  Observable: exactly one child session for c1, with exactly one
+  `session.created` and one `run.started` (the child's run continued, not
+  restarted); the parent has exactly one ask_helper `tool.call`, naming
+  that child — re-dispatching an agent call re-attaches to the recorded
+  child and emits no new `tool.call` (Area 8 amendment, "Further readings
+  settled in review", ORCH-002/ORCH-071/TOOL-034); the two lookup calls
+  both ran in the child with the same idempotency key, the first not
+  completed. The parent has exactly two `run.started` (turn 1 and the
+  host's turn 2).
+
+
+  The crash point is located inside the child because a crash fires at
+  the first stub dispatch during the root's action (Area 8 amendment,
+  "Known fixture limits"); ORCH-071's ordering is not asserted here.
+requirements: [ORCH-002]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Persona
+        id: helper
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You look things up."
+        tools: [lookup@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: ask_helper
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the helper persona to look something up.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: read
+        binding: { kind: agent, persona: helper@1 }
+      - kind: Persona
+        id: coordinator
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You coordinate helpers."
+        tools: [ask_helper@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # parent, turn 1 step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_helper, arguments: { task: "Find record a" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # child, step 1 (its lookup is dispatched, then the crash)
+        - parts: [{ type: tool_call, callId: h1, tool: lookup, arguments: { key: a } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # after restart, recovery: child, step 2
+        - parts: [{ type: text, text: "Record a holds A." }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # recovery: parent, turn 1 step 2 (orphaned run continues)
+        - parts: [{ type: text, text: "The helper says record a holds A." }]
+          usage: { inputTokens: 40, outputTokens: 8, cachedInputTokens: 0, reasoningTokens: 0 }
+        # host's own run: parent, turn 2 step 1
+        - parts: [{ type: text, text: "You are welcome." }]
+          usage: { inputTokens: 50, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        # consumed by the dispatch the crash interrupts
+        - ok: { output: { value: "lost" } }
+        # consumed by the re-dispatch during recovery
+        - ok: { output: { value: "A" } }
+script:
+  - crash: { at: after_dispatch }
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: coordinator@1
+    input: [{ type: text, text: "Ask the helper to find record a" }]
+  - restart: {}
+  - clock: { advance: PT1H }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Thanks" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: run.started, runId: $r1 }
+          - { type: tool.call, runId: $r1, turn: 1, payload: { callId: c1, tool: ask_helper, childSessionId: $child } }
+          - { type: tool.result, runId: $r1, turn: 1, payload: { callId: c1, tool: ask_helper, result: { ok: { $any: true } } } }
+          - { type: run.ended, runId: $r1, payload: { reason: responded } }
+          - { type: run.started, runId: { $not: $r1 } }
+          - { type: model.request, turn: 2 }
+          - { type: run.ended, payload: { reason: responded } }
+    $child:
+      state: closed
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, payload: { persona: helper@1, parent: { sessionId: $s, callId: c1, tool: ask_helper, depth: 1 } } }
+          - { type: tool.call, payload: { callId: h1, tool: lookup } }
+          - { type: tool.result, payload: { callId: h1, tool: lookup, result: { ok: { output: { value: "A" } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.result, payload: { result: { ok: { output: { value: "lost" } } } } }
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $all:
+            - { $count: { of: { type: run.started }, equals: 2 } }
+            # Re-dispatch emits no new tool.call (amendment, further readings)
+            - { $count: { of: { type: tool.call, payload: { tool: ask_helper } }, equals: 1 } }
+            - { $count: { of: { type: tool.call, payload: { tool: ask_helper, childSessionId: { $not: $child } } }, equals: 0 } }
+            - { $count: { of: { type: tool.result, payload: { callId: c1 } }, equals: 1 } }
+        $child:
+          $all:
+            - { $count: { of: { type: session.created }, equals: 1 } }
+            - { $count: { of: { type: run.started }, equals: 1 } }
+    idempotencyStore:
+      t1:
+        $k: { state: completed, childSessionId: $child, outcome: { ok: { $any: true } } }
+  stubCalls:
+    lookup:
+      - { arguments: { key: a }, completed: false, context: { sessionId: $child, idempotencyKey: $hk } }
+      - { arguments: { key: a }, completed: true, context: { sessionId: $child, idempotencyKey: $hk } }
+  providerRequests:
+    scripted-a: { count: 5 }

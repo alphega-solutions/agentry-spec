@@ -1,0 +1,430 @@
+schemaVersion: "0.1.0"
+id: orchestration.escalate-resume-cascade
+title: Resuming the root starts a new run in every session of the chain at once, each recording `escalation.resolved`; the owner continues while each ancestor waits in its agent call; a re-escalation by the resumed owner, and a later child escalation, propagate again
+description: >-
+  The depth-2 chain of orchestration.escalate-chain-mirrored (root →
+  manager → clerk; file_record has `approval: always`). The bundle trusts
+  file_record, so no session in the chain is ever tainted and the taint
+  rule plays no part.
+
+
+  Phase 1. The clerk's file_record call g1 escalates; the manager and the
+  root suspend with mirrored escalations. At +1h, resume() on the root with
+  r1's approval D1 is accepted and cascades (ORCH-064 as amended
+  2026-11-02, and "Further readings settled in review": every session in
+  the chain starts a new run at once, from the root down to the owner,
+  replacing the base text's "in turn"): the root, the manager and the
+  clerk each emit `run.started` and then `escalation.resolved` listing
+  [D1], all stamped at the resume time (01:00:00). The clerk (owner)
+  continues its turn: file_record is dispatched with the approved
+  arguments, and its stub answers after 5 s (`delayMs: 5000`, reached by
+  the runner's automatic clock advance). The manager and the root wait in
+  their pending agent calls: the manager's ask_clerk `tool.result` and the
+  root's ask_manager `tool.result` are stamped 01:00:05, after the clerk
+  and then the manager have responded, while their run.started and
+  escalation.resolved are stamped 01:00:00. The clerk and the manager are
+  closed `completed`. The order in which the three runs start is not
+  observable across sessions (amendment, known fixture limits); the
+  return order is, through the shared scripted provider: after the resume
+  the first model request is the clerk's (it holds file_record's result),
+  the next the manager's (the clerk's answer), and only then the root's
+  (the manager's answer).
+
+
+  Phase 2. The root's model now calls ask_manager again (c2), creating a
+  new manager and a new clerk; the new clerk's file_record call g2
+  escalates, and the escalation propagates per ORCH-060: the new manager
+  and the root suspend with mirrored escalations (new IDs; chain [new
+  manager, new clerk] at the root), and the root's resume run ends
+  `escalated`.
+
+
+  Phase 3. resume() with approval D2 starts new runs in the root, the new
+  manager and the new clerk at once, each recording `escalation.resolved`
+  [D2]. The resumed clerk dispatches g2, and its model then calls
+  file_record again (g3), which escalates: the new escalation propagates
+  (ORCH-064, ORCH-060), so each waiting ancestor's new run — the manager's
+  and the root's — ends `escalated` with a new mirrored escalation (new
+  IDs, the new action ID, chains [clerk] and [manager, clerk]), and
+  neither ancestor gets a `tool.result` for its pending agent call in that
+  run. A final resume() with approval D3 cascades again; the clerk
+  dispatches g3 and responds, the manager responds, and the root
+  responds.
+
+
+  Scripted responses (one shared provider, consumed in call order): 12 —
+  phase 1: root, manager, clerk; resume D1: clerk, manager, root (calls
+  c2); phase 2: manager 2, clerk 2; resume D2: clerk 2 (calls g3); resume
+  D3: clerk 2, manager 2, root. file_record stubs: 3 (k1 delayed 5 s, k2,
+  k3).
+requirements: [ORCH-064]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        trustedTools: [file_record@1]
+        sensitivityPolicies:
+          pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+          phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+      - kind: Tool
+        id: file_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: File a record.
+        input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }
+        effect: mutating
+        approval: always
+        binding: { kind: native, handler: test.file_record }
+      - kind: Persona
+        id: clerk
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You file records."
+        tools: [file_record@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: ask_clerk
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the clerk to file a record.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: mutating
+        binding: { kind: agent, persona: clerk@1 }
+      - kind: Persona
+        id: manager
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You delegate filing to the clerk."
+        tools: [ask_clerk@1, file_record@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: ask_manager
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the manager to get a record filed.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: mutating
+        binding: { kind: agent, persona: manager@1 }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, ask_manager@1, ask_clerk@1, file_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model: { provider: scripted-a, name: model-a }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        # 1. root, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_manager, arguments: { task: "File record k1" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 2. manager 1, step 1
+        - parts: [{ type: tool_call, callId: m1, tool: ask_clerk, arguments: { task: "File k1" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 3. clerk 1, step 1 — escalates
+        - parts: [{ type: tool_call, callId: g1, tool: file_record, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # --- resume D1 ---
+        # 4. clerk 1, step 2 (resume run)
+        - parts: [{ type: text, text: "Filed k1." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 5. manager 1, step 2 (resume run)
+        - parts: [{ type: text, text: "The clerk filed k1." }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 6. root, step 2 (resume run)
+        - parts: [{ type: tool_call, callId: c2, tool: ask_manager, arguments: { task: "File records k2 and k3" } }]
+          usage: { inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 7. manager 2, step 1
+        - parts: [{ type: tool_call, callId: m2, tool: ask_clerk, arguments: { task: "File k2 and k3" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 8. clerk 2, step 1 — escalates
+        - parts: [{ type: tool_call, callId: g2, tool: file_record, arguments: { key: k2 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # --- resume D2 ---
+        # 9. clerk 2, step 2 (resume run) — calls file_record again, which escalates
+        - parts: [{ type: tool_call, callId: g3, tool: file_record, arguments: { key: k3 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # --- resume D3 ---
+        # 10. clerk 2, step 3 (second resume run)
+        - parts: [{ type: text, text: "Filed k2 and k3." }]
+          usage: { inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 11. manager 2, step 2 (second resume run)
+        - parts: [{ type: text, text: "The clerk filed k2 and k3." }]
+          usage: { inputTokens: 30, outputTokens: 7, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 12. root, step 3 (resume run after D3)
+        - parts: [{ type: text, text: "Records k1, k2 and k3 are filed." }]
+          usage: { inputTokens: 50, outputTokens: 8, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      file_record:
+        # the owner's dispatch after resume D1 answers after 5 s
+        - { ok: { output: { filed: "k1" } }, delayMs: 5000 }
+        - ok: { output: { filed: "k2" } }
+        - ok: { output: { filed: "k3" } }
+      lookup: []
+      update_record: []
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Get records k1, k2 and k3 filed" }]
+    capture:
+      - event: { type: tool.call, payload: { callId: c1 } }
+        bind: { payload.childSessionId: $mgr1 }
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $escRoot1, payload.escalation.pendingActions.0.id: $act1 }
+    expect: { ok: true, endReason: escalated }
+  - clock: { advance: PT1H }
+  # Phase 1 resume at 01:00:00; phase 2 escalation raised by a new child
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000c41", pendingActionId: $act1, type: approve }
+    capture:
+      - event: { type: tool.call, payload: { callId: c2 } }
+        bind: { payload.childSessionId: $mgr2 }
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $escRoot2, payload.escalation.pendingActions.0.id: $act2 }
+    expect: { ok: true, endReason: escalated }
+  # Phase 3: the resumed owner escalates again
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000c42", pendingActionId: $act2, type: approve }
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $escRoot3, payload.escalation.pendingActions.0.id: $act3 }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000c43", pendingActionId: $act3, type: approve }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: ask_manager, childSessionId: $mgr1 } }
+          - { type: escalation.raised, payload: { escalation: { id: $escRoot1, pendingActions: [{ id: $act1, delegated: true, chain: [$mgr1, $clerk1] }] } } }
+          - { type: run.ended, payload: { reason: escalated } }
+          # phase 1 resume run: started and resolved at the resume time; the agent result 5 s later
+          - { type: run.started, runId: $rRoot2, timestamp: { $regex: "^2026-01-01T01:00:00" }, payload: { kind: resume } }
+          - { type: escalation.resolved, runId: $rRoot2, timestamp: { $regex: "^2026-01-01T01:00:00" }, payload: { escalationId: $escRoot1, decisions: ["01900000-0000-7000-8000-000000000c41"] } }
+          - type: tool.result
+            runId: $rRoot2
+            timestamp: { $regex: "^2026-01-01T01:00:05" }
+            payload: { callId: c1, tool: ask_manager, result: { ok: { output: { text: "The clerk filed k1." } } } }
+          - { type: model.request, runId: $rRoot2, step: 2 }
+          # phase 2: a new child escalates
+          - { type: tool.call, runId: $rRoot2, payload: { callId: c2, tool: ask_manager, childSessionId: $mgr2 } }
+          - type: escalation.raised
+            runId: $rRoot2
+            payload:
+              escalation:
+                id: { $all: [$escRoot2, { $not: $escRoot1 }] }
+                runId: $rRoot2
+                pendingActions: [{ id: { $all: [$act2, { $not: $act1 }] }, callId: g2, delegated: true, chain: [$mgr2, $clerk2] }]
+          - { type: run.ended, runId: $rRoot2, payload: { reason: escalated } }
+          # phase 3: resume D2; the resumed owner escalates again, so the root's new run ends escalated
+          - { type: run.started, runId: { $all: [$rRoot3, { $not: $rRoot2 }] }, payload: { kind: resume } }
+          - { type: escalation.resolved, runId: $rRoot3, payload: { escalationId: $escRoot2, decisions: ["01900000-0000-7000-8000-000000000c42"] } }
+          - type: escalation.raised
+            runId: $rRoot3
+            payload:
+              escalation:
+                id: { $all: [$escRoot3, { $not: $escRoot2 }, { $not: $escRoot1 }] }
+                runId: $rRoot3
+                pendingActions: [{ id: { $all: [$act3, { $not: $act2 }] }, callId: g3, tool: file_record, arguments: { key: k3 }, delegated: true, chain: [$mgr2, $clerk2] }]
+          - { type: run.ended, runId: $rRoot3, payload: { reason: escalated } }
+          # final resume D3
+          - { type: run.started, runId: { $all: [$rRoot4, { $not: $rRoot3 }] }, payload: { kind: resume } }
+          - { type: escalation.resolved, runId: $rRoot4, payload: { escalationId: $escRoot3, decisions: ["01900000-0000-7000-8000-000000000c43"] } }
+          - type: tool.result
+            runId: $rRoot4
+            payload: { callId: c2, tool: ask_manager, result: { ok: { output: { text: "The clerk filed k2 and k3." } } } }
+          - { type: run.ended, runId: $rRoot4, payload: { reason: responded } }
+      absentEvents:
+        # the root's c2 gets no result in the run that re-escalated
+        - { type: tool.result, runId: $rRoot3 }
+    $mgr1:
+      state: closed
+      closeReason: completed
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: m1, tool: ask_clerk, childSessionId: $clerk1 } }
+          - { type: escalation.raised, payload: { escalation: { id: $escMgr1, pendingActions: [{ id: $act1, delegated: true, chain: [$clerk1] }] } } }
+          - { type: run.ended, payload: { reason: escalated } }
+          - { type: run.started, timestamp: { $regex: "^2026-01-01T01:00:00" }, payload: { kind: resume } }
+          - { type: escalation.resolved, timestamp: { $regex: "^2026-01-01T01:00:00" }, payload: { escalationId: $escMgr1, decisions: ["01900000-0000-7000-8000-000000000c41"] } }
+          - { type: tool.result, timestamp: { $regex: "^2026-01-01T01:00:05" }, payload: { callId: m1, tool: ask_clerk, result: { ok: { output: { text: "Filed k1." } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+          - { type: session.closed, payload: { reason: completed } }
+    $clerk1:
+      state: closed
+      closeReason: completed
+      events:
+        mode: subsequence
+        items:
+          - { type: escalation.raised, payload: { escalation: { id: $escClerk1, pendingActions: [{ id: $act1, delegated: { $absent: true } }] } } }
+          - { type: run.ended, payload: { reason: escalated } }
+          - { type: run.started, timestamp: { $regex: "^2026-01-01T01:00:00" }, payload: { kind: resume } }
+          - { type: escalation.resolved, timestamp: { $regex: "^2026-01-01T01:00:00" }, payload: { escalationId: $escClerk1, decisions: ["01900000-0000-7000-8000-000000000c41"] } }
+          - { type: tool.call, payload: { callId: g1, tool: file_record, arguments: { key: k1 } } }
+          - { type: tool.result, timestamp: { $regex: "^2026-01-01T01:00:05" }, payload: { callId: g1, result: { ok: { output: { filed: "k1" } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+          - { type: session.closed, payload: { reason: completed } }
+    $mgr2:
+      state: closed
+      closeReason: completed
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: m2, tool: ask_clerk, childSessionId: $clerk2 } }
+          - { type: escalation.raised, payload: { escalation: { id: $escMgr2, pendingActions: [{ id: $act2, delegated: true, chain: [$clerk2] }] } } }
+          - { type: run.ended, payload: { reason: escalated } }
+          # resume D2: waits in m2, then the clerk's new escalation ends this run escalated
+          - { type: run.started, runId: $mr2b, payload: { kind: resume } }
+          - { type: escalation.resolved, runId: $mr2b, payload: { escalationId: $escMgr2, decisions: ["01900000-0000-7000-8000-000000000c42"] } }
+          - type: escalation.raised
+            runId: $mr2b
+            payload:
+              escalation:
+                id: { $all: [$escMgr3, { $not: $escMgr2 }] }
+                runId: $mr2b
+                pendingActions: [{ id: $act3, callId: g3, tool: file_record, arguments: { key: k3 }, delegated: true, chain: [$clerk2] }]
+          - { type: run.ended, runId: $mr2b, payload: { reason: escalated } }
+          # resume D3
+          - { type: run.started, runId: { $all: [$mr2c, { $not: $mr2b }] }, payload: { kind: resume } }
+          - { type: escalation.resolved, runId: $mr2c, payload: { escalationId: $escMgr3, decisions: ["01900000-0000-7000-8000-000000000c43"] } }
+          - { type: tool.result, runId: $mr2c, payload: { callId: m2, tool: ask_clerk, result: { ok: { output: { text: "Filed k2 and k3." } } } } }
+          - { type: run.ended, runId: $mr2c, payload: { reason: responded } }
+          - { type: session.closed, payload: { reason: completed } }
+      absentEvents:
+        - { type: tool.result, runId: $mr2b }
+    $clerk2:
+      state: closed
+      closeReason: completed
+      events:
+        mode: subsequence
+        items:
+          - { type: escalation.raised, payload: { escalation: { id: $escClerk2, pendingActions: [{ id: $act2, delegated: { $absent: true } }] } } }
+          - { type: run.ended, payload: { reason: escalated } }
+          # resume D2: the owner continues, dispatches g2, then escalates g3
+          - { type: run.started, runId: $cr2b, payload: { kind: resume } }
+          - { type: escalation.resolved, runId: $cr2b, payload: { escalationId: $escClerk2, decisions: ["01900000-0000-7000-8000-000000000c42"] } }
+          - { type: tool.call, runId: $cr2b, payload: { callId: g2, tool: file_record, arguments: { key: k2 } } }
+          - { type: tool.result, runId: $cr2b, payload: { callId: g2, result: { ok: { output: { filed: "k2" } } } } }
+          - type: escalation.raised
+            runId: $cr2b
+            payload:
+              escalation:
+                id: { $all: [$escClerk3, { $not: $escClerk2 }] }
+                pendingActions: [{ id: $act3, callId: g3, delegated: { $absent: true }, chain: { $absent: true } }]
+          - { type: run.ended, runId: $cr2b, payload: { reason: escalated } }
+          # resume D3
+          - { type: run.started, runId: { $all: [$cr2c, { $not: $cr2b }] }, payload: { kind: resume } }
+          - { type: escalation.resolved, runId: $cr2c, payload: { escalationId: $escClerk3, decisions: ["01900000-0000-7000-8000-000000000c43"] } }
+          - { type: tool.call, runId: $cr2c, payload: { callId: g3, tool: file_record, arguments: { key: k3 } } }
+          - { type: tool.result, runId: $cr2c, payload: { callId: g3, result: { ok: { output: { filed: "k3" } } } } }
+          - { type: run.ended, runId: $cr2c, payload: { reason: responded } }
+          - { type: session.closed, payload: { reason: completed } }
+  ports:
+    eventLog:
+      t1:
+        # one escalation.resolved per level per resume
+        $clerk1:
+          $count: { of: { type: escalation.resolved }, equals: 1 }
+        $mgr1:
+          $count: { of: { type: escalation.resolved }, equals: 1 }
+        $mgr2:
+          $all:
+            - $count: { of: { type: escalation.resolved }, equals: 2 }
+            - $count: { of: { type: escalation.raised }, equals: 2 }
+            - $count: { of: { type: tool.result, payload: { callId: m2 } }, equals: 1 }
+        $clerk2:
+          $all:
+            - $count: { of: { type: escalation.resolved }, equals: 2 }
+            - $count: { of: { type: escalation.raised }, equals: 2 }
+        $s:
+          $all:
+            - $count: { of: { type: escalation.resolved }, equals: 3 }
+            - $count: { of: { type: run.started, payload: { kind: resume } }, equals: 3 }
+            - $count: { of: { type: escalation.raised }, equals: 3 }
+            - $count: { of: { type: tool.result, payload: { callId: c2 } }, equals: 1 }
+  stubCalls:
+    file_record:
+      - { arguments: { key: k1 }, context: { sessionId: $clerk1 } }
+      - { arguments: { key: k2 }, context: { sessionId: $clerk2 } }
+      - { arguments: { key: k3 }, context: { sessionId: $clerk2 } }
+  providerRequests:
+    scripted-a:
+      - {}
+      - {}
+      - {}
+      # 4: the clerk returns first — its request holds file_record's result
+      - messages:
+          $contains:
+            - role: tool
+              parts: [{ type: tool_result, callId: g1, result: { ok: { output: { filed: "k1" } } } }]
+      # 5: then the manager — its request holds the clerk's answer
+      - messages:
+          $contains:
+            - role: tool
+              parts: [{ type: tool_result, callId: m1, result: { ok: { output: { text: "Filed k1." } } } }]
+      # 6: then the root — its request holds the manager's answer
+      - messages:
+          $contains:
+            - role: tool
+              parts: [{ type: tool_result, callId: c1, result: { ok: { output: { text: "The clerk filed k1." } } } }]
+      - {}
+      - {}
+      # 9: clerk 2 after resume D2 — holds g2's result, then calls g3
+      - messages:
+          $contains:
+            - role: tool
+              parts: [{ type: tool_result, callId: g2, result: { ok: { output: { filed: "k2" } } } }]
+      # 10: clerk 2 after resume D3
+      - messages:
+          $contains:
+            - role: tool
+              parts: [{ type: tool_result, callId: g3, result: { ok: { output: { filed: "k3" } } } }]
+      - messages:
+          $contains:
+            - role: tool
+              parts: [{ type: tool_result, callId: m2, result: { ok: { output: { text: "Filed k2 and k3." } } } }]
+      - messages:
+          $contains:
+            - role: tool
+              parts: [{ type: tool_result, callId: c2, result: { ok: { output: { text: "The clerk filed k2 and k3." } } } }]

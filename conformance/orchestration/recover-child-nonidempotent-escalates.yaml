@@ -1,0 +1,252 @@
+schemaVersion: "0.1.0"
+id: orchestration.recover-child-nonidempotent-escalates
+title: Recovering an orphaned root whose child had a non-idempotent call in flight recovers the child first — a recovery escalation in the child, mirrored on the root — and on resume the root's agent call re-attaches to the same child's outcome
+description: >-
+  The root calls ask_helper (agent → helper@1, `mutating`); the child
+  calls update_record (baseline: mutating, not idempotent, no approval).
+  The run lease is PT1M (`limits.leaseTtl`); default@1 is replaced with a
+  copy whose `timeouts.run` is PT30M, and ask_helper has `timeoutMs`
+  900000, so no run or call deadline (ORCH-043) elapses during the test.
+
+
+  Turn 1 of the root responds. A crash is armed at `after_dispatch` for
+  the root's next action (turn 2). The crash fires at the first stub
+  dispatch during the root's action (Area 8 amendment, "Known fixture
+  limits"), which is the child's update_record h1:
+  its stub ran (its one behaviour is consumed) and no outcome is recorded.
+  Both runs — the root's $r2 (its agent call c1 in flight, ORCH-002
+  started record holding the child's ID) and the child's $cr1 — are
+  orphaned once the lease lapses.
+
+
+  At exactly +1m run() on the root triggers recovery (HITL-092). The
+  started record of c1 leads to the in-flight child, which is recovered
+  first (ORCH-071): h1 has a started record and no outcome, so it is not
+  re-dispatched; a `recovery` pending action is raised in the child's
+  orphaned run $cr1 (no new `run.started`), which ends `escalated`, and
+  the escalation propagates (ORCH-060): the root's orphaned run $r2 raises
+  the mirrored action (same ID, `delegated: true`, `chain` [child], source
+  `recovery`, only `confirm`) and ends `escalated`. No second child is
+  created: c1 is never dispatched again and its tool.call is the only one.
+  The triggering run() then proceeds on the now `suspended` root and is
+  refused with `conflict` (CORE-051).
+
+
+  resume() on the root with a `confirm` (`succeeded`) decision is
+  accepted: the child resumes, receives h1's stated outcome as its `ok`
+  result (never re-dispatched), responds and closes `completed`; the
+  root's agent call c1 re-attaches to that child's outcome — its one
+  `tool.result` is `ok` with `{text}` from that child — and the root
+  responds. Scripted responses are shared and consumed in call order
+  (commented below); a second child would consume one that is not there.
+requirements: [ORCH-071, ORCH-002]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT30M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+      - kind: Persona
+        id: helper
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You update records."
+        tools: [update_record@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: ask_helper
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the helper persona to update a record.
+        input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }
+        effect: mutating
+        timeoutMs: 900000
+        binding: { kind: agent, persona: helper@1 }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, ask_helper@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        # root, turn 1
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # root, turn 2, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: ask_helper, arguments: { task: "Set k1 to v1" } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # child, step 1 (crash after h1's dispatch)
+        - parts: [{ type: tool_call, callId: h1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # child, step 2 (resume run, after the confirmed outcome)
+        - parts: [{ type: text, text: "k1 is set." }]
+          usage: { inputTokens: 30, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+        # root, turn 2, step 2 (resume run, after ask_helper's result)
+        - parts: [{ type: text, text: "The helper set k1." }]
+          usage: { inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+  limits:
+    leaseTtl: PT1M
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - crash: { at: after_dispatch, session: $s }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Ask the helper to set k1 to v1" }]
+  - restart: {}
+  # Exactly the lease expiry: both runs orphaned.
+  - clock: { advance: PT1M }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Is it done?" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $esc, payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: false, error: { category: conflict } }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-0000000000c1", pendingActionId: $act, type: confirm, outcome: succeeded, output: { updated: true } }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: run.ended, runId: $r1, payload: { reason: responded } }
+          - { type: run.started, runId: { $all: [$r2, { $not: $r1 }] }, payload: { kind: run } }
+          - { type: tool.call, runId: $r2, turn: 2, step: 1, payload: { callId: c1, tool: ask_helper, childSessionId: $child } }
+          - type: escalation.raised
+            runId: $r2
+            timestamp: { $regex: "^2026-01-01T00:01:00" }
+            payload:
+              escalation:
+                id: $esc
+                sessionId: $s
+                runId: $r2
+                sources: [recovery]
+                reasonCodes: [agentry.recovery.unknown_outcome]
+                pendingActions:
+                  - id: $act
+                    kind: recovery
+                    source: recovery
+                    delegated: true
+                    chain: [$child]
+                    callId: h1
+                    tool: update_record
+                    idempotencyKey: $k
+                    allowedDecisions: [confirm]
+          - { type: run.ended, runId: $r2, payload: { reason: escalated } }
+          - { type: run.started, runId: { $all: [$r3, { $not: $r2 }] }, payload: { kind: resume } }
+          - { type: escalation.resolved, runId: $r3, payload: { escalationId: $esc, decisions: ["01900000-0000-7000-8000-0000000000c1"] } }
+          - { type: tool.result, runId: $r3, payload: { callId: c1, tool: ask_helper, result: { ok: { output: { text: "k1 is set." } } } } }
+          - { type: run.ended, runId: $r3, payload: { reason: responded } }
+    $child:
+      state: closed
+      closeReason: completed
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, payload: { persona: helper@1, parent: { sessionId: $s, runId: $r2, callId: c1, tool: ask_helper, depth: 1 } } }
+          - { type: run.started, runId: $cr1 }
+          - { type: tool.call, runId: $cr1, payload: { callId: h1, tool: update_record } }
+          - type: escalation.raised
+            runId: $cr1
+            timestamp: { $regex: "^2026-01-01T00:01:00" }
+            payload:
+              escalation:
+                sessionId: $child
+                runId: $cr1
+                pendingActions:
+                  - { id: $act, kind: recovery, source: recovery, delegated: { $absent: true }, callId: h1, idempotencyKey: $k, reasonCode: agentry.recovery.unknown_outcome }
+          - { type: run.ended, runId: $cr1, payload: { reason: escalated } }
+          - { type: run.started, runId: { $all: [$cr2, { $not: $cr1 }] } }
+          - { type: escalation.resolved, runId: $cr2, payload: { decisions: ["01900000-0000-7000-8000-0000000000c1"] } }
+          - { type: tool.result, runId: $cr2, payload: { callId: h1, tool: update_record, result: { ok: { output: { updated: true } } } } }
+          - { type: run.ended, runId: $cr2, payload: { reason: responded } }
+          - { type: session.closed, payload: { reason: completed } }
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $all:
+            - $count: { of: { type: run.started }, equals: 3 }
+            - $count: { of: { type: tool.call, payload: { callId: c1 } }, equals: 1 }
+            - $count: { of: { type: tool.result, payload: { callId: c1 } }, equals: 1 }
+            - $count: { of: { type: escalation.raised }, equals: 1 }
+        $child:
+          $all:
+            - $count: { of: { type: session.created }, equals: 1 }
+            - $count: { of: { type: run.started }, equals: 2 }
+            - $count: { of: { type: tool.call, payload: { callId: h1 } }, equals: 1 }
+            - $count: { of: { type: tool.result, payload: { callId: h1 } }, equals: 1 }
+    idempotencyStore:
+      t1:
+        $k: { state: completed }
+        $kc: { childSessionId: $child }
+  stubCalls:
+    update_record:
+      - { arguments: { key: k1, value: v1 }, completed: false, context: { sessionId: $child, runId: $cr1, idempotencyKey: $k } }
+  providerRequests:
+    scripted-a:
+      - {}
+      - {}
+      - {}
+      - messages:
+          $contains:
+            - role: tool
+              parts:
+                - { type: tool_result, callId: h1, result: { ok: { output: { updated: true } } } }
+      - messages:
+          $contains:
+            - role: tool
+              parts:
+                - { type: tool_result, callId: c1, result: { ok: { output: { text: "k1 is set." } } } }

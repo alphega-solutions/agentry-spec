@@ -1,0 +1,203 @@
+schemaVersion: "0.1.0"
+id: orchestration.govern-agent-call-taint-approval
+title: An agent tool call passes the parent's taint rule and approval stage before any child session is created
+description: >-
+  `ask_writer` (→ writer@1, which allows update_record) is `mutating`.
+  `ask_reader` (→ reader@1, which allows lookup) is `read` with `approval:
+  always`. The bundle trusts no tools (baseline).
+
+  - $t: the parent calls lookup (untrusted, so the parent is tainted from
+    the next step), then ask_writer. Stage 5 (taint rule) escalates:
+    `policy.decision` kind taint, an escalation with source `taint` and
+    reason `agentry.taint.mutating` for the call, and the run ends
+    `escalated`. No `tool.call` is emitted and no child exists: no model
+    request is made for a child in that run. One minute later r1 approves;
+    only then is ask_writer dispatched (in the resume run) and the child
+    created — its `session.created` is timestamped at +1m and names the
+    resume run as `parent.runId`.
+  - $a: the parent, untainted, calls ask_reader. Stage 7 (approval)
+    escalates with source `approval` and reason `agentry.approval.always`;
+    the run ends `escalated` with no `tool.call` and no child. After
+    approval at +2m the child is created in the resume run.
+
+  The parent's pending actions are ordinary ones (`delegated` absent):
+  the call is the parent's own.
+
+  Scripted responses (scripted-a, in call order): 1 $t parent step 1
+  (lookup); 2 $t parent step 2 (ask_writer → escalates); 3 $t child step 1
+  (after approval); 4 $t parent step 3; 5 $a parent step 1 (ask_reader →
+  escalates); 6 $a child step 1 (after approval); 7 $a parent step 2.
+requirements: [ORCH-024]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - { kind: Persona, id: writer, version: 1, schemaVersion: "0.1.0", instructions: "You update records.", tools: [update_record@1], defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a } }
+      - { kind: Persona, id: reader, version: 1, schemaVersion: "0.1.0", instructions: "You read records.", tools: [lookup@1], defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a } }
+      - { kind: Tool, id: ask_writer, version: 1, schemaVersion: "0.1.0", description: Ask the writer persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: mutating, binding: { kind: agent, persona: writer@1 } }
+      - { kind: Tool, id: ask_reader, version: 1, schemaVersion: "0.1.0", description: Ask the reader persona., input: { type: object, additionalProperties: false, required: [task], properties: { task: { type: string } } }, effect: read, approval: always, binding: { kind: agent, persona: reader@1 } }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, ask_writer@1, ask_reader@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        # 1: $t parent, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: a } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 2: $t parent, step 2 (tainted → escalates)
+        - parts: [{ type: tool_call, callId: c2, tool: ask_writer, arguments: { task: "Set a to b" } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 3: $t child, step 1 (after approval)
+        - parts: [{ type: text, text: "Nothing needed changing." }]
+          usage: { inputTokens: 20, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 4: $t parent, step 3
+        - parts: [{ type: text, text: "The writer is done." }]
+          usage: { inputTokens: 40, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 5: $a parent, step 1 (approval: always → escalates)
+        - parts: [{ type: tool_call, callId: c1, tool: ask_reader, arguments: { task: "Find a" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 6: $a child, step 1 (after approval)
+        - parts: [{ type: text, text: "Record a holds A." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # 7: $a parent, step 2
+        - parts: [{ type: text, text: "The reader says a holds A." }]
+          usage: { inputTokens: 30, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "A" } }
+      update_record: []
+script:
+  - action: run
+    bind: $t
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up a, then have the writer set it to b" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $tAct }
+    expect: { ok: true, endReason: escalated }
+  - clock: { advance: PT1M }
+  - action: resume
+    session: $t
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000801", pendingActionId: $tAct, type: approve }
+    capture:
+      - event: { type: tool.call, payload: { callId: c2, tool: ask_writer } }
+        bind: { payload.childSessionId: $tChild }
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $a
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Have the reader find a" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $aAct }
+    expect: { ok: true, endReason: escalated }
+  - clock: { advance: PT1M }
+  - action: resume
+    session: $a
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000802", pendingActionId: $aAct, type: approve }
+    capture:
+      - event: { type: tool.call, payload: { callId: c1, tool: ask_reader } }
+        bind: { payload.childSessionId: $aChild }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $t:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, runId: $tr1, payload: { callId: c1, tool: lookup } }
+          - { type: policy.decision, runId: $tr1, payload: { kind: taint, outcome: escalate, callId: c2, tool: ask_writer } }
+          - type: escalation.raised
+            runId: $tr1
+            payload:
+              escalation:
+                sources: [taint]
+                pendingActions:
+                  - { id: $tAct, kind: tool_call, source: taint, reasonCode: agentry.taint.mutating, callId: c2, tool: ask_writer, delegated: { $absent: true } }
+          - { type: run.ended, runId: $tr1, payload: { reason: escalated } }
+          - { type: escalation.resolved, runId: $tr2 }
+          - { type: tool.call, runId: $tr2, timestamp: { $regex: "^2026-01-01T00:01:00" }, payload: { callId: c2, tool: ask_writer, childSessionId: $tChild } }
+          - { type: tool.result, runId: $tr2, payload: { callId: c2, tool: ask_writer, result: { ok: { output: { text: "Nothing needed changing." } } } } }
+          - { type: run.ended, runId: $tr2, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call, runId: $tr1, payload: { tool: ask_writer } }
+    $tChild:
+      events:
+        mode: subsequence
+        items:
+          - type: session.created
+            timestamp: { $regex: "^2026-01-01T00:01:00" }
+            payload: { persona: writer@1, parent: { sessionId: $t, runId: $tr2, callId: c2, tool: ask_writer, depth: 1 } }
+          - { type: run.ended, payload: { reason: responded } }
+    $a:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            runId: $ar1
+            payload:
+              escalation:
+                sources: [approval]
+                pendingActions:
+                  - { id: $aAct, kind: tool_call, source: approval, reasonCode: agentry.approval.always, callId: c1, tool: ask_reader, delegated: { $absent: true } }
+          - { type: run.ended, runId: $ar1, payload: { reason: escalated } }
+          - { type: escalation.resolved, runId: $ar2 }
+          - { type: tool.call, runId: $ar2, timestamp: { $regex: "^2026-01-01T00:02:00" }, payload: { callId: c1, tool: ask_reader, childSessionId: $aChild } }
+          - { type: tool.result, runId: $ar2, payload: { callId: c1, tool: ask_reader, result: { ok: { output: { text: "Record a holds A." } } } } }
+          - { type: run.ended, runId: $ar2, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call, runId: $ar1 }
+        - { type: policy.decision, payload: { kind: taint } }
+    $aChild:
+      events:
+        mode: subsequence
+        items:
+          - type: session.created
+            timestamp: { $regex: "^2026-01-01T00:02:00" }
+            payload: { persona: reader@1, parent: { sessionId: $a, runId: $ar2, callId: c1, tool: ask_reader, depth: 1 } }
+          - { type: run.ended, payload: { reason: responded } }
+  stubCalls:
+    lookup: { count: 1 }
+    update_record: { count: 0 }
+  providerRequests:
+    scripted-a:
+      - {}
+      - {}
+      - { messages: { $contains: [{ role: principal, parts: [{ type: structured, value: { task: "Set a to b" } }] }] } }
+      - {}
+      - {}
+      - { messages: { $contains: [{ role: principal, parts: [{ type: structured, value: { task: "Find a" } }] }] } }
+      - {}
