@@ -8,7 +8,8 @@
 # recorded on tool.call are the post-hook ones. The two identical calls
 # answer {count: 3} then {count: 4}. Step 3: the model responds "First count
 # 3, then count 4." and the run ends `responded`. inputHash per HOOK-062 as
-# amended (RFC 8785 of the hook's view). Generated: hashes and IDs computed.
+# amended (RFC 8785 of the hook's view, principal.tenant excluded).
+# Generated: hashes and IDs computed.
 schemaVersion: 0.1.0
 tenant: t1
 sessionId: 019cb2ec-f680-7001-8000-003300000001
@@ -130,7 +131,7 @@ events:
       hash: sha256:cb855125210f6d0ef9833c82224d39987cb537a260ce01aeb123d6365892e352
       mediaType: application/json
       size: 130
-    inputHash: sha256:13525781bbb156a09dc57d07c50a2c0c67b2c5f5a796fb7fd6e4efb610a40e92
+    inputHash: sha256:96ccc40da4c1c2908a765ca88007222a1493fcc00fbc7086c66250cae343c10c
 - schemaVersion: 0.1.0
   eventId: 019cb2ec-f93c-700a-8000-00330000000a
   sessionId: 019cb2ec-f680-7001-8000-003300000001
@@ -243,7 +244,7 @@ events:
       hash: sha256:9b803740ae8a154f918fa36a6d6392b6a7a4e5431d238d28389e94246ec0db85
       mediaType: application/json
       size: 130
-    inputHash: sha256:637d6d28c85a4eaeed7cf655e44fe8d92d008f22dd8a10592f3067e622f44e2c
+    inputHash: sha256:bc5482762a479c6a6c8e95a57ce96b243b09873e159aaeb421d8baa3ee8f38d1
 - schemaVersion: 0.1.0
   eventId: 019cb2ec-fb30-7010-8000-003300000010
   sessionId: 019cb2ec-f680-7001-8000-003300000001
@@ -571,7 +572,7 @@ auditRecords:
       hash: sha256:cb855125210f6d0ef9833c82224d39987cb537a260ce01aeb123d6365892e352
       mediaType: application/json
       size: 130
-    inputHash: sha256:13525781bbb156a09dc57d07c50a2c0c67b2c5f5a796fb7fd6e4efb610a40e92
+    inputHash: sha256:96ccc40da4c1c2908a765ca88007222a1493fcc00fbc7086c66250cae343c10c
 - schemaVersion: 0.1.0
   id: 019cb2ec-facc-700f-8000-00330000000f
   timestamp: '2026-03-03T09:00:01.100Z'
@@ -590,4 +591,4 @@ auditRecords:
       hash: sha256:9b803740ae8a154f918fa36a6d6392b6a7a4e5431d238d28389e94246ec0db85
       mediaType: application/json
       size: 130
-    inputHash: sha256:637d6d28c85a4eaeed7cf655e44fe8d92d008f22dd8a10592f3067e622f44e2c
+    inputHash: sha256:bc5482762a479c6a6c8e95a57ce96b243b09873e159aaeb421d8baa3ee8f38d1

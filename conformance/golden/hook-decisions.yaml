@@ -6,9 +6,10 @@
 # Step 2: the model calls lookup (c2); guard answers `continue`, which is
 # not recorded; lookup returns SYN-VALUE-0005. Step 3: the model responds.
 # The recorded inputHash is computed per HOOK-062 as amended: SHA-256 of the
-# RFC 8785 JSON of guard's view {principal (user-1, t1, roles [], attributes
-# {}, multi_factor), session (assistant@1, untainted, turn 1, step 1),
-# content [the c1 tool_call part], tool, call}. Generated: hashes computed.
+# RFC 8785 JSON of guard's view {principal (user-1, roles [], attributes {},
+# multi_factor; principal.tenant excluded, HOOK-062 as amended 2026-11-02),
+# session (assistant@1, untainted, turn 1, step 1), content [the c1
+# tool_call part], tool, call}. Generated: hashes computed.
 schemaVersion: 0.1.0
 tenant: t1
 sessionId: 019cc260-0a80-7001-8000-006600000001
@@ -126,7 +127,7 @@ events:
     point: beforeToolCall
     result: block
     reasonCode: test.guard.blocked
-    inputHash: sha256:df98e4ee26967f3ec03b86d010581a56d52bbac12a2fe4ad2b6f397659ec1cb4
+    inputHash: sha256:e9a05bb20c36b5464e2b91b0944950adb4d66b98e7abc31fa574baebc5172d40
 - schemaVersion: 0.1.0
   eventId: 019cc260-0d3c-700a-8000-00660000000a
   sessionId: 019cc260-0a80-7001-8000-006600000001
@@ -485,4 +486,4 @@ auditRecords:
     point: beforeToolCall
     result: block
     reasonCode: test.guard.blocked
-    inputHash: sha256:df98e4ee26967f3ec03b86d010581a56d52bbac12a2fe4ad2b6f397659ec1cb4
+    inputHash: sha256:e9a05bb20c36b5464e2b91b0944950adb4d66b98e7abc31fa574baebc5172d40

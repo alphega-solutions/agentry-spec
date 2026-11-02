@@ -2,7 +2,8 @@ schemaVersion: "0.1.0"
 id: eval.run-replay-divergences
 title: An eval run that replays golden bundles against a candidate snapshot reports each cell's divergences — unrecorded calls and new hook decisions
 description: >-
-  Two eval runs in the dedicated tenant t1 (used by nothing else), each
+  Two eval runs in the dedicated eval tenant eval-1 (used by nothing
+  else; the bundles were recorded in t1), each
   with one cell (scripted-a/model-a, default@1), one repeat, and one case
   that replays a golden bundle (`replay.bundle`, a path relative to
   `conformance/`) with `replay.snapshot: candidate`. The replayed case
@@ -27,7 +28,9 @@ description: >-
   - Run eval-replay-hooks (`hookMode: replayDecisions`), after a load
     that adds guard@1 (as recorded) to assistant@1's required hooks; case
     c-guard, bundle `golden/hook-decisions.yaml`. guard's view of c1
-    (update_record) hashes as recorded, so the recorded `block` is reused
+    (update_record) hashes as recorded although the tenant differs
+    (`tenant` and `principal.tenant` are excluded, HOOK-062 as amended
+    2026-11-02), so the recorded `block` is reused
     and guard is not invoked for it; c2 (lookup) has no recorded decision,
     so guard is re-evaluated and, from the case's stub, answers `annotate`
     — a non-`continue` result, so the cell's `divergences` are exactly one:
@@ -38,8 +41,10 @@ description: >-
 
   Divergences are matched as a set (their order within a cell is not
   fixed). Each case's grader checks the recorded final text, which the
-  replay reproduces; whether a case with divergences passes is not
-  asserted. Hook behaviours come from each case's stubs (EVAL-041); guard
+  replay reproduces. A divergence is not an unstubbed call: it gives the
+  case no `code`, and the case passes on its graders alone (EVAL-041,
+  EVAL-062 as amended 2026-11-02), so both results pass and each cell's
+  `passRate` is 1. Hook behaviours come from each case's stubs (EVAL-041); guard
   is invoked once in all, for c-guard's c2. guard is not in the candidate
   of the first run, so a recorded decision of one hook is never matched
   against another hook's view.
@@ -99,8 +104,8 @@ setup:
           fallbacks:
             - { provider: scripted-b, name: model-b }
   tenants:
-    - id: t1
-      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+    - id: eval-1
+      principals: [{ id: ep1, subject: user-1, assurance: multi_factor }]
   providers:
     scripted-a: { responses: [] }
     scripted-b: { responses: [] }
@@ -112,7 +117,7 @@ script:
     run:
       schemaVersion: "0.1.0"
       id: eval-replay-calls
-      tenant: t1
+      tenant: eval-1
       deployment: test@1
       cases: [c-count]
       matrix:
@@ -134,8 +139,9 @@ script:
         cells:
           - model: { provider: scripted-a, name: model-a }
             profile: default@1
+            passRate: 1
             results:
-              - { caseId: c-count, repeat: 1, sessionId: $sCount, graders: [{ kind: schema, passed: true }] }
+              - { caseId: c-count, repeat: 1, passed: true, code: { $absent: true }, sessionId: $sCount, graders: [{ kind: schema, passed: true }] }
             divergences:
               $all:
                 - { $len: 2 }
@@ -176,7 +182,7 @@ script:
     run:
       schemaVersion: "0.1.0"
       id: eval-replay-hooks
-      tenant: t1
+      tenant: eval-1
       deployment: test@1
       cases: [c-guard]
       matrix:
@@ -204,8 +210,9 @@ script:
         cells:
           - model: { provider: scripted-a, name: model-a }
             profile: default@1
+            passRate: 1
             results:
-              - { caseId: c-guard, repeat: 1, sessionId: $sGuard, graders: [{ kind: schema, passed: true }] }
+              - { caseId: c-guard, repeat: 1, passed: true, code: { $absent: true }, sessionId: $sGuard, graders: [{ kind: schema, passed: true }] }
             divergences:
               - { caseId: c-guard, repeat: 1, kind: hook_decision, hook: guard@1, eventId: $hdGuard }
 expect:
@@ -238,7 +245,7 @@ expect:
         mode: subsequence
         items:
           - { type: session.created, snapshotHash: $candHooks }
-          - { type: hook.decision, payload: { hook: guard@1, result: block, inputHash: "sha256:df98e4ee26967f3ec03b86d010581a56d52bbac12a2fe4ad2b6f397659ec1cb4" } }
+          - { type: hook.decision, payload: { hook: guard@1, result: block, inputHash: "sha256:e9a05bb20c36b5464e2b91b0944950adb4d66b98e7abc31fa574baebc5172d40" } }
           - { type: tool.result, payload: { callId: c1, result: { error: { code: agentry.hook.blocked } } } }
           - { type: hook.decision, eventId: $hdGuard, payload: { hook: guard@1, point: beforeToolCall, result: annotate } }
           - { type: tool.result, payload: { callId: c2, tool: lookup, result: { ok: { output: { key: k1, value: SYN-VALUE-0005 } } } } }

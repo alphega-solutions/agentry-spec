@@ -185,12 +185,12 @@ expect:
           - { type: run.started, runId: $u1 }
           - type: hook.decision
             runId: $u1
-            payload: { hook: clamp@1, point: beforeToolCall, result: rewrite, replacementRef: { $any: true }, inputHash: "sha256:13525781bbb156a09dc57d07c50a2c0c67b2c5f5a796fb7fd6e4efb610a40e92" }
+            payload: { hook: clamp@1, point: beforeToolCall, result: rewrite, replacementRef: { $any: true }, inputHash: "sha256:96ccc40da4c1c2908a765ca88007222a1493fcc00fbc7086c66250cae343c10c" }
           - { type: tool.call, runId: $u1, step: 1, payload: { callId: c1, tool: count_records, arguments: { prefix: a, limit: 10 } } }
           - { type: tool.result, runId: $u1, step: 1, payload: { callId: c1, tool: count_records, result: { ok: { output: { count: 3 } } } } }
           - type: hook.decision
             runId: $u1
-            payload: { hook: clamp@1, point: beforeToolCall, result: rewrite, replacementRef: { $any: true }, inputHash: "sha256:637d6d28c85a4eaeed7cf655e44fe8d92d008f22dd8a10592f3067e622f44e2c" }
+            payload: { hook: clamp@1, point: beforeToolCall, result: rewrite, replacementRef: { $any: true }, inputHash: "sha256:bc5482762a479c6a6c8e95a57ce96b243b09873e159aaeb421d8baa3ee8f38d1" }
           - { type: tool.call, runId: $u1, step: 2, payload: { callId: c2, tool: count_records, arguments: { prefix: a, limit: 10 } } }
           - { type: tool.result, runId: $u1, step: 2, payload: { callId: c2, tool: count_records, result: { ok: { output: { count: 4 } } } } }
           - { type: run.ended, runId: $u1, payload: { reason: responded } }

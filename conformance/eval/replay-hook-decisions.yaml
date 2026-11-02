@@ -9,9 +9,10 @@ description: >-
   guard's view of c1, HOOK-062); the model receives agentry.hook.blocked;
   step 2 — lookup (c2), guard answered `continue` (not recorded, so no
   decision exists for c2); step 3 — the final response. All three replays
-  use `snapshot: recorded` in t1 with the recorded principal (user-1,
+  use `snapshot: recorded` with the recorded principal (user-1,
   multi_factor, no roles or attributes), so guard's view of c1 is the
-  recorded one.
+  recorded one; the tenant does not enter the input hash (HOOK-062 as
+  amended 2026-11-02).
 
 
   - $rA, `replayDecisions`: guard's input hash for c1 matches the recorded
@@ -117,7 +118,7 @@ expect:
               point: beforeToolCall
               result: block
               reasonCode: test.guard.blocked
-              inputHash: "sha256:df98e4ee26967f3ec03b86d010581a56d52bbac12a2fe4ad2b6f397659ec1cb4"
+              inputHash: "sha256:e9a05bb20c36b5464e2b91b0944950adb4d66b98e7abc31fa574baebc5172d40"
           - type: tool.result
             payload:
               callId: c1
@@ -133,7 +134,7 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: hook.decision, payload: { hook: guard@1, result: block, inputHash: "sha256:df98e4ee26967f3ec03b86d010581a56d52bbac12a2fe4ad2b6f397659ec1cb4" } }
+          - { type: hook.decision, payload: { hook: guard@1, result: block, inputHash: "sha256:e9a05bb20c36b5464e2b91b0944950adb4d66b98e7abc31fa574baebc5172d40" } }
           - { type: tool.result, payload: { callId: c1, result: { error: { code: agentry.hook.blocked } } } }
           - { type: hook.decision, eventId: $hdB, payload: { hook: guard@1, point: beforeToolCall, result: annotate } }
           - { type: tool.result, payload: { callId: c2, tool: lookup, result: { ok: { output: { key: k1, value: SYN-VALUE-0005 } } } } }
