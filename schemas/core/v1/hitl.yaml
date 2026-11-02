@@ -33,12 +33,30 @@ $defs:
 
   pendingAction:
     description: >-
+      A pending action as stored, listed and carried by `escalation.raised`
+      (HITL-011): `tool_call` and `recovery` actions carry their arguments.
+    allOf:
+      - $ref: "#/$defs/pendingActionCore"
+      - if: { properties: { kind: { enum: [tool_call, recovery] } } }
+        then: { required: [arguments] }
+
+  viewPendingAction:
+    description: >-
+      A pending action in the reviewer view's escalation. It never carries
+      `arguments`: the content under review is given, redacted per the
+      reviewer's clearance, in the view's `actions` (HITL-031).
+    allOf:
+      - $ref: "#/$defs/pendingActionCore"
+      - not: { required: [arguments] }
+
+  pendingActionCore:
+    description: >-
       One action awaiting a decision (HITL-011). Its allowed decisions are
       fixed by its kind: `tool_call` → approve, reject, edit; `content` →
       approve, reject, plus edit at `beforeResponse`; `recovery` → confirm.
     type: object
     additionalProperties: false
-    required: [id, kind, source, reasonCode, allowedDecisions, reviewerRequirements]
+    required: [id, kind, source, reasonCode, labels, allowedDecisions, reviewerRequirements]
     properties:
       id: { type: string, minLength: 1 }
       kind: { enum: [tool_call, content, recovery] }
@@ -59,8 +77,9 @@ $defs:
         description: Raised in a descendant session and mirrored here (ORCH-060, ORCH-061).
         type: boolean
       chain:
-        description: Session IDs from this session down to the one that raised it (ORCH-061).
+        description: The child session IDs leading from this session down to the session that owns the action, nearest child first (ORCH-060).
         type: array
+        minItems: 1
         items: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
       callId: { type: string, minLength: 1 }
       tool: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/toolId" }
@@ -87,14 +106,14 @@ $defs:
     allOf:
       - if: { properties: { kind: { const: tool_call } } }
         then:
-          required: [callId, tool, arguments]
+          required: [callId, tool]
           properties:
             source: { enum: [taint, approval, hook] }
-            allowedDecisions: { items: { enum: [approve, reject, edit] }, minItems: 3 }
+            allowedDecisions: { const: [approve, reject, edit] }
           not: { anyOf: [{ required: [point] }, { required: [contentRef] }, { required: [idempotencyKey] }] }
       - if: { properties: { kind: { const: recovery } } }
         then:
-          required: [callId, tool, arguments, idempotencyKey]
+          required: [callId, tool, idempotencyKey]
           properties:
             source: { const: recovery }
             allowedDecisions: { const: [confirm] }
@@ -105,17 +124,35 @@ $defs:
           properties: { source: { const: hook } }
           not: { anyOf: [{ required: [callId] }, { required: [arguments] }, { required: [idempotencyKey] }] }
       - if: { properties: { kind: { const: content }, point: { const: beforeResponse } }, required: [kind, point] }
-        then: { properties: { allowedDecisions: { items: { enum: [approve, reject, edit] }, minItems: 3 } } }
+        then: { properties: { allowedDecisions: { const: [approve, reject, edit] } } }
       - if: { properties: { kind: { const: content }, point: { not: { const: beforeResponse } } }, required: [kind, point] }
-        then: { properties: { allowedDecisions: { items: { enum: [approve, reject] }, minItems: 2 } } }
+        then: { properties: { allowedDecisions: { const: [approve, reject] } } }
       - if: { properties: { source: { const: hook } } }
         then: { required: [hook] }
+        else: { not: { required: [hook] } }
+      - if: { properties: { source: { enum: [taint, recovery] } } }
+        then: { properties: { reviewerRequirements: { properties: { selfApprovalAllowed: { const: false } } } } }
       - if: { required: [delegated], properties: { delegated: { const: true } } }
         then: { required: [chain] }
 
   escalation:
     title: Escalation
-    description: The escalation record (HITL-010). At most one is open per session (HITL-002).
+    description: >-
+      The escalation record (HITL-010). At most one is open per session
+      (HITL-002). `escalation.raised`, `listPendingEscalations` and the
+      `escalation` audit record carry it in the event-redacted form
+      (CORE-154, PORT-074).
+    allOf:
+      - $ref: "#/$defs/escalationBase"
+      - properties: { pendingActions: { items: { $ref: "#/$defs/pendingAction" } } }
+
+  viewEscalation:
+    description: The escalation record as the reviewer view embeds it, with no action arguments (HITL-030, HITL-031).
+    allOf:
+      - $ref: "#/$defs/escalationBase"
+      - properties: { pendingActions: { items: { $ref: "#/$defs/viewPendingAction" } } }
+
+  escalationBase:
     type: object
     additionalProperties: false
     required: [id, sessionId, runId, turn, step, tenant, snapshotHash, sources, reasonCodes, pendingActions, createdAt, expiresAt]
@@ -146,7 +183,7 @@ $defs:
         description: One per escalating call or content in the step, in request order (HITL-002, TOOL-033).
         type: array
         minItems: 1
-        items: { $ref: "#/$defs/pendingAction" }
+        items: { type: object }
       createdAt: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/timestamp" }
       expiresAt:
         description: "`createdAt` + `suspendedTtl` (HITL-010); in a delegation chain, the chain's earliest (ORCH-065)."
@@ -154,6 +191,7 @@ $defs:
     if:
       properties: { pendingActions: { contains: { properties: { source: { const: taint } }, required: [source] } } }
     then: { required: [taintProvenances] }
+    else: { not: { required: [taintProvenances] } }
 
   decision:
     title: Decision
@@ -176,6 +214,7 @@ $defs:
         $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/principalRef"
       timestamp: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/timestamp" }
       replacement:
+        type: [object, array]
         description: "For `edit`: the replacement arguments (`tool_call`) or parts (`content` at `beforeResponse`)."
       original:
         description: "For `edit`, in the audit record only: the content it replaces (HITL-044)."
@@ -231,8 +270,9 @@ $defs:
     additionalProperties: false
     required: [escalation, actions]
     properties:
-      escalation: { $ref: "#/$defs/escalation" }
+      escalation: { $ref: "#/$defs/viewEscalation" }
       actions:
+        description: One entry per pending action, in the order of `pendingActions`.
         type: array
         items:
           type: object

@@ -11,6 +11,8 @@ instance:
   eventId: 0190a3c4-0000-7000-8000-000000000023
   seq: 9
   type: escalation.raised
+  provenances: [model]
+  labels: []
   payload:
     escalation:
       id: 0190a3c4-0000-7000-8000-000000000024
@@ -31,6 +33,7 @@ instance:
           arguments: { key: k1, value: v1 }
           idempotencyKey: "0190a3c4-0000-7000-8000-000000000025"
           reasonCode: agentry.recovery.unknown_outcome
+          labels: []
           allowedDecisions: [confirm]
           reviewerRequirements: { requiredApprovals: 1, selfApprovalAllowed: false, rules: [] }
       createdAt: "2026-01-01T00:00:00Z"
