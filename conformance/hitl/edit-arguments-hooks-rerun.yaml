@@ -1,0 +1,180 @@
+schemaVersion: "0.1.0"
+id: hitl.edit-arguments-hooks-rerun
+title: Edited tool arguments carry reviewer provenance and the replaced labels, run every beforeToolCall hook again, and count as approval at stage 7
+description: >-
+  The bundle requires three beforeToolCall hooks, in order: observer
+  (native, continues), tagger (rule, annotates pii on every part it sees),
+  and gate (native: escalates the first time, continues the second).
+  update_record has `approval: always`.
+
+
+  First run: observer sees the model's tool_call part (no pii yet), tagger
+  labels it pii, gate escalates. The pending action holds arguments
+  {k1, v1} with labels including pii.
+
+
+  The reviewer edits the arguments to {k1, v2}. In the resume run the
+  edited call re-enters the pipeline at stage 2 and runs ALL beforeToolCall
+  hooks from the first, including gate, the hook that escalated: observer
+  is invoked a second time and sees the tool_call part with the replacement
+  arguments, provenance `reviewer`, and the pii label kept from the
+  arguments it replaced (observer runs before tagger, so the label cannot
+  come from tagger's second annotation); gate is invoked a second time on
+  the replacement and continues. Stage 7 treats the edit as approval: no
+  second escalation, although `approval` is `always`. The call is
+  dispatched once, with the replacement, which is also what `tool.call`
+  records.
+
+
+  Assumption: the provenance of the edited arguments is observed through
+  the `HookRequest` content (the call's one tool_call part, Area 5
+  amendment 2026-11-01); the `tool.call` event payload has no provenance
+  field.
+requirements: [HITL-061]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.update_record }
+      - kind: Hook
+        id: observer
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [continue]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.observer }
+      - kind: Hook
+        id: tagger
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [annotate]
+        timeoutMs: 1000
+        source: { kind: rule, when: "true", then: { result: annotate, labels: [pii] } }
+      - kind: Hook
+        id: gate
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [escalate]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.gate }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        requiredHooks: [observer@1, tagger@1, gate@1]
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated as edited." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+    nativeHooks:
+      gate:
+        - result: escalate
+          reasonCode: test.hook.review
+        - result: continue
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - decisionId: "01900000-0000-7000-8000-000000000631"
+        pendingActionId: $act
+        type: edit
+        replacement: { key: k1, value: v2 }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            runId: $r1
+            payload:
+              escalation:
+                pendingActions:
+                  - { id: $act, kind: tool_call, source: hook, hook: gate@1, arguments: { key: k1, value: v1 }, labels: { $contains: [pii] } }
+          - { type: run.ended, runId: $r1, payload: { reason: escalated } }
+          - { type: tool.call, runId: $r2, payload: { callId: c1, arguments: { key: k1, value: v2 } } }
+          - { type: run.ended, runId: $r2, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call, runId: $r1 }
+        - { type: escalation.raised, runId: $r2 }
+  stubCalls:
+    observer:
+      - arguments:
+          runId: $r1
+          content:
+            - type: tool_call
+              callId: c1
+              arguments: { key: k1, value: v1 }
+              labels: { $count: { of: pii, equals: 0 } }
+      - arguments:
+          runId: $r2
+          call: { arguments: { key: k1, value: v2 } }
+          content:
+            - type: tool_call
+              callId: c1
+              arguments: { key: k1, value: v2 }
+              provenance: reviewer
+              labels: { $contains: [pii] }
+    gate:
+      - arguments: { runId: $r1, call: { arguments: { key: k1, value: v1 } } }
+      - arguments: { runId: $r2, call: { arguments: { key: k1, value: v2 } } }
+    update_record: [{ arguments: { key: k1, value: v2 } }]
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $count: { of: { type: escalation.raised }, equals: 1 }

@@ -1,0 +1,206 @@
+schemaVersion: "0.1.0"
+id: hitl.edit-response-schema-and-hooks
+title: An edited response must satisfy the output schema, carries reviewer provenance and the replaced labels, and passes every beforeResponse hook from the first
+description: >-
+  The persona extractor declares an output schema `{answer: string}`. The
+  bundle requires three beforeResponse hooks, in order: observer (native,
+  continues), tagger (rule, annotates pii), gate (native: escalates the
+  first time, continues the second); the persona adds after (native,
+  continues).
+
+
+  First run: the model answers {answer: draft}; observer sees it, tagger
+  labels it pii, gate escalates a `content` action at `beforeResponse`
+  (which allows `edit`); after is not invoked.
+
+
+  D1 edits the response to {answer: 7}, which fails the output schema
+  (CORE-130) → `invalid_input` (`details.decisionId` D1), not recorded:
+  resume() with no decisions then fails with `conflict`
+  (`agentry.hitl.pending`).
+
+
+  D2 edits it to {answer: SYN-EDITED-0062} and resumes. No new model call
+  is made. The edited response passes ALL beforeResponse hooks from the
+  first: observer is invoked again and sees the replacement part with
+  provenance `reviewer` and the pii label kept from the response it
+  replaced (observer runs before tagger re-annotates); gate is invoked
+  again and continues; after is invoked once, on the replacement. The host
+  receives the replacement and the run ends `responded`.
+requirements: [HITL-062, HITL-063]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Hook
+        id: observer
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeResponse]
+        results: [continue]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.observer }
+      - kind: Hook
+        id: tagger
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeResponse]
+        results: [annotate]
+        timeoutMs: 1000
+        source: { kind: rule, when: "true", then: { result: annotate, labels: [pii] } }
+      - kind: Hook
+        id: gate
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeResponse]
+        results: [escalate]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.gate }
+      - kind: Hook
+        id: after
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeResponse]
+        results: [continue]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.after }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        requiredHooks: [observer@1, tagger@1, gate@1]
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+      - kind: Persona
+        id: extractor
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test extractor
+        instructions: "Answer as JSON."
+        tools: []
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        requiredHooks: [after@1]
+        model: { provider: scripted-a, name: model-a }
+        outputSchema:
+          type: object
+          additionalProperties: false
+          required: [answer]
+          properties:
+            answer: { type: string }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: structured, value: { answer: draft } }]
+          usage: { inputTokens: 20, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    nativeHooks:
+      gate:
+        - result: escalate
+          reasonCode: test.hook.review
+        - result: continue
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: extractor@1
+    input: [{ type: text, text: "Answer, please" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  - action: decide
+    session: $s
+    reviewer: r1
+    decisions:
+      - decisionId: "01900000-0000-7000-8000-000000000651"
+        pendingActionId: $act
+        type: edit
+        replacement: [{ type: structured, value: { answer: 7 } }]
+    expect:
+      ok: false
+      error: { category: invalid_input, details: { decisionId: "01900000-0000-7000-8000-000000000651" } }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions: []
+    expect: { ok: false, error: { category: conflict, code: agentry.hitl.pending } }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - decisionId: "01900000-0000-7000-8000-000000000652"
+        pendingActionId: $act
+        type: edit
+        replacement: [{ type: structured, value: { answer: SYN-EDITED-0062 } }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            runId: $r1
+            payload:
+              escalation:
+                pendingActions:
+                  - { id: $act, kind: content, point: beforeResponse, source: hook, hook: gate@1, labels: { $contains: [pii] } }
+          - { type: run.ended, runId: $r1, payload: { reason: escalated } }
+          - { type: escalation.resolved, runId: $r2, payload: { decisions: ["01900000-0000-7000-8000-000000000652"] } }
+          - { type: run.ended, runId: $r2, payload: { reason: responded } }
+      absentEvents:
+        - { type: model.request, runId: $r2 }
+  delivered:
+    $s:
+      parts:
+        $contains:
+          - { type: structured, value: { answer: SYN-EDITED-0062 } }
+  stubCalls:
+    observer:
+      - arguments:
+          runId: $r1
+          point: beforeResponse
+          content: [{ type: structured, value: { answer: draft }, labels: { $count: { of: pii, equals: 0 } } }]
+      - arguments:
+          runId: $r2
+          point: beforeResponse
+          content: [{ type: structured, value: { answer: SYN-EDITED-0062 }, provenance: reviewer, labels: { $contains: [pii] } }]
+    gate:
+      - arguments: { runId: $r1, content: [{ type: structured, value: { answer: draft } }] }
+      - arguments: { runId: $r2, content: [{ type: structured, value: { answer: SYN-EDITED-0062 } }] }
+    after:
+      - arguments: { runId: $r2, point: beforeResponse, content: [{ type: structured, value: { answer: SYN-EDITED-0062 } }] }
+  providerRequests:
+    scripted-a: { count: 1 }
+  ports:
+    auditLog:
+      t1:
+        $all:
+          - $count: { of: { type: decision }, equals: 1 }
+          - $contains:
+              - type: decision
+                details:
+                  id: "01900000-0000-7000-8000-000000000652"
+                  type: edit
+                  replacement: [{ type: structured, value: { answer: SYN-EDITED-0062 } }]
+                  original: [{ type: structured, value: { answer: draft } }]

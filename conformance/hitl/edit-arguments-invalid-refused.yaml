@@ -1,0 +1,124 @@
+schemaVersion: "0.1.0"
+id: hitl.edit-arguments-invalid-refused
+title: An edit whose replacement arguments fail the tool's input schema is refused with invalid_input and leaves the action undecided
+description: >-
+  update_record (`approval: always`) escalates. Edited arguments are
+  validated against the tool's `input` (stage 2, HITL-061):
+
+
+  - D1 replaces the arguments with {key: k1} (missing required `value`)
+  → `invalid_input`, `details.decisionId` D1;
+
+  - D2 replaces them with {key: k1, value: 5} (`value` not a string)
+  → `invalid_input`, `details.decisionId` D2.
+
+
+  Neither is recorded and the action stays undecided: resume() with no
+  decisions fails with `conflict` (`agentry.hitl.pending`), and no audit
+  record exists for D1 or D2. Control: D3, a valid replacement {key: k1,
+  value: v2}, is accepted with resume() and dispatched.
+requirements: [HITL-063, HITL-061]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.update_record }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated as edited." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  - action: decide
+    session: $s
+    reviewer: r1
+    decisions:
+      - decisionId: "01900000-0000-7000-8000-000000000641"
+        pendingActionId: $act
+        type: edit
+        replacement: { key: k1 }
+    expect:
+      ok: false
+      error: { category: invalid_input, details: { decisionId: "01900000-0000-7000-8000-000000000641" } }
+  - action: decide
+    session: $s
+    reviewer: r1
+    decisions:
+      - decisionId: "01900000-0000-7000-8000-000000000642"
+        pendingActionId: $act
+        type: edit
+        replacement: { key: k1, value: 5 }
+    expect:
+      ok: false
+      error: { category: invalid_input, details: { decisionId: "01900000-0000-7000-8000-000000000642" } }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions: []
+    expect: { ok: false, error: { category: conflict, code: agentry.hitl.pending } }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - decisionId: "01900000-0000-7000-8000-000000000643"
+        pendingActionId: $act
+        type: edit
+        replacement: { key: k1, value: v2 }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: escalation.resolved, payload: { decisions: ["01900000-0000-7000-8000-000000000643"] } }
+          - { type: tool.call, payload: { callId: c1, arguments: { key: k1, value: v2 } } }
+          - { type: run.ended, payload: { reason: responded } }
+  stubCalls:
+    update_record: [{ arguments: { key: k1, value: v2 } }]
+  ports:
+    auditLog:
+      t1:
+        $all:
+          - $count: { of: { type: decision }, equals: 1 }
+          - $count: { of: { details: { id: "01900000-0000-7000-8000-000000000641" } }, equals: 0 }
+          - $count: { of: { details: { id: "01900000-0000-7000-8000-000000000642" } }, equals: 0 }
