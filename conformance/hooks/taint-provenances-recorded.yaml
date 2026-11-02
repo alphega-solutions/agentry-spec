@@ -4,20 +4,22 @@ title: Each taint decision lists the provenance that first tainted the session a
 description: >-
   The bundle trusts `lookup@1`; `fetch_external` is untrusted; the
   principal attaches a file through `email`, which is not a trusted
-  attachment source. `set_status` is mutating with `onTainted: allow`, so
-  each call records a taint decision and continues.
+  attachment source. `set_status` is mutating with `onTainted: allow` and
+  is not in `trustedTools`, so each call records a taint decision and
+  continues, and its own result taints the session from the next step
+  (HOOK-126: a mutating tool's untrusted result counts).
 
   - c1 set_status: only the attachment has tainted the session → the
-    decision lists exactly [attachment:email].
+    decision lists exactly [attachment:email]. c1's result then enters
+    context (untrusted).
   - c2 fetch_external (untrusted) and c3 lookup (trusted) then enter
     context.
-  - c4 set_status: the decision lists attachment:email and
-    tool:fetch_external — and nothing else (not the trusted tool:lookup,
-    not principal or model).
-
-  The checkpoint records the same two provenances. HOOK-126 does not say
-  whether the list is ordered, so the assertions use `$contains` with
-  `$len` rather than an exact order.
+  - c4 set_status: the decision lists exactly, in first-entry order,
+    [attachment:email, tool:set_status, tool:fetch_external] — not the
+    trusted tool:lookup, not principal or model.
+  - c4's result is untrusted too, but tool:set_status is already listed,
+    so the checkpoint records the same three provenances, in the same
+    order, without a duplicate (HOOK-126).
 requirements: [HOOK-126]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -145,11 +147,11 @@ expect:
               kind: taint
               outcome: allow
               callId: c4
-              provenances: { $all: [{ $len: 2 }, { $contains: ["attachment:email", "tool:fetch_external"] }] }
+              provenances: ["attachment:email", "tool:set_status", "tool:fetch_external"]
           - { type: run.ended, payload: { reason: responded } }
       checkpoint:
         taint:
           tainted: true
-          provenances: { $all: [{ $len: 2 }, { $contains: ["attachment:email", "tool:fetch_external"] }] }
+          provenances: ["attachment:email", "tool:set_status", "tool:fetch_external"]
   stubCalls:
     set_status: [{ arguments: { key: k1 } }, { arguments: { key: k2 } }]

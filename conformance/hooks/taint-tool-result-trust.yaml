@@ -2,8 +2,10 @@ schemaVersion: "0.1.0"
 id: hook.taint-tool-result-trust
 title: A result from a tool not in `trustedTools` taints the session; a result from a trusted tool does not
 description: >-
-  The bundle lists `lookup@1` in `trustedTools`; `fetch_external` is not
-  listed. Taint is observed through a later mutating call (`update_record`,
+  The bundle lists `lookup@1` and `update_record@1` in `trustedTools`;
+  `fetch_external` is not listed. `update_record` is trusted so that its
+  own result (HOOK-126) does not taint $sTrusted and the fixture isolates
+  the lookup source. Taint is observed through a later mutating call (`update_record`,
   default `onTainted: escalate`) and through the checkpoint `taint` field.
 
   - $sTrusted: a trusted lookup result enters context; the mutating call
@@ -27,7 +29,7 @@ setup:
         schemaVersion: "0.1.0"
         policyInstructions: "Follow organisational policy."
         defaultFallbackMessage: "I can't help with that request."
-        trustedTools: [lookup@1]
+        trustedTools: [lookup@1, update_record@1]
         sensitivityPolicies:
           pii:
             allowedProviders: [scripted-a, scripted-b]

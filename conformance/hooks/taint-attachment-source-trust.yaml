@@ -3,7 +3,9 @@ id: hook.taint-attachment-source-trust
 title: An attachment from a source not in `trustedAttachmentSources` taints the session, which stays tainted in later turns
 description: >-
   The deployment declares attachment sources `upload` and `email`; the
-  bundle trusts only `upload`. Each session supplies the same synthetic file.
+  bundle trusts only `upload`. The bundle also lists `update_record@1` in
+  `trustedTools`, so the mutating tool's own result (HOOK-126) does not
+  taint $sUpload and the fixture isolates the attachment source. Each session supplies the same synthetic file.
 
   - $sUpload: the file arrives through `upload` (trusted). A mutating call
     in the same turn is dispatched with no taint decision; the checkpoint is
@@ -29,6 +31,7 @@ setup:
         policyInstructions: "Follow organisational policy."
         defaultFallbackMessage: "I can't help with that request."
         trustedAttachmentSources: [upload]
+        trustedTools: [update_record@1]
         sensitivityPolicies:
           pii:
             allowedProviders: [scripted-a, scripted-b]
