@@ -1,0 +1,369 @@
+schemaVersion: "0.1.0"
+id: hitl.decide-two-approvals
+title: With two required approvals, one approve is not enough, a single reject decides, matching edits approve their replacement, and differing or mixed decisions stay undecided
+description: >-
+  The bundle's reviewer rule for source `approval` requires
+  `requiredApprovals: 2` (reviewers r1, r2, r3 all satisfy it).
+  update_record has `approval: always`, so its calls escalate with source
+  `approval` and an effective `requiredApprovals` of 2. The rule hook
+  gate-lookup escalates every lookup call with source `hook`, for which no
+  reviewer rule applies (`requiredApprovals` 1).
+
+
+  $single (control, HITL-050): one approve by r1 decides the lookup action;
+  resume() is accepted and lookup is dispatched.
+
+  $one: r1 approves → resume() fails with `conflict`
+  (`agentry.hitl.pending`); r2 then approves, via resume() → accepted, and
+  the call is dispatched with the original arguments.
+
+  $rej: a single reject by r1 decides the action at once; resume() is
+  accepted and the model receives `agentry.hitl.rejected`; nothing is
+  dispatched.
+
+  $edits: r1 and r2 submit edits with identical replacements (the same
+  members, written in different key order, which is the same RFC 8785
+  canonical JSON) → approved with that replacement, which is dispatched.
+
+  $diff: r1 and r2 submit edits with different replacements → each has one
+  approval; resume() fails with `conflict`.
+
+  $mix: r1 approves (counts toward the original) and r2 edits (counts
+  toward the replacement) → neither has two; resume() fails with
+  `conflict`.
+
+
+  Undecided sessions stay `suspended`; every decision submitted is
+  recorded (the refused resumes keep them, HITL-070).
+requirements: [HITL-050, HITL-051]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+        reviewerRules:
+          approval:
+            - { rule: "'reviewer' in reviewer.roles", requiredApprovals: 2 }
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.update_record }
+      - kind: Hook
+        id: gate-lookup
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [escalate]
+        timeoutMs: 1000
+        source: { kind: rule, when: "tool.id == 'lookup'", then: { result: escalate, reasonCode: test.hook.review } }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [gate-lookup@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+        - { id: r2, subject: reviewer-2, assurance: multi_factor, roles: [reviewer] }
+        - { id: r3, subject: reviewer-3, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        # $single
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k-single } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Looked up." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $one
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k-one, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $rej
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k-rej, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "The update was rejected." }]
+          usage: { inputTokens: 30, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $edits
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k-edits, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated as edited." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $diff
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k-diff, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $mix
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k-mix, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "synthetic value" } }
+      update_record:
+        - ok: { output: { updated: k-one } }
+        - ok: { output: { updated: k-edits } }
+script:
+  # $single — requiredApprovals 1: the first approve decides.
+  - action: run
+    bind: $single
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k-single" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $actSingle }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $single
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000501", pendingActionId: $actSingle, type: approve }
+    expect: { ok: true, endReason: responded }
+  # $one — one approve is not enough; a second reviewer's approve decides.
+  - action: run
+    bind: $one
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k-one to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $actOne }
+    expect: { ok: true, endReason: escalated }
+  - action: decide
+    session: $one
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000511", pendingActionId: $actOne, type: approve }
+    expect: { ok: true }
+  - action: resume
+    session: $one
+    reviewer: r1
+    decisions: []
+    expect: { ok: false, error: { category: conflict, code: agentry.hitl.pending } }
+  - action: resume
+    session: $one
+    reviewer: r2
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000512", pendingActionId: $actOne, type: approve }
+    expect: { ok: true, endReason: responded }
+  # $rej — a single reject decides immediately.
+  - action: run
+    bind: $rej
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k-rej to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $actRej }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $rej
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000521", pendingActionId: $actRej, type: reject }
+    expect: { ok: true, endReason: responded }
+  # $edits — two identical replacements approve that replacement.
+  - action: run
+    bind: $edits
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k-edits to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $actEdits }
+    expect: { ok: true, endReason: escalated }
+  - action: decide
+    session: $edits
+    reviewer: r1
+    decisions:
+      - decisionId: "01900000-0000-7000-8000-000000000531"
+        pendingActionId: $actEdits
+        type: edit
+        replacement: { key: k-edits, value: v-agreed }
+    expect: { ok: true }
+  - action: resume
+    session: $edits
+    reviewer: r2
+    decisions:
+      - decisionId: "01900000-0000-7000-8000-000000000532"
+        pendingActionId: $actEdits
+        type: edit
+        replacement: { value: v-agreed, key: k-edits }
+    expect: { ok: true, endReason: responded }
+  # $diff — two different replacements: undecided.
+  - action: run
+    bind: $diff
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k-diff to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $actDiff }
+    expect: { ok: true, endReason: escalated }
+  - action: decide
+    session: $diff
+    reviewer: r1
+    decisions:
+      - decisionId: "01900000-0000-7000-8000-000000000541"
+        pendingActionId: $actDiff
+        type: edit
+        replacement: { key: k-diff, value: v-x }
+    expect: { ok: true }
+  - action: resume
+    session: $diff
+    reviewer: r2
+    decisions:
+      - decisionId: "01900000-0000-7000-8000-000000000542"
+        pendingActionId: $actDiff
+        type: edit
+        replacement: { key: k-diff, value: v-y }
+    expect: { ok: false, error: { category: conflict, code: agentry.hitl.pending } }
+  # $mix — an approve and an edit do not combine.
+  - action: run
+    bind: $mix
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k-mix to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $actMix }
+    expect: { ok: true, endReason: escalated }
+  - action: decide
+    session: $mix
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000551", pendingActionId: $actMix, type: approve }
+    expect: { ok: true }
+  - action: resume
+    session: $mix
+    reviewer: r2
+    decisions:
+      - decisionId: "01900000-0000-7000-8000-000000000552"
+        pendingActionId: $actMix
+        type: edit
+        replacement: { key: k-mix, value: v-z }
+    expect: { ok: false, error: { category: conflict, code: agentry.hitl.pending } }
+expect:
+  sessions:
+    $single:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            payload:
+              escalation:
+                pendingActions:
+                  - { id: $actSingle, source: hook, tool: lookup, reviewerRequirements: { requiredApprovals: 1 } }
+          - { type: tool.call, payload: { callId: c1, tool: lookup } }
+          - { type: run.ended, payload: { reason: responded } }
+    $one:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            payload:
+              escalation:
+                pendingActions:
+                  - { id: $actOne, source: approval, reviewerRequirements: { requiredApprovals: 2 } }
+          - type: escalation.resolved
+            payload: { decisions: ["01900000-0000-7000-8000-000000000511", "01900000-0000-7000-8000-000000000512"] }
+          - { type: tool.call, payload: { callId: c1, arguments: { key: k-one, value: v1 } } }
+          - { type: run.ended, payload: { reason: responded } }
+    $rej:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: escalation.resolved, payload: { decisions: ["01900000-0000-7000-8000-000000000521"] } }
+          - { type: tool.result, payload: { callId: c1, result: { error: { category: policy, code: agentry.hitl.rejected } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call }
+    $edits:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: escalation.resolved }
+          - { type: tool.call, payload: { callId: c1, arguments: { key: k-edits, value: v-agreed } } }
+          - { type: run.ended, payload: { reason: responded } }
+    $diff:
+      state: suspended
+      checkpoint:
+        escalation:
+          decisions:
+            $all:
+              - { $len: 2 }
+              - $contains:
+                  - { id: "01900000-0000-7000-8000-000000000541" }
+                  - { id: "01900000-0000-7000-8000-000000000542" }
+      absentEvents:
+        - { type: escalation.resolved }
+        - { type: tool.call }
+    $mix:
+      state: suspended
+      checkpoint:
+        escalation:
+          decisions:
+            $all:
+              - { $len: 2 }
+              - $contains:
+                  - { id: "01900000-0000-7000-8000-000000000551" }
+                  - { id: "01900000-0000-7000-8000-000000000552" }
+      absentEvents:
+        - { type: escalation.resolved }
+        - { type: tool.call }
+  stubCalls:
+    lookup: [{ arguments: { key: k-single } }]
+    update_record:
+      - { arguments: { key: k-one, value: v1 } }
+      - { arguments: { key: k-edits, value: v-agreed } }
+  providerRequests:
+    scripted-a: { count: 10 }

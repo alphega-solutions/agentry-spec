@@ -1,0 +1,258 @@
+schemaVersion: "0.1.0"
+id: hitl.raise-taint-reason-codes
+title: A taint-rule escalation is a `tool_call` action from source `taint`, with the reason code of the taint condition whose outcome applied
+description: >-
+  The bundle trusts `read_contact` (results labelled `pii`) and nothing
+  else; `fetch_external` is untrusted, so its result taints the session
+  from the next step (HOOK-120). Three sessions, each tainted by
+  fetch_external at step 1:
+
+  - $sMut: update_record (mutating, default `onTainted: escalate`) → the
+    mutating condition applies → reason `agentry.taint.mutating`.
+  - $sEgress: read_contact puts labelled content in context, then
+    send_note (read, `egress: true`, `onTaintedEgress: escalate`) → only
+    the egress condition holds → reason `agentry.taint.egress`.
+  - $sBoth: labelled content in context, then push_record (mutating and
+    egress, both outcomes `escalate`) → both conditions give `escalate` →
+    reason `agentry.taint.mutating` (Area 6 amendment 2026-11-01).
+
+  Each escalation has one pending action of kind `tool_call` and source
+  `taint`, allowing exactly approve, reject and edit (HITL-011); the
+  record lists the tainting provenance (only the untrusted
+  tool:fetch_external, never the trusted tool:read_contact) and, with no
+  reviewer rules configured, the default reviewer requirements: one
+  approval, no self-approval (never for `taint`, HITL-023), no rules. No
+  call is dispatched (the stubs' empty lists fail on any call). The order
+  of `allowedDecisions` is not specified, so it is matched as a set.
+requirements: [HITL-001, HITL-010, HITL-011]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        trustedTools: [read_contact@1]
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+      - kind: Tool
+        id: fetch_external
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Fetch a record from an external source.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        binding: { kind: native, handler: test.fetch_external }
+      - kind: Tool
+        id: read_contact
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Read a contact.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        sensitivity: [pii]
+        binding: { kind: native, handler: test.read_contact }
+      - kind: Tool
+        id: send_note
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Send a note to an external address.
+        input:
+          type: object
+          additionalProperties: false
+          required: [text]
+          properties: { text: { type: string } }
+        effect: read
+        egress: true
+        onTaintedEgress: escalate
+        binding: { kind: native, handler: test.send_note }
+      - kind: Tool
+        id: push_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Push a record to an external system.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: mutating
+        idempotent: false
+        egress: true
+        onTainted: escalate
+        onTaintedEgress: escalate
+        binding: { kind: native, handler: test.push_record }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [fetch_external@1, read_contact@1, send_note@1, push_record@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+  providers:
+    scripted-a:
+      responses:
+        # $sMut
+        - parts: [{ type: tool_call, callId: c1, tool: fetch_external, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sEgress
+        - parts: [{ type: tool_call, callId: c1, tool: fetch_external, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: read_contact, arguments: { key: k1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c3, tool: send_note, arguments: { text: "SYN-NOTE-0001" } }]
+          usage: { inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sBoth
+        - parts: [{ type: tool_call, callId: c1, tool: fetch_external, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: read_contact, arguments: { key: k1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c3, tool: push_record, arguments: { key: k1 } }]
+          usage: { inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      fetch_external:
+        - ok: { output: { value: "SYN-UNTRUSTED-0001" } }
+        - ok: { output: { value: "SYN-UNTRUSTED-0002" } }
+        - ok: { output: { value: "SYN-UNTRUSTED-0003" } }
+      read_contact:
+        - ok: { output: { contact: "SYN-CONTACT-0001" } }
+        - ok: { output: { contact: "SYN-CONTACT-0002" } }
+      update_record: []
+      send_note: []
+      push_record: []
+script:
+  - action: run
+    bind: $sMut
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Fetch k1 then set it to v1" }]
+    expect: { ok: true, endReason: escalated }
+  - action: run
+    bind: $sEgress
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Fetch k1, read the contact, then send a note" }]
+    expect: { ok: true, endReason: escalated }
+  - action: run
+    bind: $sBoth
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Fetch k1, read the contact, then push k1" }]
+    expect: { ok: true, endReason: escalated }
+expect:
+  sessions:
+    $sMut:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - { type: policy.decision, payload: { kind: taint, outcome: escalate, callId: c2 } }
+          - type: escalation.raised
+            payload:
+              escalation:
+                sources: [taint]
+                reasonCodes: [agentry.taint.mutating]
+                taintProvenances: ["tool:fetch_external"]
+                pendingActions:
+                  - kind: tool_call
+                    source: taint
+                    reasonCode: agentry.taint.mutating
+                    callId: c2
+                    tool: update_record
+                    arguments: { key: k1, value: v1 }
+                    allowedDecisions: { $all: [{ $len: 3 }, { $contains: [approve, reject, edit] }] }
+                    reviewerRequirements: { requiredApprovals: 1, selfApprovalAllowed: false, rules: [] }
+                    hook: { $absent: true }
+                    point: { $absent: true }
+          - { type: run.ended, payload: { reason: escalated } }
+      absentEvents:
+        - { type: tool.call, payload: { callId: c2 } }
+    $sEgress:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - { type: policy.decision, payload: { kind: taint, outcome: escalate, callId: c3 } }
+          - type: escalation.raised
+            payload:
+              escalation:
+                sources: [taint]
+                reasonCodes: [agentry.taint.egress]
+                taintProvenances: ["tool:fetch_external"]
+                pendingActions:
+                  - kind: tool_call
+                    source: taint
+                    reasonCode: agentry.taint.egress
+                    callId: c3
+                    tool: send_note
+                    arguments: { text: "SYN-NOTE-0001" }
+                    allowedDecisions: { $all: [{ $len: 3 }, { $contains: [approve, reject, edit] }] }
+                    reviewerRequirements: { requiredApprovals: 1, selfApprovalAllowed: false, rules: [] }
+          - { type: run.ended, payload: { reason: escalated } }
+      absentEvents:
+        - { type: tool.call, payload: { callId: c3 } }
+    $sBoth:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - { type: policy.decision, payload: { kind: taint, outcome: escalate, callId: c3 } }
+          - type: escalation.raised
+            payload:
+              escalation:
+                sources: [taint]
+                reasonCodes: [agentry.taint.mutating]
+                taintProvenances: ["tool:fetch_external"]
+                pendingActions:
+                  - kind: tool_call
+                    source: taint
+                    reasonCode: agentry.taint.mutating
+                    callId: c3
+                    tool: push_record
+                    allowedDecisions: { $all: [{ $len: 3 }, { $contains: [approve, reject, edit] }] }
+                    reviewerRequirements: { requiredApprovals: 1, selfApprovalAllowed: false, rules: [] }
+          - { type: run.ended, payload: { reason: escalated } }
+      absentEvents:
+        - { type: tool.call, payload: { callId: c3 } }
+  stubCalls:
+    update_record: { count: 0 }
+    send_note: { count: 0 }
+    push_record: { count: 0 }

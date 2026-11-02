@@ -1,0 +1,118 @@
+schemaVersion: "0.1.0"
+id: hitl.raise-recovery-unknown-outcome
+title: Recovery of a non-idempotent call with an unknown outcome raises a `recovery` action that allows only `confirm`
+description: >-
+  The implementation is crashed at `after_dispatch` while update_record
+  (mutating, not idempotent) is being called in the session's first run:
+  the stub received the call, but no outcome was recorded. After a restart
+  and a clock advance past the run lease, resume() on the session performs
+  recovery first (HITL-092; HITL-091 as amended 2026-11-01, step 4): a
+  `recovery` escalation is raised on the orphaned run, which ends
+  `escalated`. The triggering resume() then finds the action undecided and
+  fails with `conflict` (`agentry.hitl.pending`, HITL-070).
+
+  The record has source `recovery` and reason code
+  `agentry.recovery.unknown_outcome`; its one action is of kind
+  `recovery`, holding the call's ID, tool, arguments and the idempotency
+  key the dispatched call carried (the same value the stub received),
+  allowing only `confirm` (HITL-011), with one required approval and no
+  self-approval (never for `recovery`, HITL-023). It carries no hook and
+  no content point. An `approve` is refused with `invalid_input`
+  (HITL-043); a `confirm` is accepted by decide(). The stub has a single
+  behaviour, so a re-dispatch would fail the test.
+requirements: [HITL-001, HITL-010, HITL-011]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+script:
+  - crash: { at: after_dispatch }
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+  - restart: {}
+  - clock: { advance: PT1H }
+  - action: resume
+    session: $s
+    reviewer: r1
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $esc, payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: false, error: { category: conflict, code: agentry.hitl.pending } }
+  - action: decide
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-0000000000a1", pendingActionId: $act, type: approve }
+    expect: { ok: false, error: { category: invalid_input, details: { decisionId: "01900000-0000-7000-8000-0000000000a1" } } }
+  - action: decide
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-0000000000a2", pendingActionId: $act, type: confirm, outcome: failed }
+    expect: { ok: true }
+expect:
+  sessions:
+    $s:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, runId: $r1, payload: { callId: c1, tool: update_record } }
+          - type: escalation.raised
+            runId: $r1
+            payload:
+              escalation:
+                id: $esc
+                runId: $r1
+                sources: [recovery]
+                reasonCodes: [agentry.recovery.unknown_outcome]
+                taintProvenances: { $absent: true }
+                pendingActions:
+                  - id: $act
+                    kind: recovery
+                    source: recovery
+                    reasonCode: agentry.recovery.unknown_outcome
+                    callId: c1
+                    tool: update_record
+                    arguments: { key: k1, value: v1 }
+                    idempotencyKey: $k
+                    allowedDecisions: [confirm]
+                    reviewerRequirements: { requiredApprovals: 1, selfApprovalAllowed: false, rules: [] }
+                    hook: { $absent: true }
+                    point: { $absent: true }
+                    contentRef: { $absent: true }
+          - { type: run.ended, runId: $r1, payload: { reason: escalated } }
+      absentEvents:
+        - { type: tool.result, payload: { callId: c1 } }
+        - { type: escalation.resolved }
+  stubCalls:
+    update_record:
+      - { arguments: { key: k1, value: v1 }, completed: false, context: { idempotencyKey: $k } }
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $count: { of: { type: escalation.raised }, equals: 1 }
+    auditLog:
+      t1:
+        $count: { of: { type: decision, details: { pendingActionId: $act } }, equals: 1 }

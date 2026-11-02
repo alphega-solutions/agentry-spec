@@ -1,0 +1,271 @@
+schemaVersion: "0.1.0"
+id: hitl.effect-reject-content-points
+title: Rejecting a content escalation ends the run blocked with the fallback message, except at afterToolCall, where the result is withheld and the model receives agentry.hitl.rejected
+description: >-
+  Five rule hooks escalate, one per content point, each triggered by a
+  marker only its own session produces: gate-ss (sessionStart, input
+  SYN-SS-0060), gate-bmc (beforeModelCall, input SYN-BMC-0060), gate-amc
+  (afterModelCall, the model's response SYN-AMC-0060), gate-br
+  (beforeResponse, the final response SYN-BR-0060), and gate-atc
+  (afterToolCall, any lookup result). Each session's escalation holds one
+  `content` action at its point; the reviewer rejects it.
+
+
+  $ss, $bmc, $amc, $br: the resume run ends `blocked`, the host receives
+  the persona's fixed fallback message, and the session goes `idle`. No
+  further model call is made after the rejection.
+
+
+  $atc: the lookup result (SYN-WITHHELD-0060) is withheld: the call's one
+  `tool.result` is the error `{category: policy, code:
+  agentry.hitl.rejected}`, the model receives that error and never the
+  result, and the turn continues to a response.
+requirements: [HITL-060]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Hook
+        id: gate-ss
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [sessionStart]
+        results: [escalate]
+        timeoutMs: 1000
+        source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-SS-0060'))", then: { result: escalate, reasonCode: test.hook.review } }
+      - kind: Hook
+        id: gate-bmc
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeModelCall]
+        results: [escalate]
+        timeoutMs: 1000
+        source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-BMC-0060'))", then: { result: escalate, reasonCode: test.hook.review } }
+      - kind: Hook
+        id: gate-amc
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [afterModelCall]
+        results: [escalate]
+        timeoutMs: 1000
+        source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-AMC-0060'))", then: { result: escalate, reasonCode: test.hook.review } }
+      - kind: Hook
+        id: gate-br
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeResponse]
+        results: [escalate]
+        timeoutMs: 1000
+        source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-BR-0060'))", then: { result: escalate, reasonCode: test.hook.review } }
+      - kind: Hook
+        id: gate-atc
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [afterToolCall]
+        results: [escalate]
+        timeoutMs: 1000
+        source: { kind: rule, when: "tool.id == 'lookup'", then: { result: escalate, reasonCode: test.hook.review } }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [gate-ss@1, gate-bmc@1, gate-amc@1, gate-br@1, gate-atc@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        # $amc
+        - parts: [{ type: text, text: "Draft SYN-AMC-0060" }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $br
+        - parts: [{ type: text, text: "Draft SYN-BR-0060" }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $atc
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "The lookup result was withheld." }]
+          usage: { inputTokens: 30, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "SYN-WITHHELD-0060" } }
+script:
+  - action: run
+    bind: $ss
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYN-SS-0060 hello" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $actSs }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $ss
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000611", pendingActionId: $actSs, type: reject }
+    expect: { ok: true, endReason: blocked }
+  - action: run
+    bind: $bmc
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYN-BMC-0060 hello" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $actBmc }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $bmc
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000612", pendingActionId: $actBmc, type: reject }
+    expect: { ok: true, endReason: blocked }
+  - action: run
+    bind: $amc
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Answer case A" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $actAmc }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $amc
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000613", pendingActionId: $actAmc, type: reject }
+    expect: { ok: true, endReason: blocked }
+  - action: run
+    bind: $br
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Answer case B" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $actBr }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $br
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000614", pendingActionId: $actBr, type: reject }
+    expect: { ok: true, endReason: blocked }
+  - action: run
+    bind: $atc
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $actAtc }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $atc
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000615", pendingActionId: $actAtc, type: reject }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $ss:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: escalation.raised, payload: { escalation: { pendingActions: [{ id: $actSs, kind: content, point: sessionStart }] } } }
+          - { type: escalation.resolved }
+          - { type: run.ended, payload: { reason: blocked } }
+      absentEvents:
+        - { type: model.request }
+    $bmc:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: escalation.raised, payload: { escalation: { pendingActions: [{ id: $actBmc, kind: content, point: beforeModelCall }] } } }
+          - { type: escalation.resolved }
+          - { type: run.ended, payload: { reason: blocked } }
+      absentEvents:
+        - { type: model.request }
+    $amc:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: escalation.raised, payload: { escalation: { pendingActions: [{ id: $actAmc, kind: content, point: afterModelCall }] } } }
+          - { type: escalation.resolved }
+          - { type: run.ended, payload: { reason: blocked } }
+      eventCount: { $any: true }
+    $br:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: escalation.raised, payload: { escalation: { pendingActions: [{ id: $actBr, kind: content, point: beforeResponse }] } } }
+          - { type: escalation.resolved }
+          - { type: run.ended, payload: { reason: blocked } }
+    $atc:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: escalation.raised, payload: { escalation: { pendingActions: [{ id: $actAtc, kind: content, point: afterToolCall }] } } }
+          - { type: run.ended, runId: $atc1, payload: { reason: escalated } }
+          - { type: escalation.resolved }
+          - { type: tool.result, payload: { callId: c1, tool: lookup, result: { error: { category: policy, code: agentry.hitl.rejected } } } }
+          - { type: model.request, step: 2 }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.result, runId: $atc1 }
+  ports:
+    eventLog:
+      t1:
+        $amc:
+          $count: { of: { type: model.request }, equals: 1 }
+        $br:
+          $count: { of: { type: model.request }, equals: 1 }
+        $atc:
+          $count: { of: { type: tool.result }, equals: 1 }
+  delivered:
+    $ss: { text: "This request was blocked.", fallback: true }
+    $bmc: { text: "This request was blocked.", fallback: true }
+    $amc: { text: "This request was blocked.", fallback: true }
+    $br: { text: "This request was blocked.", fallback: true }
+    $atc: { text: "The lookup result was withheld." }
+  stubCalls:
+    lookup: [{ arguments: { key: k1 } }]
+  providerRequests:
+    scripted-a:
+      - {}
+      - {}
+      - {}
+      - messages:
+          $contains:
+            - role: tool
+              parts:
+                - { type: tool_result, callId: c1, result: { error: { category: policy, code: agentry.hitl.rejected } } }
+  noTransmittedContent: ["SYN-WITHHELD-0060"]

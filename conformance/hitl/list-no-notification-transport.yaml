@@ -1,0 +1,103 @@
+schemaVersion: "0.1.0"
+id: hitl.list-no-notification-transport
+title: The whole escalate, list, decide and resume flow works with a deployment that configures no notification transport
+description: >-
+  The baseline deployment (`test@1`, used unchanged) declares no
+  notification transport; the Deployment schema has no such field, and
+  the implementation must not require one (HITL-101). The host learns of
+  the escalation only through `escalation.raised` and
+  listPendingEscalations:
+
+  - the run escalates (update_record has `approval: always`);
+  - listPendingEscalations returns exactly the record carried by
+    `escalation.raised` (deep equality with the captured record);
+  - decide() records the reviewer's approval without resuming; the
+    escalation stays listed, since the session is still `suspended`;
+  - resume() with no further decisions continues the turn; the call is
+    dispatched and the run responds; `escalation.resolved` lists the
+    decision;
+  - the list is then empty.
+requirements: [HITL-101]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.update_record }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated k1." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation: $record, payload.escalation.id: $esc, payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  - action: listPendingEscalations
+    tenant: t1
+    expect: { ok: true, escalations: [$record] }
+  - action: decide
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000001", pendingActionId: $act, type: approve }
+    expect: { ok: true }
+  - action: listPendingEscalations
+    tenant: t1
+    expect: { ok: true, escalations: [{ id: $esc, sessionId: $s }] }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions: []
+    expect: { ok: true, endReason: responded }
+  - action: listPendingEscalations
+    tenant: t1
+    expect: { ok: true, escalations: [] }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: escalation.raised, runId: $r1, payload: { escalation: { id: $esc } } }
+          - { type: run.ended, runId: $r1, payload: { reason: escalated } }
+          - { type: escalation.resolved, runId: $r2, payload: { escalationId: $esc, decisions: ["01900000-0000-7000-8000-000000000001"] } }
+          - { type: tool.call, runId: $r2, payload: { callId: c1, arguments: { key: k1, value: v1 } } }
+          - { type: run.ended, runId: $r2, payload: { reason: responded } }
+  stubCalls:
+    update_record: [{ arguments: { key: k1, value: v1 } }]

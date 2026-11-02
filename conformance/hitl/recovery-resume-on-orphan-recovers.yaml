@@ -1,0 +1,179 @@
+schemaVersion: "0.1.0"
+id: hitl.recovery-resume-on-orphan-recovers
+title: resume() on a session with an orphaned run performs recovery first, then gets its own outcome against the recovered state
+description: >-
+  set_flag is mutating and idempotent (trusted by the bundle, so taint
+  plays no part); set_status is `approval: always`. Turn 1 responds. The
+  implementation is crashed at `after_dispatch` during turn 2 (run $r2)
+  while set_flag c1 is in flight, then restarted, and the clock is
+  advanced past the run lease (default PT5M).
+
+  resume() on the session, which is `active` with an orphaned run, does
+  not fail with `conflict` straight away (HITL-092). It first performs
+  recovery (HITL-091 as amended 2026-11-01, step 3): c1 is re-dispatched
+  with the same idempotency key, its result reaches the model, and the
+  orphaned run continues in $r2 (no new `run.started`) until the model
+  requests set_status c2, which escalates (source `approval`); $r2 then
+  ends `escalated`. Only then does the triggering resume() proceed, with
+  its own outcome: the session is now `suspended` with an undecided action,
+  so it fails with `conflict` code `agentry.hitl.pending` (HITL-070) — a
+  code only the recovered state can produce — and starts no run of its own.
+  A later resume() approving c2 runs $r3, which continues turn 2 and
+  responds.
+requirements: [HITL-092, HITL-091]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        trustedTools: [set_flag@1]
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+      - kind: Tool
+        id: set_flag
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Set a flag on a record. Safe to repeat with the same idempotency key.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, flag]
+          properties: { key: { type: string }, flag: { type: boolean } }
+        effect: mutating
+        idempotent: true
+        binding: { kind: native, handler: test.set_flag }
+      - kind: Tool
+        id: set_status
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Set a record's status.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.set_status }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, set_flag@1, set_status@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: set_flag, arguments: { key: k1, flag: true } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: set_status, arguments: { key: k1 } }]
+          usage: { inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Flag and status set." }]
+          usage: { inputTokens: 50, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      set_flag:
+        - ok: { output: { set: true, attempt: "first" } }
+        - ok: { output: { set: true, attempt: "second" } }
+      set_status:
+        - ok: { output: { status: set } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - crash: { at: after_dispatch, session: $s }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Flag k1, then set its status" }]
+  - restart: {}
+  - clock: { advance: PT1H }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions: []
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $esc, payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: false, error: { category: conflict, code: agentry.hitl.pending } }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000092", pendingActionId: $act, type: approve }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: run.started, runId: $r2, payload: { kind: run } }
+          - { type: turn.started, runId: $r2, turn: 2 }
+          - { type: tool.call, runId: $r2, turn: 2, step: 1, payload: { callId: c1, tool: set_flag } }
+          - { type: tool.result, runId: $r2, turn: 2, step: 1, payload: { callId: c1, result: { ok: { output: { set: true, attempt: "second" } } } } }
+          - { type: model.request, runId: $r2, turn: 2, step: 2 }
+          - type: escalation.raised
+            runId: $r2
+            turn: 2
+            step: 2
+            payload: { escalation: { id: $esc, sources: [approval], pendingActions: [{ id: $act, kind: tool_call, callId: c2, tool: set_status }] } }
+          - { type: run.ended, runId: $r2, payload: { reason: escalated } }
+          - { type: run.started, runId: { $all: [$r3, { $not: $r2 }] }, payload: { kind: resume } }
+          - { type: escalation.resolved, runId: $r3, payload: { escalationId: $esc } }
+          - { type: tool.result, runId: $r3, turn: 2, step: 2, payload: { callId: c2, result: { ok: { output: { status: set } } } } }
+          - { type: model.request, runId: $r3, turn: 2, step: 3 }
+          - { type: run.ended, runId: $r3, payload: { reason: responded } }
+      absentEvents:
+        - { type: turn.started, turn: 3 }
+        - { type: escalation.raised, payload: { escalation: { sources: [recovery] } } }
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $all:
+            - $count: { of: { type: run.started }, equals: 3 }
+            - $count: { of: { type: tool.result, payload: { callId: c1 } }, equals: 1 }
+  stubCalls:
+    set_flag:
+      - { arguments: { key: k1, flag: true }, completed: false, context: { sessionId: $s, idempotencyKey: $k } }
+      - { arguments: { key: k1, flag: true }, completed: true, context: { sessionId: $s, idempotencyKey: $k } }
+    set_status: [{ arguments: { key: k1 } }]
+  providerRequests:
+    scripted-a: { count: 4 }

@@ -1,0 +1,204 @@
+schemaVersion: "0.1.0"
+id: hitl.expiry-onexpiry-tighten-loosen
+title: "`onExpiry` can be tightened (reject → close) by a run request or an overlay, and the tightened value governs expiry; loosening (close → reject) is rejected"
+description: >-
+  The strictness order of `onExpiry` is `close` → `reject`, strictest first
+  (HITL-081, CFG-031), so tightening moves `reject` to `close`. lenient@1
+  sets `onExpiry: reject`; default@1 sets none, so `close` applies.
+
+  At 00:00 three sessions escalate (update_record is `approval: always`):
+  $a on lenient@1 with a session-creating run request tightening onExpiry
+  to `close` (accepted, recorded on run.started); $b on lenient@1 with no
+  override (the control); and, after an overlay tightening lenient@1's
+  onExpiry to `close` has loaded, $c on lenient@1 under the new snapshot.
+  Loosening is refused: a run request setting `reject` on default@1 fails
+  with `invalid_input` (`details.field` /onExpiry) and appends nothing, and
+  an overlay setting `reject` on default@1 fails to load with category
+  `configuration` naming the overlay layer. $a and $b were created before
+  the overlay loaded and stay pinned to the original snapshot (CFG-052).
+
+  When suspendedTtl (PT72H) elapses, the effective value decides the
+  outcome (HITL-082): $a and $c close `expired` with no expiry rejection
+  recorded, while $b (still `reject`) receives an expiry rejection, shown
+  in its reviewer view, and stays `suspended`.
+
+  This fixture complements cfg.strictness-orders-run-request and
+  cfg.run-request-delegation-onexpiry, which check acceptance only; here
+  the accepted value is shown to take effect. Reading of the brief: "close
+  → reject" is the declared order (strictest first), so the tightening
+  direction is reject → close, consistent with those fixtures.
+requirements: [HITL-081]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.update_record }
+      - kind: HarnessProfile
+        id: lenient
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        onExpiry: reject
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1, lenient@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: ka, value: va } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: kb, value: vb } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: kc, value: vc } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record: []
+script:
+  # Run request tightens reject -> close: accepted.
+  - action: run
+    bind: $a
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    profile: lenient@1
+    overrides: { onExpiry: close }
+    input: [{ type: text, text: "Set ka to va" }]
+    expect: { ok: true, endReason: escalated }
+  # Control: lenient@1 as declared.
+  - action: run
+    bind: $b
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    profile: lenient@1
+    input: [{ type: text, text: "Set kb to vb" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $bAct }
+    expect: { ok: true, endReason: escalated }
+  # Run request loosens close -> reject: refused before any run.
+  - action: run
+    bind: $x
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    profile: default@1
+    overrides: { onExpiry: reject }
+    input: [{ type: text, text: "Set kx to vx" }]
+    expect: { ok: false, error: { category: invalid_input, details: { field: /onExpiry } }, newEvents: 0 }
+  # Overlay loosening default@1: refused; previous snapshot stays in force.
+  - load:
+      overlay:
+        environment: prod
+        tighten:
+          default@1: { onExpiry: reject }
+    expect:
+      ok: false
+      error:
+        category: configuration
+        details: { artifact: default@1, field: /onExpiry, layer: overlay }
+  # Overlay tightening lenient@1: loads.
+  - load:
+      overlay:
+        environment: prod
+        tighten:
+          lenient@1: { onExpiry: close }
+    expect: { ok: true }
+  - action: run
+    bind: $c
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    profile: lenient@1
+    input: [{ type: text, text: "Set kc to vc" }]
+    expect: { ok: true, endReason: escalated }
+  - clock: { advance: PT72H }
+  - action: getReviewerView
+    session: $b
+    tenant: t1
+    reviewer: r1
+    expect:
+      ok: true
+      view:
+        actions:
+          - pendingActionId: $bAct
+            decided: true
+            decisions:
+              - { pendingActionId: $bAct, type: reject, decidedBy: expiry, reviewer: { $absent: true } }
+expect:
+  sessions:
+    $a:
+      state: closed
+      closeReason: expired
+      events:
+        mode: subsequence
+        items:
+          - { type: run.started, payload: { kind: run, overrides: { onExpiry: close } } }
+          - { type: run.ended, payload: { reason: escalated } }
+          - { type: session.closed, payload: { reason: expired } }
+    $b:
+      state: suspended
+      absentEvents:
+        - { type: session.closed }
+    $c:
+      state: closed
+      closeReason: expired
+      events:
+        mode: subsequence
+        items:
+          - { type: run.ended, payload: { reason: escalated } }
+          - { type: session.closed, payload: { reason: expired } }
+  ports:
+    auditLog:
+      t1:
+        $all:
+          - $count: { of: { type: decision, details: { decidedBy: expiry } }, equals: 1 }
+          - $count: { of: { type: decision, sessionId: $b, details: { pendingActionId: $bAct, type: reject, decidedBy: expiry } }, equals: 1 }
+  stubCalls:
+    update_record: { count: 0 }
+  providerRequests:
+    scripted-a: { count: 3 }

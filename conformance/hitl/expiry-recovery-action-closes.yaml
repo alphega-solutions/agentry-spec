@@ -1,0 +1,179 @@
+schemaVersion: "0.1.0"
+id: hitl.expiry-recovery-action-closes
+title: An escalation with an undecided recovery action closes `expired` when suspendedTtl elapses, even with onExpiry `reject`
+description: >-
+  default@1 sets `onExpiry: reject` (suspendedTtl PT72H). update_record is
+  mutating and not idempotent (baseline); set_status is
+  `approval: always`.
+
+  $a: turn 1 responds; the implementation is crashed at `after_dispatch`
+  while update_record c1 is in flight in turn 2, restarted, and the clock
+  advanced 10 minutes, past the run lease. resume() on $a performs
+  recovery: a `recovery` escalation is raised at 00:10 (expiresAt
+  2026-01-04T00:10:00Z) and the triggering resume() is refused with
+  `agentry.hitl.pending`. $b escalates on set_status (source `approval`)
+  at 00:10 too.
+
+  At exactly 2026-01-04T00:10:00Z both suspendedTtls elapse. $b, the
+  control, gets an expiry rejection and stays `suspended`, as `reject`
+  prescribes. $a's undecided action is a recovery action, which a
+  rejection cannot settle (no outcome is established), so $a closes
+  `expired` instead (HITL-082): no expiry rejection is recorded for it,
+  no escalation is resolved, and update_record is never re-dispatched.
+requirements: [HITL-082]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: set_status
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Set a record's status.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.set_status }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, set_status@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        onExpiry: reject
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: set_status, arguments: { key: k2 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true, attempt: "first" } }
+        - ok: { output: { updated: true, attempt: "second" } }
+      set_status: []
+script:
+  - action: run
+    bind: $a
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - crash: { at: after_dispatch, session: $a }
+  - action: run
+    session: $a
+    principal: p1
+    input: [{ type: text, text: "Set k1 to v1" }]
+  - restart: {}
+  - clock: { advance: PT10M }
+  - action: resume
+    session: $a
+    reviewer: r1
+    decisions: []
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $escA, payload.escalation.pendingActions.0.id: $actA }
+    expect: { ok: false, error: { category: conflict, code: agentry.hitl.pending } }
+  - action: run
+    bind: $b
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set the status of k2" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $actB }
+    expect: { ok: true, endReason: escalated }
+  - clock: { set: "2026-01-04T00:10:00Z" }
+  # Control: a non-recovery action is rejected by expiry and the session stays suspended.
+  - action: getReviewerView
+    session: $b
+    tenant: t1
+    reviewer: r1
+    expect:
+      ok: true
+      view:
+        actions:
+          - pendingActionId: $actB
+            decided: true
+            decisions:
+              - { pendingActionId: $actB, type: reject, decidedBy: expiry }
+expect:
+  sessions:
+    $a:
+      state: closed
+      closeReason: expired
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            payload:
+              escalation:
+                id: $escA
+                sources: [recovery]
+                expiresAt: { $regex: "^2026-01-04T00:10:00" }
+                pendingActions: [{ id: $actA, kind: recovery, callId: c1, tool: update_record }]
+          - { type: run.ended, payload: { reason: escalated } }
+          - { type: session.closed, runId: { $absent: true }, timestamp: { $regex: "^2026-01-04T00:10:00" }, payload: { reason: expired } }
+      absentEvents:
+        - { type: escalation.resolved }
+        - { type: tool.result }
+        - { type: run.started, payload: { kind: resume } }
+    $b:
+      state: suspended
+      absentEvents:
+        - { type: session.closed }
+  ports:
+    auditLog:
+      t1:
+        $all:
+          - $count: { of: { type: decision, sessionId: $a }, equals: 0 }
+          - $count: { of: { type: decision, sessionId: $b, details: { pendingActionId: $actB, type: reject, decidedBy: expiry } }, equals: 1 }
+  stubCalls:
+    update_record:
+      - { arguments: { key: k1, value: v1 }, completed: false }
+    set_status: { count: 0 }
+  providerRequests:
+    scripted-a: { count: 3 }

@@ -1,0 +1,124 @@
+schemaVersion: "0.1.0"
+id: hitl.effect-approve-hook-next-hook
+title: Approving a beforeToolCall hook escalation resumes the hook chain at the next hook, then the remaining stages
+description: >-
+  The bundle requires three native beforeToolCall hooks in order: first
+  (continues), gate (escalates), next (continues). update_record has the
+  default `approval: never`. gate's escalation is a `tool_call` action with
+  source `hook`. While it is open, next is not invoked. On approval the
+  chain resumes at next — invoked exactly once, in the resume run — while
+  first and gate are not invoked again; the call then passes stage 7 and
+  is dispatched, in the resume run, with the original arguments.
+requirements: [HITL-060]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Hook
+        id: first
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [block]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.first }
+      - kind: Hook
+        id: gate
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [escalate]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.gate }
+      - kind: Hook
+        id: next
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [block]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.next }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        requiredHooks: [first@1, gate@1, next@1]
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+    nativeHooks:
+      first:
+        - result: continue
+      gate:
+        - result: escalate
+          reasonCode: test.hook.review
+      next:
+        - result: continue
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000602", pendingActionId: $act, type: approve }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, runId: $r1, payload: { hook: gate@1, point: beforeToolCall, result: escalate } }
+          - type: escalation.raised
+            runId: $r1
+            payload:
+              escalation:
+                pendingActions:
+                  - { id: $act, kind: tool_call, source: hook, hook: gate@1, reasonCode: test.hook.review }
+          - { type: run.ended, runId: $r1, payload: { reason: escalated } }
+          - { type: escalation.resolved, runId: $r2 }
+          - { type: tool.call, runId: $r2, payload: { callId: c1, arguments: { key: k1, value: v1 } } }
+          - { type: run.ended, runId: $r2, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call, runId: $r1 }
+  stubCalls:
+    first: [{ arguments: { runId: $r1 } }]
+    gate: [{ arguments: { runId: $r1 } }]
+    next: [{ arguments: { runId: $r2, point: beforeToolCall, call: { arguments: { key: k1, value: v1 } } } }]
+    update_record: [{ arguments: { key: k1, value: v1 } }]

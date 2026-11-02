@@ -1,0 +1,151 @@
+schemaVersion: "0.1.0"
+id: hitl.decide-batch-atomic
+title: A batch with one refused decision records none of it, and the error names the refused decision; an action ID outside the open escalation is not_found
+description: >-
+  Two sessions escalate one update_record call each (`approval: always`):
+  $s (action $act) and $o (action $actO).
+
+
+  1. decide() on $s with D1 (approve $act, valid) and D2 (approve $actO,
+  an action of another session's escalation, so not in $s's open
+  escalation) → `not_found`, `details.decisionId` D2.
+
+  2. decide() on $s with D1 again and D3 (`confirm` on a `tool_call`
+  action, a type its kind does not allow) → `invalid_input`,
+  `details.decisionId` D3.
+
+  3. resume() on $s with no decisions → `conflict`
+  (`agentry.hitl.pending`): D1 was not recorded by either refused batch,
+  so the action is still undecided.
+
+  4. resume() on $s with D1 alone → accepted. D1 is recorded now for the
+  first time (it was never acknowledged as already recorded) and the call
+  is dispatched.
+
+
+  $o is untouched by the batch that named its action: it stays suspended
+  with no decision. Exactly one `decision` audit record exists (D1), and
+  `escalation.resolved` lists only D1. Validation is all-or-nothing per
+  batch (Area 6 amendment 2026-11-01, HITL-040–043).
+requirements: [HITL-040, HITL-043]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.update_record }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k-s, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k-o, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated k-s." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k-s to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $esc, payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  - action: run
+    bind: $o
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k-o to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $actO }
+    expect: { ok: true, endReason: escalated }
+  - action: decide
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000431", pendingActionId: $act, type: approve }
+      - { decisionId: "01900000-0000-7000-8000-000000000432", pendingActionId: $actO, type: approve }
+    expect:
+      ok: false
+      error: { category: not_found, details: { decisionId: "01900000-0000-7000-8000-000000000432" } }
+  - action: decide
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000431", pendingActionId: $act, type: approve }
+      - { decisionId: "01900000-0000-7000-8000-000000000433", pendingActionId: $act, type: confirm, outcome: succeeded }
+    expect:
+      ok: false
+      error: { category: invalid_input, details: { decisionId: "01900000-0000-7000-8000-000000000433" } }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions: []
+    expect: { ok: false, error: { category: conflict, code: agentry.hitl.pending } }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000431", pendingActionId: $act, type: approve }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: escalation.resolved, payload: { escalationId: $esc, decisions: ["01900000-0000-7000-8000-000000000431"] } }
+          - { type: tool.call, payload: { callId: c1, arguments: { key: k-s, value: v1 } } }
+          - { type: run.ended, payload: { reason: responded } }
+    $o:
+      state: suspended
+      checkpoint:
+        escalation:
+          decisions: []
+      absentEvents:
+        - { type: escalation.resolved }
+        - { type: tool.call }
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $count: { of: { type: run.started, payload: { kind: resume } }, equals: 1 }
+    auditLog:
+      t1:
+        $all:
+          - $count: { of: { type: decision }, equals: 1 }
+          - $contains:
+              - { type: decision, sessionId: $s, details: { id: "01900000-0000-7000-8000-000000000431", pendingActionId: $act, type: approve } }
+  stubCalls:
+    update_record: [{ arguments: { key: k-s, value: v1 } }]

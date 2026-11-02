@@ -1,0 +1,143 @@
+schemaVersion: "0.1.0"
+id: hitl.resume-replay-while-suspended-again
+title: A replayed resume() returns its original outcome without new work, even while a later escalation is open, and does not touch that escalation
+description: >-
+  update_record is `approval: always`. Turn 1 escalates ($esc1); resume()
+  with D1 (approve) is accepted and responds. Turn 2 escalates again
+  ($esc2, action $b1), so the session is `suspended` once more. The first
+  resume() — the same batch, D1 — is then replayed: its escalation was
+  already resumed, so it returns the original outcome (script step 1,
+  `responded`) and persists no event (HITL-071, CORE-053), even though the
+  session now has a different open escalation. The replay does no work:
+  no model call, no dispatch, no new run, and D1 is not recorded again or
+  applied to $esc2. $esc2 stays open and undecided: the reviewer view
+  shows $b1 with no decisions, and only D2 then resumes it, with
+  `escalation.resolved` for $esc2 listing D2 alone.
+requirements: [HITL-071]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.update_record }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated k1." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: k2, value: v2 } }]
+          usage: { inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated k2." }]
+          usage: { inputTokens: 50, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: k1 } }
+        - ok: { output: { updated: k2 } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $esc1, payload.escalation.pendingActions.0.id: $a1 }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-0000000000d1", pendingActionId: $a1, type: approve }
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Now set k2 to v2" }]
+    capture:
+      - event: { type: escalation.raised, payload: { escalation: { pendingActions: [{ callId: c2 }] } } }
+        bind: { payload.escalation.id: $esc2, payload.escalation.pendingActions.0.id: $b1 }
+    expect: { ok: true, endReason: escalated }
+  # Replay of the first resume while $esc2 is open.
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-0000000000d1", pendingActionId: $a1, type: approve }
+    expect: { sameAs: 1, newEvents: 0 }
+  - action: getReviewerView
+    session: $s
+    tenant: t1
+    reviewer: r1
+    expect:
+      ok: true
+      view:
+        escalation: { id: $esc2 }
+        actions:
+          - { pendingActionId: $b1, decided: false, decisions: [] }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-0000000000d2", pendingActionId: $b1, type: approve }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: escalation.raised, runId: $r1, payload: { escalation: { id: $esc1 } } }
+          - { type: run.started, runId: $r2, payload: { kind: resume } }
+          - { type: escalation.resolved, runId: $r2, payload: { escalationId: $esc1, decisions: ["01900000-0000-7000-8000-0000000000d1"] } }
+          - { type: run.ended, runId: $r2, payload: { reason: responded } }
+          - { type: turn.started, runId: $r3, turn: 2 }
+          - { type: escalation.raised, runId: $r3, payload: { escalation: { id: $esc2, pendingActions: [{ id: $b1, callId: c2 }] } } }
+          - { type: run.ended, runId: $r3, payload: { reason: escalated } }
+          - { type: run.started, runId: $r4, payload: { kind: resume } }
+          - { type: escalation.resolved, runId: $r4, payload: { escalationId: $esc2, decisions: ["01900000-0000-7000-8000-0000000000d2"] } }
+          - { type: run.ended, runId: $r4, payload: { reason: responded } }
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $all:
+            - $count: { of: { type: run.started }, equals: 4 }
+            - $count: { of: { type: escalation.resolved }, equals: 2 }
+    auditLog:
+      t1:
+        $all:
+          - $count: { of: { type: decision }, equals: 2 }
+          - $count: { of: { type: decision, details: { id: "01900000-0000-7000-8000-0000000000d1" } }, equals: 1 }
+          - $count: { of: { type: decision, details: { escalationId: $esc2 } }, equals: 1 }
+  stubCalls:
+    update_record:
+      - { arguments: { key: k1, value: v1 } }
+      - { arguments: { key: k2, value: v2 } }
+  providerRequests:
+    scripted-a: { count: 4 }

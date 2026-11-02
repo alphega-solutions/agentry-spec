@@ -1,0 +1,181 @@
+schemaVersion: "0.1.0"
+id: hitl.decide-type-not-allowed
+title: A decision type its pending action does not allow is refused with invalid_input and records nothing
+description: >-
+  $t: update_record (`approval: always`) escalates a `tool_call` action,
+  which allows approve, reject and edit. A `confirm` on it is refused with
+  `invalid_input` (`details.decisionId` names it).
+
+
+  $m: the rule hook gate-model escalates at `beforeModelCall` (its `when`
+  matches the marker SYN-GATE-0043 in the principal's input), raising a
+  `content` action at a point other than `beforeResponse`, which allows
+  only approve and reject. An `edit` on it is refused with `invalid_input`.
+
+
+  In both sessions the refused decision is not recorded: resume() with no
+  decisions then fails with `conflict` (`agentry.hitl.pending`), and no
+  audit record exists for either refused decision ID. Controls: an
+  `approve` on each action is accepted and the session resumes ($t's call
+  is dispatched; $m's model call is made).
+requirements: [HITL-043]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.update_record }
+      - kind: Hook
+        id: gate-model
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeModelCall]
+        results: [escalate]
+        timeoutMs: 1000
+        source:
+          kind: rule
+          when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-GATE-0043'))"
+          then: { result: escalate, reasonCode: test.hook.review }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [gate-model@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Reviewed answer." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+script:
+  - action: run
+    bind: $t
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $actT }
+    expect: { ok: true, endReason: escalated }
+  - action: run
+    bind: $m
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYN-GATE-0043 please answer" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $actM }
+    expect: { ok: true, endReason: escalated }
+  - action: decide
+    session: $t
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000441", pendingActionId: $actT, type: confirm, outcome: succeeded }
+    expect:
+      ok: false
+      error: { category: invalid_input, details: { decisionId: "01900000-0000-7000-8000-000000000441" } }
+  - action: decide
+    session: $m
+    reviewer: r1
+    decisions:
+      - decisionId: "01900000-0000-7000-8000-000000000442"
+        pendingActionId: $actM
+        type: edit
+        replacement: [{ type: text, text: "SYN-EDITED-0043" }]
+    expect:
+      ok: false
+      error: { category: invalid_input, details: { decisionId: "01900000-0000-7000-8000-000000000442" } }
+  - action: resume
+    session: $t
+    reviewer: r1
+    decisions: []
+    expect: { ok: false, error: { category: conflict, code: agentry.hitl.pending } }
+  - action: resume
+    session: $m
+    reviewer: r1
+    decisions: []
+    expect: { ok: false, error: { category: conflict, code: agentry.hitl.pending } }
+  - action: resume
+    session: $t
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000443", pendingActionId: $actT, type: approve }
+    expect: { ok: true, endReason: responded }
+  - action: resume
+    session: $m
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000444", pendingActionId: $actM, type: approve }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $t:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            payload: { escalation: { pendingActions: [{ id: $actT, kind: tool_call }] } }
+          - { type: tool.call, payload: { callId: c1 } }
+          - { type: run.ended, payload: { reason: responded } }
+    $m:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            payload: { escalation: { pendingActions: [{ id: $actM, kind: content, point: beforeModelCall }] } }
+          - { type: model.request }
+          - { type: run.ended, payload: { reason: responded } }
+  delivered:
+    $m: { text: "Reviewed answer." }
+  stubCalls:
+    update_record: { count: 1 }
+  ports:
+    auditLog:
+      t1:
+        $all:
+          - $count: { of: { type: decision }, equals: 2 }
+          - $count: { of: { details: { id: "01900000-0000-7000-8000-000000000441" } }, equals: 0 }
+          - $count: { of: { details: { id: "01900000-0000-7000-8000-000000000442" } }, equals: 0 }

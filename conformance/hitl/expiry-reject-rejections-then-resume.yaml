@@ -1,0 +1,263 @@
+schemaVersion: "0.1.0"
+id: hitl.expiry-reject-rejections-then-resume
+title: With onExpiry `reject`, expiry rejects every undecided action (decidedBy expiry, audited) and the session stays suspended; resume() continues with the model seeing agentry.hitl.rejected; without a resume it closes after a further idleTtl
+description: >-
+  default@1 sets `onExpiry: reject`, suspendedTtl PT72H, idleTtl PT24H.
+  update_record and set_status are `approval: always`.
+
+  $a escalates at 00:00 with $a1 (c1 update_record) and $a2 (c2
+  set_status); a reviewer approves $a1 with decide() (D1). $b escalates at
+  00:00 with one action, $b1. At exactly 2026-01-04T00:00:00Z both
+  suspendedTtls elapse (equal time counts as elapsed). Each undecided
+  action — $a2 and $b1, but not the already decided $a1 — receives an
+  expiry rejection: `type: reject`, `decidedBy: expiry`, no reviewer,
+  timestamped with the expiry time, visible in the reviewer view and
+  audited as a `decision` record (HITL-082, HITL-044 as amended). Both
+  sessions stay `suspended` and are now fully decided.
+
+  At 01:00 resume() on $a with no new decisions is accepted:
+  `escalation.resolved` lists D1 then $a2's expiry rejection (recording
+  order); c1 is dispatched; c2 is not, and the model receives, in one tool
+  message in request order, c1's result and for c2 a `policy` error
+  `agentry.hitl.rejected` (§7.3); the turn continues to `responded`.
+
+  $b receives no resume: one second before expiry + idleTtl
+  (2026-01-04T23:59:59Z) its reviewer view is still served; at exactly
+  2026-01-05T00:00:00Z it closes `expired`, never having dispatched c1.
+requirements: [HITL-082]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.update_record }
+      - kind: Tool
+        id: set_status
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Set a record's status.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.set_status }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, set_status@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        onExpiry: reject
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      capabilities: { parallelToolCalls: true }
+      responses:
+        - parts:
+            - { type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }
+            - { type: tool_call, callId: c2, tool: set_status, arguments: { key: k2 } }
+          usage: { inputTokens: 20, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k9, value: v9 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated k1; the status change was not approved." }]
+          usage: { inputTokens: 50, outputTokens: 9, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: k1 } }
+      set_status: []
+script:
+  - action: run
+    bind: $a
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Update k1 and set the status of k2" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind:
+          payload.escalation.id: $escA
+          payload.escalation.pendingActions.0.id: $a1
+          payload.escalation.pendingActions.1.id: $a2
+    expect: { ok: true, endReason: escalated }
+  - action: run
+    bind: $b
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k9 to v9" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $escB, payload.escalation.pendingActions.0.id: $b1 }
+    expect: { ok: true, endReason: escalated }
+  - action: decide
+    session: $a
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-0000000000f1", pendingActionId: $a1, type: approve }
+    expect: { ok: true }
+  # Both suspendedTtls elapse exactly now.
+  - clock: { set: "2026-01-04T00:00:00Z" }
+  - action: getReviewerView
+    session: $a
+    tenant: t1
+    reviewer: r1
+    expect:
+      ok: true
+      view:
+        escalation: { id: $escA }
+        actions:
+          - pendingActionId: $a1
+            decided: true
+            decisions:
+              - { id: "01900000-0000-7000-8000-0000000000f1", type: approve, decidedBy: reviewer }
+          - pendingActionId: $a2
+            decided: true
+            decisions:
+              - { escalationId: $escA, pendingActionId: $a2, type: reject, decidedBy: expiry, reviewer: { $absent: true }, timestamp: { $regex: "^2026-01-04T00:00:00" } }
+  - action: getReviewerView
+    session: $b
+    tenant: t1
+    reviewer: r1
+    expect:
+      ok: true
+      view:
+        escalation: { id: $escB }
+        actions:
+          - pendingActionId: $b1
+            decided: true
+            decisions:
+              - { escalationId: $escB, pendingActionId: $b1, type: reject, decidedBy: expiry, reviewer: { $absent: true }, timestamp: { $regex: "^2026-01-04T00:00:00" } }
+  - clock: { advance: PT1H }
+  - action: resume
+    session: $a
+    reviewer: r1
+    decisions: []
+    expect: { ok: true, endReason: responded }
+  # One second before $b's further idleTtl elapses: still suspended.
+  - clock: { set: "2026-01-04T23:59:59Z" }
+  - action: getReviewerView
+    session: $b
+    tenant: t1
+    reviewer: r1
+    expect:
+      ok: true
+      view:
+        escalation: { id: $escB }
+  - clock: { set: "2026-01-05T00:00:00Z" }
+expect:
+  sessions:
+    $a:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: run.ended, runId: $ra1, payload: { reason: escalated } }
+          - { type: run.started, runId: $ra2, timestamp: { $regex: "^2026-01-04T01:00:00" }, payload: { kind: resume } }
+          - type: escalation.resolved
+            runId: $ra2
+            payload:
+              escalationId: $escA
+              decisions: ["01900000-0000-7000-8000-0000000000f1", $dExpA]
+          - { type: tool.result, runId: $ra2, turn: 1, step: 1, payload: { callId: c2, tool: set_status, result: { error: { category: policy, code: agentry.hitl.rejected } } } }
+          - { type: model.request, runId: $ra2, turn: 1, step: 2 }
+          - { type: run.ended, runId: $ra2, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call, payload: { callId: c2 } }
+        - { type: turn.started, runId: $ra2 }
+        - { type: session.closed }
+    $b:
+      state: closed
+      closeReason: expired
+      events:
+        mode: subsequence
+        items:
+          - { type: run.ended, payload: { reason: escalated } }
+          - { type: session.closed, runId: { $absent: true }, timestamp: { $regex: "^2026-01-05T00:00:00" }, payload: { reason: expired } }
+      absentEvents:
+        - { type: run.started, payload: { kind: resume } }
+        - { type: escalation.resolved }
+        - { type: tool.call }
+  ports:
+    auditLog:
+      t1:
+        $all:
+          - $count: { of: { type: decision, details: { decidedBy: expiry } }, equals: 2 }
+          - $count: { of: { type: decision, details: { pendingActionId: $a1, decidedBy: expiry } }, equals: 0 }
+          - $contains:
+              - type: decision
+                sessionId: $a
+                reviewer: { $absent: true }
+                timestamp: { $regex: "^2026-01-04T00:00:00" }
+                details: { id: $dExpA, escalationId: $escA, pendingActionId: $a2, type: reject, decidedBy: expiry, reviewer: { $absent: true } }
+              - type: decision
+                sessionId: $b
+                reviewer: { $absent: true }
+                timestamp: { $regex: "^2026-01-04T00:00:00" }
+                details: { escalationId: $escB, pendingActionId: $b1, type: reject, decidedBy: expiry, reviewer: { $absent: true } }
+              - type: decision
+                sessionId: $a
+                reviewer: { subject: reviewer-1, tenant: t1 }
+                details: { id: "01900000-0000-7000-8000-0000000000f1", pendingActionId: $a1, type: approve, decidedBy: reviewer }
+  stubCalls:
+    update_record: [{ arguments: { key: k1, value: v1 } }]
+    set_status: { count: 0 }
+  providerRequests:
+    scripted-a:
+      - {}
+      - {}
+      - messages:
+          $all:
+            - $count: { of: { role: tool }, equals: 1 }
+            - $contains:
+                - role: tool
+                  parts:
+                    - { type: tool_result, callId: c1, result: { ok: { output: { updated: k1 } } } }
+                    - { type: tool_result, callId: c2, result: { error: { category: policy, code: agentry.hitl.rejected } } }

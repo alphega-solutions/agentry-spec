@@ -1,0 +1,147 @@
+schemaVersion: "0.1.0"
+id: hitl.raise-reescalation-after-resolve
+title: A re-escalation in the same step is raised only after the first escalation is resolved; the session never has two open escalations
+description: >-
+  Two native beforeToolCall hooks are required, in order: `gate`
+  (escalates) and `normalise` (rewrites the value). update_record is the
+  first step, so the session is untainted. The first run escalates at
+  `gate` (E1). While E1 is open, listPendingEscalations shows exactly E1.
+  The reviewer approves; the chain resumes at `normalise`, which rewrites
+  the arguments, so the call escalates again (TOOL-036; see
+  tool.pipeline-rewrite-after-approval-reescalates) in the same turn and
+  step. The second escalation E2 is a new record (new ID, the resume run's
+  ID, same turn and step), raised only after `escalation.resolved` for E1
+  (HITL-002). While E2 is open, listPendingEscalations shows exactly E2,
+  not E1. On approval of E2 the call is dispatched once with the
+  rewritten arguments and the list is empty.
+requirements: [HITL-002]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Hook
+        id: gate
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [escalate]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.gate }
+      - kind: Hook
+        id: normalise
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [rewrite]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.normalise }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [gate@1, normalise@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated k1." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+    nativeHooks:
+      gate:
+        - { result: escalate, reasonCode: test.gate.review }
+      normalise:
+        - result: rewrite
+          parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: V1-NORMALISED } }]
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $e1, payload.escalation.pendingActions.0.id: $act1 }
+    expect: { ok: true, endReason: escalated }
+  - action: listPendingEscalations
+    tenant: t1
+    expect: { ok: true, newEvents: 0, escalations: [{ id: $e1, sessionId: $s }] }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000001", pendingActionId: $act1, type: approve }
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $e2, payload.escalation.pendingActions.0.id: $act2 }
+    expect: { ok: true, endReason: escalated }
+  - action: listPendingEscalations
+    tenant: t1
+    expect: { ok: true, newEvents: 0, escalations: [{ id: { $all: [$e2, { $not: $e1 }] }, sessionId: $s }] }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000002", pendingActionId: $act2, type: approve }
+    expect: { ok: true, endReason: responded }
+  - action: listPendingEscalations
+    tenant: t1
+    expect: { ok: true, escalations: [] }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            runId: $r1
+            payload: { escalation: { id: $e1, runId: $r1, turn: 1, step: 1, sources: [hook], pendingActions: [{ callId: c1, arguments: { key: k1, value: v1 } }] } }
+          - { type: run.ended, runId: $r1, payload: { reason: escalated } }
+          - { type: run.started, runId: $r2, payload: { kind: resume } }
+          - { type: escalation.resolved, runId: $r2, payload: { escalationId: $e1 } }
+          - { type: hook.decision, runId: $r2, payload: { hook: normalise@1, result: rewrite } }
+          - type: escalation.raised
+            runId: $r2
+            payload: { escalation: { id: $e2, runId: $r2, turn: 1, step: 1, pendingActions: [{ id: { $not: $act1 }, callId: c1, arguments: { key: k1, value: V1-NORMALISED } }] } }
+          - { type: run.ended, runId: $r2, payload: { reason: escalated } }
+          - { type: escalation.resolved, runId: $r3, payload: { escalationId: $e2 } }
+          - { type: tool.call, runId: $r3, payload: { callId: c1, arguments: { key: k1, value: V1-NORMALISED } } }
+          - { type: run.ended, runId: $r3, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call, runId: $r1 }
+        - { type: tool.call, runId: $r2 }
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $count: { of: { type: escalation.raised }, equals: 2 }
+  stubCalls:
+    gate: { count: 1 }
+    normalise: { count: 1 }
+    update_record: [{ arguments: { key: k1, value: V1-NORMALISED } }]
