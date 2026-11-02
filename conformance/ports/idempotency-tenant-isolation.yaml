@@ -2,19 +2,19 @@ schemaVersion: "0.1.0"
 id: port.idempotency.tenant-isolation
 title: Another tenant's idempotency record behaves exactly as if it did not exist, for get, start, complete, fencing and delete
 description: >-
-  Key K (session …00e0) is started in tenant t1 under token 3. A \`get\` in
-  t1 of a key never started gives \`not_found\`, binding $missingCode.
+  Key K (session …00e0) is started in tenant t1 under token 3. A `get` in
+  t1 of a key never started gives `not_found`, binding $missingCode.
 
-  - t2's \`get\` of K and t2's \`complete\` of K fail exactly as for a
+  - t2's `get` of K and t2's `complete` of K fail exactly as for a
     missing key (same category and code; CORE-193). t1's record is
-    untouched (still \`started\`, no outcome).
-  - t2's \`start\` of K, with token 1 (lower than t1's), creates and returns
-    t2's own record — not t1's existing one, and not \`conflict\`: records
+    untouched (still `started`, no outcome).
+  - t2's `start` of K, with token 1 (lower than t1's), creates and returns
+    t2's own record — not t1's existing one, and not `conflict`: records
     and fencing tokens are per tenant (PORT-002, PORT-003). An adapter
     keying by key or session alone would return t1's record or reject
     the token, leaking that K exists in t1.
   - t2 completes and then deletes its record; t1's record is unchanged
-    throughout, and t2's \`get\` is then \`not_found\` (same code).
+    throughout, and t2's `get` is then `not_found` (same code).
 requirements: [PORT-002, PORT-003, PORT-033, PORT-004]
 port: idempotencyStore
 clock: "2026-03-01T10:00:00Z"

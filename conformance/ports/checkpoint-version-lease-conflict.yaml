@@ -5,7 +5,10 @@ description: >-
   Session S (…0050) in tenant t1. Each saved checkpoint carries `version`
   = `expectedVersion` + 1 (Area 10 amendment 2026-11-02: the version
   increases by one on every save, including lease renewals); the lease
-  passed to `save` is the one recorded in the checkpoint.
+  passed to `save` is the one recorded in the checkpoint while a run is
+  active. The checkpoint's `version` is supplied by the caller (reading
+  taken: the caller writes `expectedVersion` + 1, and the port stores the
+  record as given, PORT-008).
 
   - v1 is created with `expectedVersion` 0 under worker-a's lease (token
     1). A second create (`expectedVersion` 0) fails `conflict`.
@@ -18,7 +21,8 @@ description: >-
   - worker-b takes a new lease (token 2) with a save at `expectedVersion`
     2 → v3. worker-a then saves with the correct `expectedVersion` 3 but
     its old token 1: `conflict` (stale fencing token), and v3 stays
-    worker-b's. worker-b's own save at `expectedVersion` 3 succeeds (v4).
+    worker-b's. worker-b's own save at `expectedVersion` 3 succeeds (v4):
+    the run has ended, the session is idle, and v4 records no lease.
   - Control: fencing is per session. Session S2 (…0051) accepts a create
     with token 1 after token 2 was accepted for S.
 requirements: [PORT-031, PORT-004]

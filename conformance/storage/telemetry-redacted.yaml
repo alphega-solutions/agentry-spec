@@ -1,0 +1,122 @@
+schemaVersion: "0.1.0"
+id: storage.telemetry-redacted
+title: Exported spans carry no masked content, secret values or reasoning, while the model still receives the content in full
+description: >-
+  The deployment binds the optional telemetry exporter; the runner
+  captures every exported span. scripted-a takes its API key from a secret
+  reference, and lookup takes one through its binding (`credentialMode:
+  service`). lookup is labelled `pii` (`sensitivity: [pii]`, policy
+  `mask`) and returns SYN-PII-TEL-0101. The model's first response holds
+  a reasoning part (SYN-REASONING-TEL-0101) and a tool call; the default
+  profile does not include reasoning in traces (CORE-143).
+
+  No exported span contains the pii value, either resolved secret value,
+  or the reasoning text (PORT-101: spans get the redaction of events
+  streamed to hosts, no secrets, no reasoning unless the profile includes
+  it). The pii value is still sent to the model in the step-2 request
+  (PORT-008: redaction only at the boundary), and the reasoning is kept in
+  the checkpoint (CORE-140). Requires the optional `telemetry` feature.
+requirements: [PORT-101, PORT-008]
+contract: ">=0.1.0 <1.0.0"
+features: [telemetry]
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false, credentials: { apiKey: "secret://test/provider-a-key" } }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+          telemetry: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: Tool
+        id: lookup
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Look up a record by key.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        sensitivity: [pii]
+        credentialMode: service
+        binding: { kind: native, handler: test.lookup, credentials: { apiKey: "secret://test/lookup-api-key" } }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { reasoning: true }
+      responses:
+        - parts:
+            - { type: reasoning, provider: scripted-a, data: "SYN-REASONING-TEL-0101 the owner is needed", opaque: false }
+            - { type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }
+          usage: { inputTokens: 20, outputTokens: 30, cachedInputTokens: 0, reasoningTokens: 20 }
+        - parts: [{ type: text, text: "Found the owner." }]
+          usage: { inputTokens: 40, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b: { responses: [] }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { owner: "SYN-PII-TEL-0101" } }
+  secrets:
+    "secret://test/provider-a-key": "SYN-SECRET-PROVIDER-0101-DO-NOT-EXPORT"
+    "secret://test/lookup-api-key": "SYN-SECRET-LOOKUP-0101-DO-NOT-EXPORT"
+  limits:
+    inlinePayloadBytes: 65536
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Who owns k1?" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, labels: [pii], payload: { callId: c1 } }
+          - { type: run.ended, payload: { reason: responded } }
+      checkpoint:
+        reasoning:
+          $contains:
+            - { type: reasoning, provider: scripted-a, data: "SYN-REASONING-TEL-0101 the owner is needed" }
+  providerRequests:
+    scripted-a:
+      - {}
+      - messages:
+          $contains:
+            - role: tool
+              parts:
+                $contains:
+                  - { type: tool_result, callId: c1, labels: [pii], result: { ok: { output: { owner: "SYN-PII-TEL-0101" } } } }
+    scripted-b: { count: 0 }
+  stubCalls:
+    lookup: { count: 1 }
+  noTelemetryContent:
+    - "SYN-PII-TEL-0101"
+    - "SYN-SECRET-PROVIDER-0101-DO-NOT-EXPORT"
+    - "SYN-SECRET-LOOKUP-0101-DO-NOT-EXPORT"
+    - "SYN-REASONING-TEL-0101"

@@ -1,0 +1,225 @@
+schemaVersion: "0.1.0"
+id: storage.retention-open-sessions-untouched
+title: Retention never deletes data of a session that is not closed, whatever the period, and deletes a closed session's data once its period has passed
+description: >-
+  Every retention period is PT1H; the default profile's idle and
+  suspended TTLs are P30D, so nothing expires. At 2026-01-01T00:00Z three
+  sessions share one snapshot $h:
+
+  - $idle calls update_record (mutating, not idempotent) and responds: it
+    has events, a checkpoint, a completed idempotency record and a
+    `tool_call` audit record;
+  - $susp calls guarded_update (`approval: always`) and is suspended: it
+    has events, a checkpoint holding the escalation, and an `escalation`
+    audit record;
+  - $closed calls update_record, responds and is closed (control).
+
+  The clock moves on P2D, far past every period, and retention runs.
+
+  - Nothing of $idle or $susp is deleted: their events from seq 1, their
+    checkpoints, $idle's idempotency record (PORT-042: kept at least until
+    its session closes) and their audit records (PORT-111). Their pinned
+    snapshot $h is kept (PORT-051, CFG-053).
+  - Everything of $closed is deleted: events, checkpoint, idempotency
+    record and audit records, each due under its period (PORT-042: after
+    close, per retention).
+
+  Then $susp is resumed with an approval: its checkpoint and snapshot are
+  intact, guarded_update is dispatched and the turn responds.
+requirements: [PORT-111, PORT-042, PORT-051]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: PT1H, checkpoints: PT1H, idempotency: PT1H, blobs: PT1H, snapshots: PT1H, audit: PT1H }
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: P30D
+        suspendedTtl: P30D
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+      - kind: Tool
+        id: guarded_update
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a guarded record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.guarded_update }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, guarded_update@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        # $idle
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated k1." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $susp
+        - parts: [{ type: tool_call, callId: c1, tool: guarded_update, arguments: { key: k2, value: v2 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $closed
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k3, value: v3 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated k3." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $susp, after the resume
+        - parts: [{ type: text, text: "Updated k2." }]
+          usage: { inputTokens: 40, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b: { responses: [] }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: k1 } }
+        - ok: { output: { updated: k3 } }
+      guarded_update:
+        - ok: { output: { updated: k2 } }
+script:
+  - action: run
+    bind: $idle
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $susp
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k2 to v2" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  - action: run
+    bind: $closed
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k3 to v3" }]
+    expect: { ok: true, endReason: responded }
+  - action: close
+    session: $closed
+    expect: { ok: true }
+  - clock: { advance: P2D }
+  - retention: {}
+  - action: resume
+    session: $susp
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000111", pendingActionId: $act, type: approve }
+    expect: { ok: true, endReason: responded }
+expect:
+  stubCalls:
+    update_record:
+      - { context: { sessionId: $idle, idempotencyKey: $kIdle } }
+      - { context: { sessionId: $closed, idempotencyKey: $kClosed } }
+    guarded_update:
+      - { arguments: { key: k2, value: v2 }, context: { sessionId: $susp } }
+  sessions:
+    $idle:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { seq: 1, type: session.created, snapshotHash: $h }
+    $susp:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { seq: 1, type: session.created, snapshotHash: $h }
+          - { type: escalation.raised }
+          - { type: run.started, snapshotHash: $h, payload: { kind: resume } }
+          - { type: tool.result, payload: { callId: c1, result: { ok: { output: { updated: k2 } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+  ports:
+    eventLog:
+      t1:
+        $idle:
+          $contains:
+            - { seq: 1, type: session.created }
+            - { type: tool.result, payload: { callId: c1 } }
+            - { type: run.ended, payload: { reason: responded } }
+        $susp:
+          $contains:
+            - { seq: 1, type: session.created }
+            - { type: escalation.raised }
+        $closed: { $absent: true }
+    checkpointStore:
+      t1:
+        $idle: { state: idle }
+        $susp: { state: idle }
+        $closed: { $absent: true }
+    idempotencyStore:
+      t1:
+        $kIdle: { state: completed, outcome: { ok: { output: { updated: k1 } } } }
+        $kClosed: { $absent: true }
+    auditLog:
+      t1:
+        $all:
+          - $count: { of: { sessionId: $idle, type: tool_call }, equals: 1 }
+          - $count: { of: { sessionId: $susp, type: escalation }, equals: 1 }
+          - $count: { of: { sessionId: $closed }, equals: 0 }
+    snapshotStore:
+      t1:
+        $h: { $any: true }
+  providerRequests:
+    scripted-a: { count: 6 }
+    scripted-b: { count: 0 }

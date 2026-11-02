@@ -1,0 +1,136 @@
+schemaVersion: "0.1.0"
+id: storage.replay-without-telemetry
+title: With no telemetry exporter bound, a restarted implementation reproduces context and applies governance from the event log, blobs, snapshot and audit log
+description: >-
+  The deployment binds no telemetry exporter (the baseline). lookup is
+  labelled `pii` (policy `mask`), so the inline view of its result is
+  redacted and the full result is in the blob store (CORE-154).
+  update_record has `approval: always`. Turn 1: c1 lookup returns
+  SYN-PII-REPLAY-0102; c2 update_record escalates. The implementation is
+  restarted (in-process state lost), then reviewer r1 approves c2.
+
+  After the restart the implementation has only its ports, none of them
+  telemetry (PORT-102). The approved call is dispatched with the approved
+  arguments, the decision is in the audit log with its reviewer, and the
+  step-3 request carries c1's result in full — which the redacted events
+  do not hold, so it is reproduced from the event log and the blob store
+  (CTX-001, CTX-003).
+requirements: [PORT-102]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: lookup
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Look up a record by key.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        sensitivity: [pii]
+        binding: { kind: native, handler: test.lookup }
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.update_record }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: k2, value: v2 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Copied." }]
+          usage: { inputTokens: 40, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b: { responses: [] }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { owner: "SYN-PII-REPLAY-0102" } }
+      update_record:
+        - ok: { output: { updated: true } }
+  limits:
+    inlinePayloadBytes: 65536
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1, then set k2" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $esc, payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  - restart: {}
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000102", pendingActionId: $act, type: approve }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, labels: [pii], payload: { callId: c1 } }
+          - { type: escalation.raised, payload: { escalation: { id: $esc } } }
+          - { type: run.started, payload: { kind: resume } }
+          - { type: tool.result, payload: { callId: c2, result: { ok: { output: { updated: true } } } } }
+          - { type: model.request, turn: 1, step: 3 }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - type: tool.result
+          payload: { result: { ok: { output: { owner: "SYN-PII-REPLAY-0102" } } } }
+  ports:
+    auditLog:
+      t1:
+        $contains:
+          - type: decision
+            sessionId: $s
+            reviewer: { subject: reviewer-1, tenant: t1 }
+            details: { id: "01900000-0000-7000-8000-000000000102", pendingActionId: $act, type: approve }
+  providerRequests:
+    scripted-a:
+      - {}
+      - {}
+      - messages:
+          $contains:
+            - role: tool
+              parts:
+                $contains:
+                  - { type: tool_result, callId: c1, labels: [pii], result: { ok: { output: { owner: "SYN-PII-REPLAY-0102" } } } }
+            - role: tool
+              parts:
+                $contains:
+                  - { type: tool_result, callId: c2, result: { ok: { output: { updated: true } } } }
+    scripted-b: { count: 0 }
+  stubCalls:
+    update_record:
+      - { arguments: { key: k2, value: v2 }, completed: true }

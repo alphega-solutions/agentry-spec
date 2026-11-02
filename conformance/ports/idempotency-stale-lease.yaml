@@ -4,20 +4,20 @@ title: Idempotency writes under a stale fencing token fail with conflict and cha
 description: >-
   Session S (…00d0) in tenant t1. worker-b holds the current lease
   (token 2); worker-a's lease (token 1) is stale. The session a write
-  belongs to is the record's \`sessionId\` (for \`start\`) or the stored
-  record's (for \`complete\`); tokens are compared per session (Area 10
+  belongs to is the record's `sessionId` (for `start`) or the stored
+  record's (for `complete`); tokens are compared per session (Area 10
   amendment 2026-11-02).
 
   - worker-b starts K1 with token 2.
-  - worker-a's \`start\` of a new key K2 with token 1 fails \`conflict\` and
-    creates nothing: \`get\` of K2 is \`not_found\` before and after, with the
+  - worker-a's `start` of a new key K2 with token 1 fails `conflict` and
+    creates nothing: `get` of K2 is `not_found` before and after, with the
     same code ($missingCode).
-  - worker-a's \`start\` of the existing K1 with token 1 also fails
-    \`conflict\`. Reading taken: PORT-040's "or fails with conflict if the
+  - worker-a's `start` of the existing K1 with token 1 also fails
+    `conflict`. Reading taken: PORT-040's "or fails with conflict if the
     lease is stale" applies whether or not a record exists, so a stale
     holder never learns the existing record.
-  - worker-a's \`complete\` of K1 with token 1 fails \`conflict\`; K1 is still
-    \`started\` with no outcome. worker-b's completion with token 2
+  - worker-a's `complete` of K1 with token 1 fails `conflict`; K1 is still
+    `started` with no outcome. worker-b's completion with token 2
     succeeds.
   - Control: session S2 (…00d1) accepts token 1, since fencing is per
     session.

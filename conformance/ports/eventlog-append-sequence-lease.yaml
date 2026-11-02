@@ -2,7 +2,7 @@ schemaVersion: "0.1.0"
 id: port.eventlog.append-sequence-lease
 title: Event log append succeeds only at the next sequence number under a current lease; reads are in order with no gaps
 description: >-
-  Session $S (…0010) in tenant t1. worker-a holds the run lease with
+  Session S (…0010) in tenant t1. worker-a holds the run lease with
   fencing token 1; worker-b later takes a new lease of the session with
   token 2 (Area 10 amendment 2026-11-02: tokens are strictly greater for
   each new lease, and a port rejects a write whose token is lower than the
@@ -18,8 +18,8 @@ description: >-
     correct next number (5) with token 1 fails `conflict` (stale lease),
     and stores nothing: worker-b's own append at seq 5 then succeeds, and
     the full read is exactly seq 1–5 with worker-b's event at 5.
-  - Control: fencing is per session. Session $B (…0011) accepts token 1
-    after token 2 was accepted for $S.
+  - Control: fencing is per session. Session B (…0011) accepts token 1
+    after token 2 was accepted for S.
 
   Rejected appends are atomic: no event of a rejected batch is stored.
 requirements: [PORT-020, PORT-021, PORT-004]

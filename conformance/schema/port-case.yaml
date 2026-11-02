@@ -120,6 +120,8 @@ properties:
               properties:
                 category: { type: string }
                 code: { type: string }
+                retryable: { type: boolean }
+                source: { const: port }
   storedRecords:
     description: >-
       Every record stored by the end validates against its record schema

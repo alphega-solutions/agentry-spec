@@ -24,8 +24,7 @@ description: >-
 
   - the step-2 provider request carries c1's result in full;
   - the blob behind `contentRef` is in the tenant's blob store and at
-    least as large as the raw JSON output (30 bytes), so it holds more
-    than a mask;
+    least as large as the raw JSON output (30 bytes);
   - the checkpoint holds the open escalation with the full arguments
     (PORT-030, HITL-012);
   - getReviewerView for r-cleared shows the full arguments.

@@ -94,6 +94,13 @@ $defs:
         type: array
         items: { $ref: "https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/toolResultPart" }
       lease: { $ref: "#/$defs/lease" }
+      expiresAt:
+        description: >-
+          When the session's current TTL elapses: last activity plus
+          `idleTtl` while `idle`, the escalation's `expiresAt` while
+          `suspended` (CORE-040, ORCH-065); absent while `active` or
+          `closed`. Lets the port answer expiry queries (PORT-032).
+        $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/timestamp"
       parentSessionId: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
       childSessionIds:
         type: array
