@@ -1,0 +1,176 @@
+schemaVersion: "0.1.0"
+id: providers.failover-streamed-after-deltas
+title: In streamed delivery, a call that has emitted deltas is neither retried nor failed over; its failure is fatal
+description: >-
+  Every session runs persona `dual@1` (scripted-a/model-a, fallbacks
+  [scripted-a/model-a2, scripted-b/model-b]) under `streamed@1`
+  (`retry.unavailable` 2). Each failure is on the turn's first model call,
+  so both retry and failover — even to the other provider — would
+  otherwise be allowed.
+
+
+  - $sRetryable: model-a streams one delta, then fails with a retryable
+    `unavailable` error. The call is not retried and not failed over: the
+    run ends `failed` and the session closes `failed` (PROV-064). The host
+    received the delta.
+  - $sAuth: model-a streams one delta, then fails with an authentication
+    error (`unavailable`, not retryable), which would otherwise be eligible
+    for immediate failover. No failover: the run ends `failed`.
+  - $sCtlRetry (control): the same retryable failure before any delta is
+    retried on model-a, which streams its answer; the run responds.
+  - $sCtlAuth (control): the same authentication failure before any delta
+    fails over to model-a2, which streams its answer; the run responds.
+
+
+  scripted-a holds exactly the six responses the correct behaviour
+  consumes and scripted-b none, so any retry or failover after a delta
+  fails the test.
+requirements: [PROV-064]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Persona
+        id: dual
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant with two fallbacks
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-a, name: model-a2 }
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { streaming: true }
+      responses:
+        # $sRetryable (model-a): delta, then a retryable failure
+        - deltas: ["SYN-PARTIAL-R "]
+          failAfterDeltas: true
+          error: { category: unavailable, code: agentry.provider.unavailable, retryable: true }
+        # $sAuth (model-a): delta, then an authentication failure
+        - deltas: ["SYN-PARTIAL-A "]
+          failAfterDeltas: true
+          error: { category: unavailable, code: agentry.provider.auth, retryable: false }
+        # $sCtlRetry (model-a): fails before any delta
+        - error: { category: unavailable, code: agentry.provider.unavailable, retryable: true }
+        # $sCtlRetry (model-a): the retry
+        - deltas: ["SYN-RETRIED ", "reply."]
+          parts: [{ type: text, text: "SYN-RETRIED reply." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sCtlAuth (model-a): fails before any delta
+        - error: { category: unavailable, code: agentry.provider.auth, retryable: false }
+        # $sCtlAuth (model-a2)
+        - deltas: ["SYN-FAILED-OVER ", "reply."]
+          parts: [{ type: text, text: "SYN-FAILED-OVER reply." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      capabilities: { streaming: true }
+      responses: []
+script:
+  - action: run
+    bind: $sRetryable
+    tenant: t1
+    principal: p1
+    persona: dual@1
+    profile: streamed@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: failed }
+  - action: run
+    bind: $sAuth
+    tenant: t1
+    principal: p1
+    persona: dual@1
+    profile: streamed@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: failed }
+  - action: run
+    bind: $sCtlRetry
+    tenant: t1
+    principal: p1
+    persona: dual@1
+    profile: streamed@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sCtlAuth
+    tenant: t1
+    principal: p1
+    persona: dual@1
+    profile: streamed@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sRetryable:
+      state: closed
+      closeReason: failed
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, step: 1, payload: { provider: scripted-a, model: model-a, role: primary } }
+          - { type: run.ended, payload: { reason: failed } }
+          - { type: session.closed, payload: { reason: failed } }
+      absentEvents:
+        - { type: model.request, payload: { role: fallback } }
+        - { type: model.response }
+    $sAuth:
+      state: closed
+      closeReason: failed
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, step: 1, payload: { provider: scripted-a, model: model-a, role: primary } }
+          - { type: run.ended, payload: { reason: failed } }
+          - { type: session.closed, payload: { reason: failed } }
+      absentEvents:
+        - { type: model.request, payload: { role: fallback } }
+        - { type: model.response }
+    $sCtlRetry:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, step: 1, payload: { provider: scripted-a, model: model-a, role: primary } }
+          - { type: model.request, step: 1, payload: { provider: scripted-a, model: model-a, role: primary } }
+          - { type: run.ended, payload: { reason: responded } }
+    $sCtlAuth:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, step: 1, payload: { provider: scripted-a, model: model-a, role: primary } }
+          - { type: model.request, step: 1, payload: { provider: scripted-a, model: model-a2, role: fallback, fallbackReason: failover } }
+          - { type: run.ended, payload: { reason: responded } }
+  providerRequests:
+    scripted-a:
+      # $sRetryable, $sAuth: one call each
+      - { model: model-a }
+      - { model: model-a }
+      # $sCtlRetry: the call and its retry
+      - { model: model-a }
+      - { model: model-a }
+      # $sCtlAuth: the call and the failover
+      - { model: model-a }
+      - { model: model-a2 }
+    scripted-b: { count: 0 }
+  delivered:
+    $sRetryable:
+      deltas: { $contains: [{ type: model.delta, payload: { text: "SYN-PARTIAL-R " } }] }
+    $sAuth:
+      deltas: { $contains: [{ type: model.delta, payload: { text: "SYN-PARTIAL-A " } }] }
+    $sCtlRetry: { text: "SYN-RETRIED reply." }
+    $sCtlAuth: { text: "SYN-FAILED-OVER reply." }

@@ -1,0 +1,244 @@
+schemaVersion: "0.1.0"
+id: providers.route-reasoning-after-switch
+title: After a provider switch within a turn, reasoning produced before it is sent to no provider, not even back to the one that produced it
+description: >-
+  The bundle adds the label example.test:b-only, allowed only on
+  scripted-b. The required native hook tagger (beforeModelCall) answers
+  `continue` except before turn 2's step 3, where it labels the turn-1
+  principal text (part 2 of the content it sees: two system parts first,
+  reasoning excluded) with b-only; the label persists on that part. The
+  profile compacts by truncation at 80%; both providers declare
+  contextLimit 120 and maxOutputTokens 20 (available 100, trigger 80) and
+  count 0 tokens per non-text part, so only text words count: system 8,
+  turn-1 principal 10, turn-1 response 10, turn-2 principal 10.
+
+  - Turn 1, step 1 (scripted-a): 18 tokens; a 10-word answer.
+  - Turn 2, step 1 (scripted-a): 38. scripted-a returns a reasoning part
+    R (SYNTHETIC-REASONING-A-0055) and a lookup call c1.
+  - Step 2 (scripted-a): 38. The same provider continues, so R is sent
+    back, in the step-1 assistant message (control; CTX-013). It returns
+    lookup call c2.
+  - Step 3: 38. tagger adds b-only to the turn-1 text, so routing switches
+    to scripted-b (routing decision). R is not sent to scripted-b
+    (PROV-005). scripted-b returns a 45-word text and lookup call c3.
+  - Step 4: 83 > 80, so turn 1 (20) is dropped (earlier turns go first,
+    CTX-061): 63. The b-only part has left context, so routing returns to
+    the primary scripted-a (PROV-054). Steps 3 and 4 used different
+    providers, and R was produced before the switch, so R is not sent
+    (PROV-055): the step-1 assistant message reaches scripted-a with its
+    tool call only.
+
+
+  Reading chosen: PROV-055 bars pre-switch reasoning for the rest of the
+  turn, including when a later step of the same turn returns to the
+  provider that produced it (CTX-060's protection "applies only while the
+  same provider continues"). Across turns the reasoning is sent to its own
+  provider again (context.assembly-reasoning-own-provider). A return to the
+  original provider within a turn is only reachable when the content that
+  forced the switch leaves context, here by compaction of an earlier turn
+  that a hook labelled.
+requirements: [PROV-005, PROV-055]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+          "example.test:b-only":
+            allowedProviders: [scripted-b]
+            redaction: [{ mode: mask }]
+      - kind: Hook
+        id: tagger
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeModelCall]
+        results: [annotate]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.tagger }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        requiredHooks: [tagger@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+        context: { compaction: { mode: truncate, triggerPercent: 80 } }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { contextLimit: 120, maxOutputTokens: 20, reasoning: true }
+      tokenCounting: { nonTextPart: 0 }
+      responses:
+        # Turn 1, step 1
+        - parts: [{ type: text, text: "SYN-T1R-01 SYN-T1R-02 SYN-T1R-03 SYN-T1R-04 SYN-T1R-05 SYN-T1R-06 SYN-T1R-07 SYN-T1R-08 SYN-T1R-09 SYN-T1R-10" }]
+          usage: { inputTokens: 18, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        # Turn 2, step 1
+        - parts:
+            - { type: reasoning, provider: scripted-a, data: "SYNTHETIC-REASONING-A-0055", opaque: true }
+            - { type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }
+          usage: { inputTokens: 38, outputTokens: 30, cachedInputTokens: 0, reasoningTokens: 25 }
+        # Turn 2, step 2
+        - parts: [{ type: tool_call, callId: c2, tool: lookup, arguments: { key: k2 } }]
+          usage: { inputTokens: 38, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # Turn 2, step 4
+        - parts: [{ type: text, text: "Done." }]
+          usage: { inputTokens: 63, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      capabilities: { contextLimit: 120, maxOutputTokens: 20, reasoning: true }
+      tokenCounting: { nonTextPart: 0 }
+      responses:
+        # Turn 2, step 3
+        - parts:
+            - { type: text, text: "SYN-B3-01 SYN-B3-02 SYN-B3-03 SYN-B3-04 SYN-B3-05 SYN-B3-06 SYN-B3-07 SYN-B3-08 SYN-B3-09 SYN-B3-10 SYN-B3-11 SYN-B3-12 SYN-B3-13 SYN-B3-14 SYN-B3-15 SYN-B3-16 SYN-B3-17 SYN-B3-18 SYN-B3-19 SYN-B3-20 SYN-B3-21 SYN-B3-22 SYN-B3-23 SYN-B3-24 SYN-B3-25 SYN-B3-26 SYN-B3-27 SYN-B3-28 SYN-B3-29 SYN-B3-30 SYN-B3-31 SYN-B3-32 SYN-B3-33 SYN-B3-34 SYN-B3-35 SYN-B3-36 SYN-B3-37 SYN-B3-38 SYN-B3-39 SYN-B3-40 SYN-B3-41 SYN-B3-42 SYN-B3-43 SYN-B3-44 SYN-B3-45" }
+            - { type: tool_call, callId: c3, tool: lookup, arguments: { key: k3 } }
+          usage: { inputTokens: 38, outputTokens: 20, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "synthetic-1" } }
+        - ok: { output: { value: "synthetic-2" } }
+        - ok: { output: { value: "synthetic-3" } }
+    nativeHooks:
+      tagger:
+        # Turn 1 step 1; turn 2 steps 1 and 2
+        - result: continue
+        - result: continue
+        - result: continue
+        # Turn 2, step 3
+        - result: annotate
+          labels: [{ part: 2, labels: ["example.test:b-only"] }]
+        # Turn 2, step 4
+        - result: continue
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYN-T1P-01 SYN-T1P-02 SYN-T1P-03 SYN-T1P-04 SYN-T1P-05 SYN-T1P-06 SYN-T1P-07 SYN-T1P-08 SYN-T1P-09 SYN-T1P-10" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "SYN-T2P-01 SYN-T2P-02 SYN-T2P-03 SYN-T2P-04 SYN-T2P-05 SYN-T2P-06 SYN-T2P-07 SYN-T2P-08 SYN-T2P-09 SYN-T2P-10" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, turn: 2, step: 1, payload: { provider: scripted-a, role: primary } }
+          - { type: model.request, turn: 2, step: 2, payload: { provider: scripted-a, role: primary } }
+          - { type: hook.decision, payload: { hook: tagger@1, point: beforeModelCall, result: annotate, annotations: [{ part: 2, labels: ["example.test:b-only"] }] } }
+          - { type: policy.decision, payload: { kind: routing, outcome: switch, details: { provider: scripted-b, model: model-b } } }
+          - { type: model.request, turn: 2, step: 3, payload: { provider: scripted-b, role: fallback, fallbackReason: routing } }
+          - { type: context.compacted, turn: 2, step: 4, payload: { mode: truncate, units: [{ turn: 1 }] } }
+          - { type: model.request, turn: 2, step: 4, payload: { provider: scripted-a, role: primary } }
+          - { type: run.ended, payload: { reason: responded } }
+  stubCalls:
+    tagger:
+      - { arguments: { point: beforeModelCall, session: { turn: 1, step: 1 } } }
+      - { arguments: { point: beforeModelCall, session: { turn: 2, step: 1 } } }
+      - { arguments: { point: beforeModelCall, session: { turn: 2, step: 2 } } }
+      - arguments:
+          point: beforeModelCall
+          session: { turn: 2, step: 3 }
+          content:
+            $all:
+              - $len: 9
+              - $count: { of: { type: reasoning }, equals: 0 }
+              - $contains:
+                  - { type: text, text: "SYN-T1P-01 SYN-T1P-02 SYN-T1P-03 SYN-T1P-04 SYN-T1P-05 SYN-T1P-06 SYN-T1P-07 SYN-T1P-08 SYN-T1P-09 SYN-T1P-10" }
+      - { arguments: { point: beforeModelCall, session: { turn: 2, step: 4 } } }
+  providerRequests:
+    scripted-a:
+      # Turn 1, step 1; turn 2, step 1
+      - {}
+      - {}
+      # Turn 2, step 2: same provider continues; R is sent
+      - messages:
+          $contains:
+            - role: assistant
+              parts:
+                - { type: reasoning, provider: scripted-a, data: "SYNTHETIC-REASONING-A-0055" }
+                - { type: tool_call, callId: c1, tool: lookup }
+            - role: tool
+              parts: [{ type: tool_result, callId: c1 }]
+      # Turn 2, step 4: back on scripted-a after the switch; R is not sent
+      - messages:
+          - role: system
+            parts:
+              - { type: text, text: "Follow organisational policy." }
+              - { type: text, text: "You are a test assistant." }
+          - role: principal
+            parts: [{ type: text, text: "SYN-T2P-01 SYN-T2P-02 SYN-T2P-03 SYN-T2P-04 SYN-T2P-05 SYN-T2P-06 SYN-T2P-07 SYN-T2P-08 SYN-T2P-09 SYN-T2P-10" }]
+          - role: assistant
+            parts: [{ type: tool_call, callId: c1, tool: lookup }]
+          - role: tool
+            parts: [{ type: tool_result, callId: c1 }]
+          - role: assistant
+            parts: [{ type: tool_call, callId: c2, tool: lookup }]
+          - role: tool
+            parts: [{ type: tool_result, callId: c2 }]
+          - role: assistant
+            parts:
+              - { type: text }
+              - { type: tool_call, callId: c3, tool: lookup }
+          - role: tool
+            parts: [{ type: tool_result, callId: c3 }]
+    scripted-b:
+      # Turn 2, step 3: R is not sent to another provider
+      - messages:
+          $all:
+            - $count: { of: { parts: { $contains: [{ type: reasoning }] } }, equals: 0 }
+            - $contains:
+                - role: assistant
+                  parts: [{ type: tool_call, callId: c1, tool: lookup }]
+                - role: tool
+                  parts: [{ type: tool_result, callId: c1 }]
+                - role: assistant
+                  parts: [{ type: tool_call, callId: c2, tool: lookup }]
+  delivered:
+    $s: { text: "Done.", fallback: false }

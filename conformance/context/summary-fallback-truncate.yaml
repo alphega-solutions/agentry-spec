@@ -33,7 +33,7 @@ description: >-
   the default reserve is 20. Turn-2 requests are asserted exactly: one
   `system` message (one text part per instruction source) and turn 2's
   principal message.
-requirements: [CTX-085]
+requirements: [CTX-085, PROV-053]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:

@@ -20,7 +20,7 @@ description: >-
   session created at the end is pinned to the snapshot of the last accepted
   load and calls scripted-a/model-a. Each rejection's details name the
   artifact, the field (a JSON Pointer into that artifact) and the layer.
-requirements: [CFG-020, CFG-032]
+requirements: [CFG-020, CFG-032, PROV-020]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:

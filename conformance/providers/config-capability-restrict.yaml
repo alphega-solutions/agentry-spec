@@ -1,0 +1,228 @@
+schemaVersion: "0.1.0"
+id: providers.config-capability-restrict
+title: A deployment may restrict a model's capabilities, and the restriction is honoured; extending a capability is rejected
+description: >-
+  scripted-a declares the default capabilities (vision on, maxOutputTokens
+  4,096, contextLimit 1,000,000); scripted-b declares `vision: false`.
+  The persona's primary is scripted-a/model-a, fallback scripted-b/model-b.
+
+  1. $sImg1, before any restriction: an image attachment is supported by
+     model-a and the request carries it.
+  2. The persona sets `params.maxOutputTokens: 2000` → accepted (within
+     4,096).
+  3. A deployment restricting model-a to `vision: false` and both models to
+     `maxOutputTokens: 1000` → rejected: the persona's 2000 now exceeds the
+     restricted limit (PROV-020).
+  4. The same deployment with the persona at 1000 → accepted.
+  5. An image attachment now has no supporting allowed model (model-a's
+     vision is off; model-b never had it) → `run()` rejected with
+     `invalid_input` (`agentry.provider.unsupported_content`), no events.
+  6. Control: a text-only run on the restricted configuration responds on
+     model-a.
+  7. Restrictions that extend a capability → rejected: model-a
+     `contextLimit: 2000000` (declared 1,000,000), model-a
+     `maxOutputTokens: 8192` (declared 4,096), model-b `vision: true`
+     (declared off).
+requirements: [PROV-031, PROV-020]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { vision: true }
+      responses:
+        - parts: [{ type: text, text: "Seen." }]
+          usage: { inputTokens: 30, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Text only." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      capabilities: { vision: false }
+      responses: []
+  ports:
+    blobStore:
+      t1:
+        - id: blob-img-1
+          hash: "sha256:82e0d9513a9797c3e32e35d6fff5c8648db4b0a8c74ffea2be6d5b827d3c7aa7"
+          mediaType: image/png
+          size: 20
+          data: "U1lOVEhFVElDLUlNQUdFLTAwMDE="
+script:
+  # 1. Unrestricted: the image is supported.
+  - action: run
+    bind: $sImg1
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input:
+      - { type: text, text: "Describe this" }
+      - { type: image, mediaType: image/png, source: upload, blob: { id: blob-img-1, hash: "sha256:82e0d9513a9797c3e32e35d6fff5c8648db4b0a8c74ffea2be6d5b827d3c7aa7", mediaType: image/png, size: 20 } }
+    expect: { ok: true, endReason: responded }
+  # 2. Output limit within the declared capability.
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }], params: { maxOutputTokens: 2000 } } }
+    expect: { ok: true }
+  # 3. Restriction makes the persona's output limit exceed the model's.
+  - load:
+      artifacts:
+        - kind: Deployment
+          id: test
+          version: 1
+          schemaVersion: "0.1.0"
+          environment: test
+          policyBundles: [org@1]
+          attachmentSources: [upload, email]
+          providers:
+            - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false, capabilities: { model-a: { vision: false, maxOutputTokens: 1000 } } }
+            - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false, capabilities: { model-b: { maxOutputTokens: 1000 } } }
+          ports:
+            eventLog: { adapter: memory, region: test-region }
+            checkpointStore: { adapter: memory, region: test-region }
+            idempotencyStore: { adapter: memory, region: test-region }
+            snapshotStore: { adapter: memory, region: test-region }
+            blobStore: { adapter: memory, region: test-region }
+            auditLog: { adapter: memory, region: test-region }
+            secrets: { adapter: memory, region: test-region }
+          retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+    expect: { ok: false, error: { category: configuration } }
+  # 4. Restriction with the persona's limit lowered.
+  - load:
+      artifacts:
+        - kind: Deployment
+          id: test
+          version: 1
+          schemaVersion: "0.1.0"
+          environment: test
+          policyBundles: [org@1]
+          attachmentSources: [upload, email]
+          providers:
+            - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false, capabilities: { model-a: { vision: false, maxOutputTokens: 1000 } } }
+            - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false, capabilities: { model-b: { maxOutputTokens: 1000 } } }
+          ports:
+            eventLog: { adapter: memory, region: test-region }
+            checkpointStore: { adapter: memory, region: test-region }
+            idempotencyStore: { adapter: memory, region: test-region }
+            snapshotStore: { adapter: memory, region: test-region }
+            blobStore: { adapter: memory, region: test-region }
+            auditLog: { adapter: memory, region: test-region }
+            secrets: { adapter: memory, region: test-region }
+          retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }], params: { maxOutputTokens: 1000 } } }
+    expect: { ok: true }
+  # 5. Vision restricted: the image attachment is unsupported.
+  - action: run
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input:
+      - { type: text, text: "Describe this" }
+      - { type: image, mediaType: image/png, source: upload, blob: { id: blob-img-1, hash: "sha256:82e0d9513a9797c3e32e35d6fff5c8648db4b0a8c74ffea2be6d5b827d3c7aa7", mediaType: image/png, size: 20 } }
+    expect: { ok: false, error: { category: invalid_input, code: agentry.provider.unsupported_content }, newEvents: 0 }
+  # 6. Control: text still runs on model-a.
+  - action: run
+    bind: $sText
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Text please" }]
+    expect: { ok: true, endReason: responded }
+  # 7. Extensions.
+  - load:
+      artifacts:
+        - kind: Deployment
+          id: test
+          version: 1
+          schemaVersion: "0.1.0"
+          environment: test
+          policyBundles: [org@1]
+          attachmentSources: [upload, email]
+          providers:
+            - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false, capabilities: { model-a: { vision: false, maxOutputTokens: 1000, contextLimit: 2000000 } } }
+            - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false, capabilities: { model-b: { maxOutputTokens: 1000 } } }
+          ports:
+            eventLog: { adapter: memory, region: test-region }
+            checkpointStore: { adapter: memory, region: test-region }
+            idempotencyStore: { adapter: memory, region: test-region }
+            snapshotStore: { adapter: memory, region: test-region }
+            blobStore: { adapter: memory, region: test-region }
+            auditLog: { adapter: memory, region: test-region }
+            secrets: { adapter: memory, region: test-region }
+          retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - kind: Deployment
+          id: test
+          version: 1
+          schemaVersion: "0.1.0"
+          environment: test
+          policyBundles: [org@1]
+          attachmentSources: [upload, email]
+          providers:
+            - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false, capabilities: { model-a: { vision: false, maxOutputTokens: 8192 } } }
+            - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false, capabilities: { model-b: { maxOutputTokens: 1000 } } }
+          ports:
+            eventLog: { adapter: memory, region: test-region }
+            checkpointStore: { adapter: memory, region: test-region }
+            idempotencyStore: { adapter: memory, region: test-region }
+            snapshotStore: { adapter: memory, region: test-region }
+            blobStore: { adapter: memory, region: test-region }
+            auditLog: { adapter: memory, region: test-region }
+            secrets: { adapter: memory, region: test-region }
+          retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - kind: Deployment
+          id: test
+          version: 1
+          schemaVersion: "0.1.0"
+          environment: test
+          policyBundles: [org@1]
+          attachmentSources: [upload, email]
+          providers:
+            - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false, capabilities: { model-a: { vision: false, maxOutputTokens: 1000 } } }
+            - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false, capabilities: { model-b: { maxOutputTokens: 1000, vision: true } } }
+          ports:
+            eventLog: { adapter: memory, region: test-region }
+            checkpointStore: { adapter: memory, region: test-region }
+            idempotencyStore: { adapter: memory, region: test-region }
+            snapshotStore: { adapter: memory, region: test-region }
+            blobStore: { adapter: memory, region: test-region }
+            auditLog: { adapter: memory, region: test-region }
+            secrets: { adapter: memory, region: test-region }
+          retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+    expect: { ok: false, error: { category: configuration } }
+expect:
+  sessions:
+    $sImg1:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, payload: { provider: scripted-a, model: model-a, role: primary } }
+          - { type: run.ended, payload: { reason: responded } }
+    $sText:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, payload: { provider: scripted-a, model: model-a, role: primary } }
+          - { type: run.ended, payload: { reason: responded } }
+  providerRequests:
+    scripted-a:
+      - messages:
+          $contains:
+            - role: principal
+              parts:
+                $contains:
+                  - { type: image, mediaType: image/png, blob: { id: blob-img-1 } }
+      - messages:
+          $contains:
+            - role: principal
+              parts: [{ type: text, text: "Text please" }]
+    scripted-b: { count: 0 }

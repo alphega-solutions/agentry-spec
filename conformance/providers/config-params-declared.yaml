@@ -1,0 +1,89 @@
+schemaVersion: "0.1.0"
+id: providers.config-params-declared
+title: "`params` holds only generation parameters the adapter declares; endpoints, regions, tool, safety and retention settings are rejected"
+description: >-
+  Each failing load replaces the persona (or the default profile) with a
+  model block whose `params` carries one value that is not a declared
+  generation parameter; everything else equals the baseline. Rejected:
+  `endpoint`, `region`, a safety setting (`safetySettings`), a tool setting
+  (`toolChoice`), a data-retention setting (`dataRetention`), and an
+  undeclared parameter name (`syntheticUndeclaredParam`); and, under the
+  same rule (PROV-023), `endpoint` in `compaction.model.params`. The
+  control sets `maxOutputTokens` (a parameter every adapter accepts,
+  within the scripted model's default limit of 4,096) and loads; a session
+  then runs on scripted-a/model-a.
+
+  The fixture format does not state which generation parameters the
+  scripted adapter declares (PROV-008), and recorded provider requests do
+  not carry parameters, so this fixture relies on the scripted adapter
+  declaring no parameter named `syntheticUndeclaredParam`, and does not
+  verify that declared parameters reach the provider request.
+requirements: [PROV-022]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b: { responses: [] }
+script:
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }], params: { endpoint: "https://elsewhere.example" } } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }], params: { region: other-region } } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }], params: { safetySettings: "off" } } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }], params: { toolChoice: "none" } } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }], params: { dataRetention: "none" } } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }], params: { syntheticUndeclaredParam: 3 } } }
+    expect: { ok: false, error: { category: configuration } }
+  # Summarizer model params follow the same rule.
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, deliveryMode: buffered, budget: { tokens: 100000 }, timeouts: { run: PT5M, tool: PT30S }, retry: { unavailable: 2 }, outputRetryLimit: 2, limits: { partSize: 1048576, sessionSize: 10485760 }, defaultAttachmentLabels: [], context: { compaction: { mode: summarize, model: { provider: scripted-b, name: model-b, params: { endpoint: "https://elsewhere.example" } } } } }
+    expect: { ok: false, error: { category: configuration } }
+  # Control.
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }], params: { maxOutputTokens: 1000 } } }
+    expect: { ok: true }
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, payload: { provider: scripted-a, model: model-a, role: primary } }
+          - { type: run.ended, payload: { reason: responded } }
+  providerRequests:
+    scripted-a: { count: 1 }
+    scripted-b: { count: 0 }

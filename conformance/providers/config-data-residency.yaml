@@ -1,0 +1,122 @@
+schemaVersion: "0.1.0"
+id: providers.config-data-residency
+title: A provider whose region does not satisfy dataResidency is not allowed; a persona whose only model is on it is rejected at load
+description: >-
+  org@1 sets `dataResidency: [test-region]`; every port is in test-region.
+  The deployment declares a third provider, scripted-c, in test-region.
+
+  - A load that moves scripted-c to `other-region` and gives the persona
+    scripted-c/model-c as its only model is rejected: the persona's only
+    model is on a provider outside `dataResidency`, so it has no allowed
+    model.
+  - Control: the same persona with scripted-c left in test-region loads,
+    and a session runs on scripted-c/model-c.
+
+  Reading: whether a declared but unused provider outside `dataResidency`
+  is itself an error, and whether a non-resident fallback is a load error
+  or only skipped by routing, are not fixed by PROV-012; this fixture
+  asserts only the case every reading rejects (the persona's only model).
+requirements: [PROV-012]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          - { id: scripted-c, adapter: scripted, endpoint: "memory://scripted-c", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        dataResidency: [test-region]
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a: { responses: [] }
+    scripted-b: { responses: [] }
+    scripted-c:
+      responses:
+        - parts: [{ type: text, text: "Handled on c." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  # scripted-c outside dataResidency, and the persona's only model.
+  - load:
+      artifacts:
+        - kind: Deployment
+          id: test
+          version: 1
+          schemaVersion: "0.1.0"
+          environment: test
+          policyBundles: [org@1]
+          attachmentSources: [upload, email]
+          providers:
+            - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+            - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+            - { id: scripted-c, adapter: scripted, endpoint: "memory://scripted-c", region: other-region, retainsData: false }
+          ports:
+            eventLog: { adapter: memory, region: test-region }
+            checkpointStore: { adapter: memory, region: test-region }
+            idempotencyStore: { adapter: memory, region: test-region }
+            snapshotStore: { adapter: memory, region: test-region }
+            blobStore: { adapter: memory, region: test-region }
+            auditLog: { adapter: memory, region: test-region }
+            secrets: { adapter: memory, region: test-region }
+          retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], model: { provider: scripted-c, name: model-c } }
+    expect: { ok: false, error: { category: configuration } }
+  # Control: scripted-c in test-region.
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], model: { provider: scripted-c, name: model-c } }
+    expect: { ok: true }
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, payload: { provider: scripted-c, model: model-c, role: primary } }
+          - { type: run.ended, payload: { reason: responded } }
+  providerRequests:
+    scripted-a: { count: 0 }
+    scripted-b: { count: 0 }
+    scripted-c:
+      - { provider: scripted-c, model: model-c }

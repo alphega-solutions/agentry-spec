@@ -1,0 +1,188 @@
+schemaVersion: "0.1.0"
+id: providers.config-provider-requirement-routing
+title: A provider listed in allowedProviders but failing the policy's providerRequirement is not allowed for that label; routing skips it
+description: >-
+  The pii policy lists both providers in `allowedProviders` and adds
+  `providerRequirement: "!provider.retainsData"`. The deployment declares
+  scripted-b with `retainsData: true`, scripted-a with `false`. The rule
+  hook pii-tagger (beforeModelCall) labels content pii when it holds
+  SYN-PII-0031. The persona's primary model is scripted-b/model-b with
+  fallback scripted-a/model-a; persona solo has only scripted-b/model-b.
+
+  - $sPii: the content is pii; scripted-b is in `allowedProviders` but
+    fails the requirement, so it is not allowed (both conditions must
+    hold). Routing switches to scripted-a, recorded as a routing
+    `policy.decision` (outcome `switch`, details naming the chosen model)
+    and a `model.request` with `role: fallback`, `fallbackReason:
+    routing`. scripted-b never receives the content.
+  - $sPlain (control): no label, so no sensitivity policy applies and the
+    primary on scripted-b is used.
+  - $sSolo: the persona's only model fails the requirement for pii, so no
+    model is allowed: no call, run `blocked` with the fallback message.
+
+  Everything loads: a sensitivity policy restricts only content carrying
+  its label, so a model that fails it is not a load error.
+requirements: [PROV-012]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: true }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            providerRequirement: "!provider.retainsData"
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+      - kind: Hook
+        id: pii-tagger
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeModelCall]
+        results: [annotate]
+        timeoutMs: 1000
+        source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-PII-0031'))", then: { result: annotate, labels: [pii] } }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [pii-tagger@1]
+        model:
+          provider: scripted-b
+          name: model-b
+          fallbacks:
+            - { provider: scripted-a, name: model-a }
+      - kind: Persona
+        id: solo
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [pii-tagger@1]
+        model:
+          provider: scripted-b
+          name: model-b
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Handled on a." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      responses:
+        - parts: [{ type: text, text: "Handled on b." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $sPii
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Record SYN-PII-0031" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sPlain
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Plain record" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sSolo
+    tenant: t1
+    principal: p1
+    persona: solo@1
+    input: [{ type: text, text: "Record SYN-PII-0031" }]
+    expect: { ok: true, endReason: blocked }
+expect:
+  sessions:
+    $sPii:
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: pii-tagger@1, point: beforeModelCall, result: annotate, labelsAdded: [pii] } }
+          - { type: policy.decision, payload: { kind: routing, outcome: switch, details: { provider: scripted-a, model: model-a } } }
+          - { type: model.request, payload: { provider: scripted-a, model: model-a, role: fallback, fallbackReason: routing } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: model.request, payload: { provider: scripted-b } }
+    $sPlain:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, payload: { provider: scripted-b, model: model-b, role: primary } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: policy.decision }
+    $sSolo:
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: pii-tagger@1, point: beforeModelCall, result: annotate, labelsAdded: [pii] } }
+          - { type: policy.decision, payload: { kind: routing, outcome: block } }
+          - { type: run.ended, payload: { reason: blocked } }
+      absentEvents:
+        - { type: model.request }
+  providerRequests:
+    scripted-a:
+      - provider: scripted-a
+        model: model-a
+        messages:
+          $contains:
+            - parts:
+                $contains:
+                  - { type: text, text: "Record SYN-PII-0031", labels: { $contains: [pii] } }
+    scripted-b:
+      - provider: scripted-b
+        model: model-b
+        messages:
+          $contains:
+            - parts:
+                $contains:
+                  - { type: text, text: "Plain record" }
+  delivered:
+    $sPii: { text: "Handled on a.", fallback: false }
+    $sPlain: { text: "Handled on b.", fallback: false }
+    $sSolo: { text: "This request was blocked.", fallback: true }

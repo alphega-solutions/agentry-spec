@@ -1,0 +1,96 @@
+schemaVersion: "0.1.0"
+id: providers.config-capability-checks-fallbacks
+title: Load-time capability checks apply to the primary model and every fallback
+description: >-
+  Three further scripted providers each lack exactly one capability:
+  scripted-c declares `toolUse: false`, scripted-d `streaming: false`, and
+  scripted-e `maxOutputTokens: 100` (all others at the defaults). The
+  persona's primary is scripted-a/model-a unless stated.
+
+  - Fallback scripted-c/model-c on a persona with tools → rejected; the
+    same persona with `tools: []` → accepted. Primary scripted-c/model-c
+    on a persona with tools → rejected.
+  - Fallback scripted-d/model-d with streamed@1 (`deliveryMode: streamed`)
+    among the allowed profiles → rejected; with only default@1 allowed →
+    accepted.
+  - Fallback scripted-e/model-e with default@1 setting
+    `context.reserveOutputTokens: 101` → rejected (101 > 100); with 100 →
+    accepted. Only default@1 is allowed, and the reserve is set
+    explicitly, so the result does not depend on how the default reserve
+    is derived.
+requirements: [PROV-040]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          - { id: scripted-c, adapter: scripted, endpoint: "memory://scripted-c", region: test-region, retainsData: false }
+          - { id: scripted-d, adapter: scripted, endpoint: "memory://scripted-d", region: test-region, retainsData: false }
+          - { id: scripted-e, adapter: scripted, endpoint: "memory://scripted-e", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a: { responses: [] }
+    scripted-b: { responses: [] }
+    scripted-c: { capabilities: { toolUse: false }, responses: [] }
+    scripted-d: { capabilities: { streaming: false }, responses: [] }
+    scripted-e: { capabilities: { maxOutputTokens: 100 }, responses: [] }
+script:
+  # toolUse: fallback.
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-c, name: model-c }] } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-c, name: model-c }] } }
+    expect: { ok: true }
+  # toolUse: primary.
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], model: { provider: scripted-c, name: model-c } }
+    expect: { ok: false, error: { category: configuration } }
+  # streaming: fallback.
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-d, name: model-d }] } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-d, name: model-d }] } }
+    expect: { ok: true }
+  # reserveOutputTokens above a fallback's maxOutputTokens.
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-e, name: model-e }] } }
+        - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, deliveryMode: buffered, budget: { tokens: 100000 }, timeouts: { run: PT5M, tool: PT30S }, retry: { unavailable: 2 }, outputRetryLimit: 2, limits: { partSize: 1048576, sessionSize: 10485760 }, defaultAttachmentLabels: [], context: { reserveOutputTokens: 101 } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-e, name: model-e }] } }
+        - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, deliveryMode: buffered, budget: { tokens: 100000 }, timeouts: { run: PT5M, tool: PT30S }, retry: { unavailable: 2 }, outputRetryLimit: 2, limits: { partSize: 1048576, sessionSize: 10485760 }, defaultAttachmentLabels: [], context: { reserveOutputTokens: 100 } }
+    expect: { ok: true }
+expect: {}

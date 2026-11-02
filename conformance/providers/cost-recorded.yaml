@@ -1,0 +1,277 @@
+schemaVersion: "0.1.0"
+id: providers.cost-recorded
+title: Cost is computed from normalized usage and the price table, and recorded on the event of each call
+description: >-
+  The deployment's price table (USD, prices per million tokens: input,
+  cached input, output, reasoning) prices every model in play:
+  scripted-a/model-a 2000, 500, 10000, 20000; scripted-b/model-b 1000,
+  250, 5000, 15000; scripted-c/model-c 15625 each; scripted-sum/sum-1
+  15625, 15625, 31250, 31250; scripted-judge/judge-1 2000, 2000, 4000,
+  4000. Cost is (input − cached) × input price + cached × cached price +
+  (output − reasoning) × output price + reasoning × reasoning price, per
+  million (`cost` in schemas/common/v1/defs.yaml), in the table's
+  currency (PROV-072, PROV-074, 2026-11-02 amendment). Amounts are chosen
+  to be exact.
+
+
+  - $sCost (assistant): model-a reports 1000 input (500 cached), 200
+    output (100 reasoning): 1 + 0.25 + 1 + 2 = 4.25 USD on its
+    `model.response`.
+  - $sFail (assistant): model-a fails with an authentication error and
+    reports 1000 input tokens: 2 USD on its `error` event. The harness
+    fails over to model-b, which reports 2000 input (1000 cached), 400
+    output (200 reasoning), priced at model-b's row: 1 + 0.25 + 1 + 3 =
+    5.25 USD (model-a's row would give 8.5).
+  - $sHook (assistant): model-a asks to update k1 (125 + 25 → 0.25 + 0.25
+    = 0.5 USD); the model hook `judge` (beforeToolCall on update_record)
+    blocks it, using 250 + 125 → 0.5 + 0.5 = 1 USD, recorded on its
+    `hook.decision`; model-a then answers (0.5 USD).
+  - $sSum (persona `compactor@1` on scripted-c/model-c, contextLimit 120,
+    maxOutputTokens 20, summarizing with sum-1): turn 1 (20-word text,
+    20-word answer, 48 tokens → 0.75 USD). Turn 2's 45-word text (93 > 90)
+    makes the summarizer run with 64 + 32 → 1 + 1 = 2 USD, recorded on
+    `context.compacted`. Turn 2 then answers (57 + 7 → 1 USD).
+
+
+  Format reading: an `error` response's sibling `usage` is the usage the
+  provider reported for the failed call.
+requirements: [PROV-072, PROV-074]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          - { id: scripted-c, adapter: scripted, endpoint: "memory://scripted-c", region: test-region, retainsData: false }
+          - { id: scripted-sum, adapter: scripted, endpoint: "memory://scripted-sum", region: test-region, retainsData: false }
+          - { id: scripted-judge, adapter: scripted, endpoint: "memory://scripted-judge", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+        priceTable:
+          currency: USD
+          models:
+            - { provider: scripted-a, name: model-a, input: 2000, cachedInput: 500, output: 10000, reasoning: 20000 }
+            - { provider: scripted-b, name: model-b, input: 1000, cachedInput: 250, output: 5000, reasoning: 15000 }
+            - { provider: scripted-c, name: model-c, input: 15625, cachedInput: 15625, output: 15625, reasoning: 15625 }
+            - { provider: scripted-sum, name: sum-1, input: 15625, cachedInput: 15625, output: 31250, reasoning: 31250 }
+            - { provider: scripted-judge, name: judge-1, input: 2000, cachedInput: 2000, output: 4000, reasoning: 4000 }
+      - kind: Hook
+        id: judge
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [block]
+        timeoutMs: 1000
+        match: "tool.id == 'update_record'"
+        source:
+          kind: model
+          model: { provider: scripted-judge, name: judge-1 }
+          instructions: "Decide whether this tool call is allowed. Answer with a HookResult."
+          maxTokens: 1000
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [judge@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+      - kind: HarnessProfile
+        id: compact
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+        context: { compaction: { mode: summarize, model: { provider: scripted-sum, name: sum-1 } } }
+      - kind: Persona
+        id: compactor
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Compacting assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: compact@1
+        allowedProfiles: [compact@1]
+        model: { provider: scripted-c, name: model-c }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # $sCost → 4.25
+        - parts: [{ type: text, text: "SYN-COST reply." }]
+          usage: { inputTokens: 1000, outputTokens: 200, cachedInputTokens: 500, reasoningTokens: 100 }
+        # $sFail: failed call → 2
+        - error: { category: unavailable, code: agentry.provider.auth, retryable: false }
+          usage: { inputTokens: 1000, outputTokens: 0, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sHook, step 1 → 0.5
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 125, outputTokens: 25, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sHook, step 2 → 0.5
+        - parts: [{ type: text, text: "SYN-HOOK reply." }]
+          usage: { inputTokens: 125, outputTokens: 25, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      responses:
+        # $sFail, fallback → 5.25
+        - parts: [{ type: text, text: "SYN-FALLBACK reply." }]
+          usage: { inputTokens: 2000, outputTokens: 400, cachedInputTokens: 1000, reasoningTokens: 200 }
+    scripted-c:
+      capabilities: { contextLimit: 120, maxOutputTokens: 20 }
+      responses:
+        # $sSum, turn 1 → 0.75
+        - parts: [{ type: text, text: "SYN-CR-01 SYN-CR-02 SYN-CR-03 SYN-CR-04 SYN-CR-05 SYN-CR-06 SYN-CR-07 SYN-CR-08 SYN-CR-09 SYN-CR-10 SYN-CR-11 SYN-CR-12 SYN-CR-13 SYN-CR-14 SYN-CR-15 SYN-CR-16 SYN-CR-17 SYN-CR-18 SYN-CR-19 SYN-CR-20" }]
+          usage: { inputTokens: 28, outputTokens: 20, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sSum, turn 2 → 1
+        - parts: [{ type: text, text: "SYN-AFTER-SUMMARY reply." }]
+          usage: { inputTokens: 57, outputTokens: 7, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-sum:
+      responses:
+        # $sSum, turn 2 → 2
+        - parts: [{ type: text, text: "SYN-SUMMARY-0001 SYN-SUMMARY-0002 SYN-SUMMARY-0003 SYN-SUMMARY-0004" }]
+          usage: { inputTokens: 64, outputTokens: 32, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-judge:
+      responses:
+        # $sHook → 1
+        - parts: [{ type: structured, value: { result: block, reasonCode: test.guard.blocked } }]
+          usage: { inputTokens: 250, outputTokens: 125, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record: []
+script:
+  - action: run
+    bind: $sCost
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sFail
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi again" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sHook
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sSum
+    tenant: t1
+    principal: p1
+    persona: compactor@1
+    input: [{ type: text, text: "SYN-CP-01 SYN-CP-02 SYN-CP-03 SYN-CP-04 SYN-CP-05 SYN-CP-06 SYN-CP-07 SYN-CP-08 SYN-CP-09 SYN-CP-10 SYN-CP-11 SYN-CP-12 SYN-CP-13 SYN-CP-14 SYN-CP-15 SYN-CP-16 SYN-CP-17 SYN-CP-18 SYN-CP-19 SYN-CP-20" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $sSum
+    principal: p1
+    input: [{ type: text, text: "SYN-CQ-01 SYN-CQ-02 SYN-CQ-03 SYN-CQ-04 SYN-CQ-05 SYN-CQ-06 SYN-CQ-07 SYN-CQ-08 SYN-CQ-09 SYN-CQ-10 SYN-CQ-11 SYN-CQ-12 SYN-CQ-13 SYN-CQ-14 SYN-CQ-15 SYN-CQ-16 SYN-CQ-17 SYN-CQ-18 SYN-CQ-19 SYN-CQ-20 SYN-CQ-21 SYN-CQ-22 SYN-CQ-23 SYN-CQ-24 SYN-CQ-25 SYN-CQ-26 SYN-CQ-27 SYN-CQ-28 SYN-CQ-29 SYN-CQ-30 SYN-CQ-31 SYN-CQ-32 SYN-CQ-33 SYN-CQ-34 SYN-CQ-35 SYN-CQ-36 SYN-CQ-37 SYN-CQ-38 SYN-CQ-39 SYN-CQ-40 SYN-CQ-41 SYN-CQ-42 SYN-CQ-43 SYN-CQ-44 SYN-CQ-45" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sCost:
+      events:
+        mode: subsequence
+        items:
+          - type: model.response
+            step: 1
+            payload:
+              provider: scripted-a
+              model: model-a
+              usage: { inputTokens: 1000, outputTokens: 200, cachedInputTokens: 500, reasoningTokens: 100 }
+              cost: { amount: 4.25, currency: USD }
+    $sFail:
+      events:
+        mode: subsequence
+        items:
+          - type: error
+            payload:
+              provider: scripted-a
+              model: model-a
+              error: { category: unavailable, code: agentry.provider.auth }
+              usage: { inputTokens: 1000, outputTokens: 0, cachedInputTokens: 0, reasoningTokens: 0 }
+              cost: { amount: 2, currency: USD }
+          - { type: model.request, step: 1, payload: { provider: scripted-b, model: model-b, role: fallback, fallbackReason: failover } }
+          - type: model.response
+            step: 1
+            payload:
+              provider: scripted-b
+              model: model-b
+              cost: { amount: 5.25, currency: USD }
+    $sHook:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.response, step: 1, payload: { provider: scripted-a, cost: { amount: 0.5, currency: USD } } }
+          - type: hook.decision
+            payload:
+              hook: judge@1
+              point: beforeToolCall
+              result: block
+              usage: { inputTokens: 250, outputTokens: 125, cachedInputTokens: 0, reasoningTokens: 0 }
+              cost: { amount: 1, currency: USD }
+          - { type: model.response, step: 2, payload: { provider: scripted-a, cost: { amount: 0.5, currency: USD } } }
+          - { type: run.ended, payload: { reason: responded } }
+    $sSum:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.response, turn: 1, step: 1, payload: { provider: scripted-c, cost: { amount: 0.75, currency: USD } } }
+          - type: context.compacted
+            turn: 2
+            step: 1
+            payload:
+              mode: summarize
+              units: [{ turn: 1 }]
+              usage: { inputTokens: 64, outputTokens: 32, cachedInputTokens: 0, reasoningTokens: 0 }
+              cost: { amount: 2, currency: USD }
+          - { type: model.response, turn: 2, step: 1, payload: { provider: scripted-c, cost: { amount: 1, currency: USD } } }
+  providerRequests:
+    scripted-a: { count: 4 }
+    scripted-b: { count: 1 }
+    scripted-c: { count: 2 }
+    scripted-sum: { count: 1 }
+    scripted-judge: { count: 1 }
+  stubCalls:
+    update_record: { count: 0 }

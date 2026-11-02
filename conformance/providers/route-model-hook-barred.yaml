@@ -1,0 +1,191 @@
+schemaVersion: "0.1.0"
+id: providers.route-model-hook-barred
+title: A model hook whose provider a sensitivity policy forbids never receives the labelled content; the required hook fails closed
+description: >-
+  The deployment adds scripted-judge, which the bundle allows in general
+  (no `allowedProviders` restriction) but which the phi policy does not
+  allow (phi: scripted-a only). The required model hook judge
+  (afterToolCall, declares block, so failClosed by default, HOOK-101) runs
+  on scripted-judge/judge-1. `lookup` declares sensitivity phi;
+  `note_lookup` declares none.
+
+  - $sBarred: the lookup result (SYN-PHI-RECORD-0053) is labelled phi, so
+    it may not be sent to scripted-judge (PROV-053, HOOK-100). The required
+    hook cannot receive its content and has failed (HOOK-054): an `error`
+    event agentry.hook.content_barred (policy, not retryable, source hook)
+    and a `hook.decision` block with that reason code; the model receives a
+    `policy` error in place of the result and responds.
+  - $sControl: the note_lookup result is unlabelled, so judge receives it
+    and answers `continue`; the model receives the result.
+
+  scripted-judge receives exactly one request, $sControl's, and the phi
+  value appears in no request to any provider (in $sBarred it is withheld
+  from the session model too). How a model hook's request lays out the
+  content it judges is implementation-defined, so only the request count,
+  model and empty tool list are asserted for scripted-judge.
+requirements: [PROV-053]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          - { id: scripted-judge, adapter: scripted, endpoint: "memory://scripted-judge", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: Hook
+        id: judge
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [afterToolCall]
+        results: [block]
+        timeoutMs: 1000
+        source:
+          kind: model
+          model: { provider: scripted-judge, name: judge-1 }
+          instructions: "Decide whether this tool result may be used. Answer with a HookResult."
+          maxTokens: 200
+      - kind: Tool
+        id: lookup
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Look up a record by key.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        sensitivity: [phi]
+        binding: { kind: native, handler: test.lookup }
+      - kind: Tool
+        id: note_lookup
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Look up an unlabelled note.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        binding: { kind: native, handler: test.note_lookup }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, note_lookup@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [judge@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # $sBarred
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Withheld." }]
+          usage: { inputTokens: 30, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sControl
+        - parts: [{ type: tool_call, callId: c1, tool: note_lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Got the note." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b: { responses: [] }
+    scripted-judge:
+      responses:
+        # $sControl
+        - parts: [{ type: structured, value: { result: continue } }]
+          usage: { inputTokens: 25, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "SYN-PHI-RECORD-0053" } }
+      note_lookup:
+        - ok: { output: { value: "SYN-NOTE-0053" } }
+script:
+  - action: run
+    bind: $sBarred
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sControl
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up the note k1" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sBarred:
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: lookup } }
+          - { type: error, payload: { error: { code: agentry.hook.content_barred, category: policy, retryable: false, source: hook } } }
+          - { type: hook.decision, payload: { hook: judge@1, point: afterToolCall, result: block, reasonCode: agentry.hook.content_barred } }
+          - { type: tool.result, payload: { callId: c1, result: { error: { category: policy } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.result, payload: { result: { ok: { $any: true } } } }
+    $sControl:
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: c1, result: { ok: { output: { value: "SYN-NOTE-0053" } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: error }
+        - { type: hook.decision }
+  providerRequests:
+    scripted-judge:
+      - { provider: scripted-judge, model: judge-1, tools: [] }
+    scripted-a:
+      - {}
+      - messages:
+          $all:
+            - $contains:
+                - role: tool
+                  parts: [{ type: tool_result, callId: c1, result: { error: { category: policy } } }]
+            - $count: { of: { parts: { $contains: [{ type: tool_result, result: { ok: { $any: true } } }] } }, equals: 0 }
+      - {}
+      - messages:
+          $contains:
+            - role: tool
+              parts: [{ type: tool_result, callId: c1, result: { ok: { output: { value: "SYN-NOTE-0053" } } } }]
+    scripted-b: { count: 0 }
+  noTransmittedContent:
+    - "SYN-PHI-RECORD-0053"

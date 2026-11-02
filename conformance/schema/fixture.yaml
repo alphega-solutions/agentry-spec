@@ -836,7 +836,8 @@ $defs:
         description: >-
           Requests captured by scripted providers, keyed by provider ID,
           matched in order (partial match). Each record is `{ provider,
-          model, messages, tools, outputSchema }`: `messages` is the
+          model, messages, tools, outputSchema, params }` (`params` the
+          generation parameters sent, PROV-002): `messages` is the
           assembled context as content messages, in which a step's tool
           results are ONE message with role `tool` holding every
           `tool_result` part of that step, in request order (TOOL-032);

@@ -1,0 +1,176 @@
+schemaVersion: "0.1.0"
+id: providers.route-model-request-recorded
+title: Every `model.request` records the provider, the model, primary or fallback, and the reason for a fallback
+description: >-
+  Persona assistant (baseline): primary scripted-a/model-a, fallback
+  scripted-b/model-b. scripted-a declares `vision: false`. The bundle adds
+  example.test:b-only (allowed only on scripted-b), declared by `lookup`.
+
+  - $sPrimary: the primary answers: `{provider: scripted-a, model:
+    model-a, role: primary}` with no `fallbackReason`.
+  - $sRouting: step 1 on the primary; its lookup result is b-only, so step
+    2 goes to scripted-b/model-b with `role: fallback, fallbackReason:
+    routing`.
+  - $sCapability: an image attachment that only scripted-b supports;
+    the first call goes to scripted-b/model-b with `fallbackReason:
+    capability`.
+  - $sFailover: scripted-a fails with a non-retryable `unavailable` at the
+    turn's first call; the `error` event is followed by a `model.request`
+    for scripted-b/model-b with `fallbackReason: failover`.
+
+  Every `model.request` in the fixture is listed, in order, per session.
+requirements: [PROV-090]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+          "example.test:b-only":
+            allowedProviders: [scripted-b]
+            redaction: [{ mode: mask }]
+      - kind: Tool
+        id: lookup
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Look up a record by key.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        sensitivity: ["example.test:b-only"]
+        binding: { kind: native, handler: test.lookup }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { vision: false }
+      responses:
+        # $sPrimary
+        - parts: [{ type: text, text: "Primary answer." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sRouting, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sFailover
+        - error: { category: unavailable, code: agentry.provider.auth, retryable: false }
+    scripted-b:
+      responses:
+        # $sRouting, step 2
+        - parts: [{ type: text, text: "Routed answer." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sCapability
+        - parts: [{ type: text, text: "Capability answer." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sFailover
+        - parts: [{ type: text, text: "Failover answer." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "SYN-BONLY-0090" } }
+  ports:
+    blobStore:
+      t1:
+        - id: blob-img-90
+          hash: "sha256:ece3ced874892cbe55cd855363939133293dddd2cafdf29e392a734415a73233"
+          mediaType: image/png
+          size: 19
+          data: "U1lOLUlNQUdFLVBST1YtMDA5MA=="
+script:
+  - action: run
+    bind: $sPrimary
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hello" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sRouting
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sCapability
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input:
+      - { type: text, text: "Describe this" }
+      - { type: image, mediaType: image/png, source: upload, blob: { id: blob-img-90, hash: "sha256:ece3ced874892cbe55cd855363939133293dddd2cafdf29e392a734415a73233", mediaType: image/png, size: 19 } }
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sFailover
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hello again" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sPrimary:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-a, model: model-a, role: primary, fallbackReason: { $absent: true } } }
+          - { type: run.ended, payload: { reason: responded } }
+    $sRouting:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-a, model: model-a, role: primary, fallbackReason: { $absent: true } } }
+          - { type: model.request, turn: 1, step: 2, payload: { provider: scripted-b, model: model-b, role: fallback, fallbackReason: routing } }
+          - { type: run.ended, payload: { reason: responded } }
+    $sCapability:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-b, model: model-b, role: fallback, fallbackReason: capability } }
+          - { type: run.ended, payload: { reason: responded } }
+    $sFailover:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-a, model: model-a, role: primary, fallbackReason: { $absent: true } } }
+          - { type: error, payload: { error: { category: unavailable, code: agentry.provider.auth }, provider: scripted-a, model: model-a } }
+          - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-b, model: model-b, role: fallback, fallbackReason: failover } }
+          - { type: run.ended, payload: { reason: responded } }
+  ports:
+    eventLog:
+      t1:
+        $sPrimary:
+          $count: { of: { type: model.request }, equals: 1 }
+        $sRouting:
+          $count: { of: { type: model.request }, equals: 2 }
+        $sCapability:
+          $count: { of: { type: model.request }, equals: 1 }
+        $sFailover:
+          $count: { of: { type: model.request }, equals: 2 }
+  providerRequests:
+    scripted-a: { count: 3 }
+    scripted-b: { count: 3 }
+  delivered:
+    $sPrimary: { text: "Primary answer." }
+    $sRouting: { text: "Routed answer." }
+    $sCapability: { text: "Capability answer." }
+    $sFailover: { text: "Failover answer." }

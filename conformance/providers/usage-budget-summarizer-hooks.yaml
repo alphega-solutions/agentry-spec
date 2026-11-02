@@ -1,0 +1,192 @@
+schemaVersion: "0.1.0"
+id: providers.usage-budget-summarizer-hooks
+title: The token budget counts summarizer calls and excludes model hook calls
+description: >-
+  The profile has a per-turn token budget of 100 and summarizes with
+  scripted-sum/sum-1. The persona requires `judge`, a model hook at
+  beforeModelCall on scripted-judge that answers `continue` and uses
+  60 + 10 = 70 tokens per call. Both session models declare contextLimit
+  120 and maxOutputTokens 20: available space 100, compaction above 90.
+  PROV-071: the budget counts `inputTokens + outputTokens` of every model
+  call in the turn, including summarization (CTX-084) and excluding model
+  hooks (HOOK-103), and is reached when the total is equal to or greater
+  than it.
+
+
+  - $sSum: system content is 8 tokens. Turn 1 has a 20-word principal
+    text and a 20-word answer (48 tokens; judge called once). Turn 2's
+    principal text is 45 words (93 > 90), so turn 1 is summarized (4
+    words → 57) by a summarizer call using 33 + 5 = 38. The judge is
+    called, then step 1 asks for a lookup using 57 + 5 = 62. The turn is
+    at exactly 100 (38 + 62): the budget is reached and the run ends
+    `budget_exhausted` with no step-2 call. Without the summarizer's 38 the
+    turn would be at 62 and would continue.
+  - $sHook: one turn of three steps (lookup, lookup, answer) using 25, 35
+    and 35 session tokens (95 in all), with the judge called before each
+    (210 tokens, not counted). The run responds after step 3. Counting the
+    judge's tokens would reach the budget before step 3 is called.
+requirements: [PROV-071]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          - { id: scripted-sum, adapter: scripted, endpoint: "memory://scripted-sum", region: test-region, retainsData: false }
+          - { id: scripted-judge, adapter: scripted, endpoint: "memory://scripted-judge", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: Hook
+        id: judge
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeModelCall]
+        results: [block]
+        timeoutMs: 1000
+        source:
+          kind: model
+          model: { provider: scripted-judge, name: judge-1 }
+          instructions: "Classify the request. Answer with a HookResult."
+          maxTokens: 200
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+        context: { compaction: { mode: summarize, model: { provider: scripted-sum, name: sum-1 } } }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [judge@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { contextLimit: 120, maxOutputTokens: 20 }
+      responses:
+        # $sSum, turn 1 (48)
+        - parts: [{ type: text, text: "SYN-AR-01 SYN-AR-02 SYN-AR-03 SYN-AR-04 SYN-AR-05 SYN-AR-06 SYN-AR-07 SYN-AR-08 SYN-AR-09 SYN-AR-10 SYN-AR-11 SYN-AR-12 SYN-AR-13 SYN-AR-14 SYN-AR-15 SYN-AR-16 SYN-AR-17 SYN-AR-18 SYN-AR-19 SYN-AR-20" }]
+          usage: { inputTokens: 28, outputTokens: 20, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sSum, turn 2, step 1 (62; with the summarizer's 38 → 100)
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 57, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sHook, steps 1–3 (25, 35, 35 → 95)
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k2 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: lookup, arguments: { key: k3 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "SYN-HOOK reply." }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      capabilities: { contextLimit: 120, maxOutputTokens: 20 }
+      responses: []
+    scripted-sum:
+      responses:
+        # $sSum, turn 2 (38)
+        - parts: [{ type: text, text: "SYN-SUMMARY-0001 SYN-SUMMARY-0002 SYN-SUMMARY-0003 SYN-SUMMARY-0004" }]
+          usage: { inputTokens: 33, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-judge:
+      responses:
+        # $sSum: turn 1, turn 2
+        - parts: [{ type: structured, value: { result: continue } }]
+          usage: { inputTokens: 60, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: structured, value: { result: continue } }]
+          usage: { inputTokens: 60, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sHook: steps 1–3
+        - parts: [{ type: structured, value: { result: continue } }]
+          usage: { inputTokens: 60, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: structured, value: { result: continue } }]
+          usage: { inputTokens: 60, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: structured, value: { result: continue } }]
+          usage: { inputTokens: 60, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $sSum
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYN-AP-01 SYN-AP-02 SYN-AP-03 SYN-AP-04 SYN-AP-05 SYN-AP-06 SYN-AP-07 SYN-AP-08 SYN-AP-09 SYN-AP-10 SYN-AP-11 SYN-AP-12 SYN-AP-13 SYN-AP-14 SYN-AP-15 SYN-AP-16 SYN-AP-17 SYN-AP-18 SYN-AP-19 SYN-AP-20" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $sSum
+    principal: p1
+    input: [{ type: text, text: "SYN-AQ-01 SYN-AQ-02 SYN-AQ-03 SYN-AQ-04 SYN-AQ-05 SYN-AQ-06 SYN-AQ-07 SYN-AQ-08 SYN-AQ-09 SYN-AQ-10 SYN-AQ-11 SYN-AQ-12 SYN-AQ-13 SYN-AQ-14 SYN-AQ-15 SYN-AQ-16 SYN-AQ-17 SYN-AQ-18 SYN-AQ-19 SYN-AQ-20 SYN-AQ-21 SYN-AQ-22 SYN-AQ-23 SYN-AQ-24 SYN-AQ-25 SYN-AQ-26 SYN-AQ-27 SYN-AQ-28 SYN-AQ-29 SYN-AQ-30 SYN-AQ-31 SYN-AQ-32 SYN-AQ-33 SYN-AQ-34 SYN-AQ-35 SYN-AQ-36 SYN-AQ-37 SYN-AQ-38 SYN-AQ-39 SYN-AQ-40 SYN-AQ-41 SYN-AQ-42 SYN-AQ-43 SYN-AQ-44 SYN-AQ-45" }]
+    expect: { ok: true, endReason: budget_exhausted }
+  - action: run
+    bind: $sHook
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k2" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sSum:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: run.ended, payload: { reason: responded } }
+          - { type: context.compacted, turn: 2, step: 1, payload: { mode: summarize, usage: { inputTokens: 33, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 } } }
+          - { type: model.request, turn: 2, step: 1 }
+          - { type: model.response, turn: 2, step: 1 }
+          - { type: run.ended, payload: { reason: budget_exhausted } }
+      absentEvents:
+        - { type: model.request, turn: 2, step: 2 }
+    $sHook:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, step: 1 }
+          - { type: model.request, step: 2 }
+          - { type: model.request, step: 3 }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: run.ended, payload: { reason: budget_exhausted } }
+  providerRequests:
+    scripted-a: { count: 5 }
+    scripted-b: { count: 0 }
+    scripted-sum: { count: 1 }
+    scripted-judge: { count: 5 }

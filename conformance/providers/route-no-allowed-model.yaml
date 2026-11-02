@@ -1,0 +1,196 @@
+schemaVersion: "0.1.0"
+id: providers.route-no-allowed-model
+title: With no allowed model the call is not made, the block is recorded and audited, and labelled content never reaches a disallowed provider, failover included
+description: >-
+  The bundle adds a pci policy that allows no provider; phi allows only
+  scripted-a. `lookup` declares sensitivity pci. The rule hook phi-tagger
+  (beforeModelCall) labels the content phi when it holds SYN-PHI-0053.
+  Persona assistant: primary scripted-a, fallback scripted-b.
+
+  - $sBlock: step 1 asks for lookup; its result (SYN-PCI-VALUE-0052) is
+    labelled pci, so no model is allowed for step 2: no `model.request` for
+    step 2, a routing `policy.decision` with outcome block (audited), and
+    the run ends `blocked` with the fallback message (PROV-052, CORE-181).
+    The pci value is never in any provider request (PROV-053).
+  - $sFailover: the content is labelled phi; scripted-a is allowed and is
+    called, and fails with a non-retryable `unavailable`
+    (agentry.provider.auth) at the turn's first call. The next fallback,
+    scripted-b, is not allowed for phi, so there is no failover and the
+    phi content never reaches scripted-b (PROV-053, "including failover").
+    With no failover the error is handled by its category: `unavailable`
+    with no retry left is treated as `fatal` (CORE-191), so the run ends
+    `failed`.
+  - $sControl: the same failure with no phi label fails over to scripted-b
+    (role fallback, fallbackReason failover), which answers.
+
+  scripted-b receives exactly one request, $sControl's, and it does not
+  hold the phi marker.
+
+
+  Reading chosen ($sFailover): an outage whose only remaining fallbacks are
+  not allowed is not a routing block (PROV-052 applies when no model is
+  allowed for the call; scripted-a was allowed and was called), so the run
+  ends `failed`, not `blocked`; no assertion is made about a
+  `policy.decision` for the skipped fallback.
+requirements: [PROV-052, PROV-053]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+          pci:
+            allowedProviders: []
+            redaction: [{ mode: mask }]
+      - kind: Tool
+        id: lookup
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Look up a record by key.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        sensitivity: [pci]
+        binding: { kind: native, handler: test.lookup }
+      - kind: Hook
+        id: phi-tagger
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeModelCall]
+        results: [annotate]
+        timeoutMs: 1000
+        source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-PHI-0053'))", then: { result: annotate, labels: [phi] } }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [phi-tagger@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # $sBlock, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sFailover
+        - error: { category: unavailable, code: agentry.provider.auth, retryable: false }
+        # $sControl
+        - error: { category: unavailable, code: agentry.provider.auth, retryable: false }
+    scripted-b:
+      responses:
+        # $sControl
+        - parts: [{ type: text, text: "Answered on b." }]
+          usage: { inputTokens: 20, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "SYN-PCI-VALUE-0052" } }
+script:
+  - action: run
+    bind: $sBlock
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1" }]
+    expect: { ok: true, endReason: blocked }
+  - action: run
+    bind: $sFailover
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Note SYN-PHI-0053" }]
+    expect: { ok: true, endReason: failed }
+  - action: run
+    bind: $sControl
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Plain note" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sBlock:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-a } }
+          - { type: tool.result, labels: { $contains: [pci] }, payload: { callId: c1 } }
+          - { type: policy.decision, eventId: $eBlock, payload: { kind: routing, outcome: block } }
+          - { type: run.ended, payload: { reason: blocked } }
+      absentEvents:
+        - { type: model.request, step: 2 }
+        - { type: policy.decision, payload: { outcome: switch } }
+    $sFailover:
+      state: closed
+      closeReason: failed
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: phi-tagger@1, result: annotate, labelsAdded: [phi] } }
+          - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-a, role: primary } }
+          - { type: error, payload: { error: { category: unavailable, code: agentry.provider.auth } } }
+          - { type: run.ended, payload: { reason: failed } }
+      absentEvents:
+        - { type: model.request, payload: { provider: scripted-b } }
+    $sControl:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-a, role: primary } }
+          - { type: error, payload: { error: { category: unavailable, code: agentry.provider.auth } } }
+          - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-b, model: model-b, role: fallback, fallbackReason: failover } }
+          - { type: run.ended, payload: { reason: responded } }
+  ports:
+    auditLog:
+      t1:
+        $contains:
+          - tenant: t1
+            sessionId: $sBlock
+            type: policy_decision
+            eventIds: { $contains: [$eBlock] }
+  providerRequests:
+    scripted-a: { count: 3 }
+    scripted-b:
+      - messages:
+          $all:
+            - $contains:
+                - role: principal
+                  parts: [{ type: text, text: "Plain note" }]
+            - $count: { of: { parts: { $contains: [{ type: text, text: "Note SYN-PHI-0053" }] } }, equals: 0 }
+  noTransmittedContent:
+    - "SYN-PCI-VALUE-0052"
+  delivered:
+    $sBlock: { text: "This request was blocked.", fallback: true }
+    $sControl: { text: "Answered on b.", fallback: false }

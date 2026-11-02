@@ -1,0 +1,138 @@
+schemaVersion: "0.1.0"
+id: providers.route-switch-audited
+title: Routing sees a label added by a `beforeModelCall` hook and switches to the first allowed fallback, recorded as an audited routing decision naming the model
+description: >-
+  In the baseline bundle the phi policy allows only scripted-a. The rule
+  hook phi-tagger (beforeModelCall, required by the persona) annotates
+  every part it sees with phi when the content holds SYN-PHI-0051. Persona
+  assistant has primary scripted-b/model-b and fallbacks
+  scripted-b/model-b2 then scripted-a/model-a.
+
+  - $sPhi: the hook adds phi before routing runs (PROV-050), so the primary
+    is not allowed; model-b2 is skipped (same provider, also not allowed)
+    and the first allowed fallback, scripted-a/model-a, is used (PROV-051).
+    The `policy.decision` (kind routing, outcome switch, details
+    `{provider: scripted-a, model: model-a}`) follows the hook decision and
+    precedes the `model.request` (role fallback, fallbackReason routing),
+    and is in the audit log linked to its event. scripted-b never receives
+    the content.
+  - $sPlain (control): no marker, no label: the primary scripted-b/model-b
+    is used, with no routing decision and no routing audit record.
+requirements: [PROV-050, PROV-051]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Hook
+        id: phi-tagger
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeModelCall]
+        results: [annotate]
+        timeoutMs: 1000
+        source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-PHI-0051'))", then: { result: annotate, labels: [phi] } }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [phi-tagger@1]
+        model:
+          provider: scripted-b
+          name: model-b
+          fallbacks:
+            - { provider: scripted-b, name: model-b2 }
+            - { provider: scripted-a, name: model-a }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # $sPhi
+        - parts: [{ type: text, text: "Handled on a." }]
+          usage: { inputTokens: 20, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      responses:
+        # $sPlain
+        - parts: [{ type: text, text: "Handled on b." }]
+          usage: { inputTokens: 20, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $sPhi
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Note SYN-PHI-0051" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sPlain
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Plain note" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sPhi:
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: phi-tagger@1, point: beforeModelCall, result: annotate, labelsAdded: [phi] } }
+          - type: policy.decision
+            eventId: $eSwitch
+            payload: { kind: routing, outcome: switch, details: { provider: scripted-a, model: model-a } }
+          - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-a, model: model-a, role: fallback, fallbackReason: routing } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: model.request, payload: { provider: scripted-b } }
+        - { type: policy.decision, payload: { outcome: block } }
+    $sPlain:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-b, model: model-b, role: primary } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: hook.decision }
+        - { type: policy.decision }
+  ports:
+    eventLog:
+      t1:
+        $sPhi:
+          $count: { of: { type: policy.decision }, equals: 1 }
+    auditLog:
+      t1:
+        $all:
+          - $contains:
+              - tenant: t1
+                sessionId: $sPhi
+                principalRef: { subject: user-1, tenant: t1 }
+                type: policy_decision
+                eventIds: { $contains: [$eSwitch] }
+          - $count: { of: { sessionId: $sPlain, type: policy_decision }, equals: 0 }
+  providerRequests:
+    scripted-a:
+      - model: model-a
+        messages:
+          $contains:
+            - role: principal
+              parts: [{ type: text, text: "Note SYN-PHI-0051", labels: { $contains: [phi] } }]
+    scripted-b:
+      - model: model-b
+        messages:
+          $contains:
+            - role: principal
+              parts: [{ type: text, text: "Plain note" }]
+  delivered:
+    $sPhi: { text: "Handled on a.", fallback: false }
+    $sPlain: { text: "Handled on b.", fallback: false }

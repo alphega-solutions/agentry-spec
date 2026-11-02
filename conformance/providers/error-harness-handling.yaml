@@ -1,0 +1,161 @@
+schemaVersion: "0.1.0"
+id: providers.error-harness-handling
+title: The harness handles each mapped provider error by its category; a refusal written as text is a normal response
+description: >-
+  Persona `assistant@1` (scripted-a/model-a, fallback scripted-b/model-b),
+  profile `default@1` (`retry.unavailable` 2). Errors are scripted already
+  mapped per PROV-080; their mapping is checked by the adapter cases. Each
+  session shows how the harness handles one of them:
+
+
+  - $sOverflow: the turn's first call fails with a context-length error
+    (`limit`, agentry.context.overflow, source provider). It is not
+    retried and not failed over, though failover to scripted-b would be
+    allowed at this point for an `unavailable` error: the run ends
+    `context_limit` and the session is idle (PROV-082, CTX-090).
+  - $sBadRequest: the turn's first call is rejected as malformed (`fatal`,
+    agentry.provider.bad_request). Not retried, not failed over: the run
+    ends `failed` and the session closes `failed` (CORE-191).
+  - $sUnavailable: step 1 asks for a lookup; step 2's call fails with a
+    retryable `unavailable` three times (the call and its two retries).
+    The only fallback is on another provider, which is not allowed
+    mid-turn (PROV-062): the error is treated as `fatal`, the run ends
+    `failed` and the session closes.
+  - $sTextRefusal: the model answers with an ordinary text refusal. This
+    is a normal response (PROV-081): the run ends `responded`, the
+    principal receives the model's text, not the fallback message, and no
+    error is recorded.
+
+
+  A safety refusal returned as an error (`policy`, agentry.provider.refused,
+  source provider) ending the run `blocked` with the fallback message, with
+  no retry or failover, is core.block-provider-refusal.
+requirements: [PROV-081, PROV-082]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # $sOverflow
+        - error: { category: limit, code: agentry.context.overflow, retryable: false }
+        # $sBadRequest
+        - error: { category: fatal, code: agentry.provider.bad_request, retryable: false }
+        # $sUnavailable, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sUnavailable, step 2: the call and two retries
+        - error: { category: unavailable, code: agentry.provider.unavailable, retryable: true }
+        - error: { category: unavailable, code: agentry.provider.unavailable, retryable: true }
+        - error: { category: unavailable, code: agentry.provider.unavailable, retryable: true }
+        # $sTextRefusal
+        - parts: [{ type: text, text: "SYN-REFUSAL I cannot help with that request." }]
+          usage: { inputTokens: 20, outputTokens: 8, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b: { responses: [] }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "SYN-VALUE-1" } }
+script:
+  - action: run
+    bind: $sOverflow
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: context_limit }
+  - action: run
+    bind: $sBadRequest
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: failed }
+  - action: run
+    bind: $sUnavailable
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1" }]
+    expect: { ok: true, endReason: failed }
+  - action: run
+    bind: $sTextRefusal
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sOverflow:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, step: 1, payload: { provider: scripted-a, model: model-a } }
+          - { type: error, payload: { error: { category: limit, code: agentry.context.overflow, source: provider } } }
+          - { type: run.ended, payload: { reason: context_limit } }
+      absentEvents:
+        - { type: model.request, payload: { role: fallback } }
+        - { type: model.response }
+        - { type: session.closed }
+    $sBadRequest:
+      state: closed
+      closeReason: failed
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, step: 1, payload: { provider: scripted-a, model: model-a } }
+          - { type: error, payload: { error: { category: fatal, code: agentry.provider.bad_request, source: provider } } }
+          - { type: run.ended, payload: { reason: failed } }
+          - { type: session.closed, payload: { reason: failed } }
+      absentEvents:
+        - { type: model.request, payload: { role: fallback } }
+        - { type: model.response }
+    $sUnavailable:
+      state: closed
+      closeReason: failed
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, step: 2, payload: { provider: scripted-a, model: model-a } }
+          - { type: model.request, step: 2, payload: { provider: scripted-a, model: model-a } }
+          - { type: model.request, step: 2, payload: { provider: scripted-a, model: model-a } }
+          - { type: run.ended, payload: { reason: failed } }
+          - { type: session.closed, payload: { reason: failed } }
+      absentEvents:
+        - { type: model.request, payload: { role: fallback } }
+        - { type: model.response, step: 2 }
+    $sTextRefusal:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: model.response
+            step: 1
+            payload: { message: { parts: [{ type: text, text: "SYN-REFUSAL I cannot help with that request." }] } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: error }
+        - { type: run.ended, payload: { reason: blocked } }
+  providerRequests:
+    scripted-a:
+      # $sOverflow, $sBadRequest: one call each
+      - { model: model-a }
+      - { model: model-a }
+      # $sUnavailable: step 1, then step 2 and two retries
+      - { model: model-a }
+      - { model: model-a }
+      - { model: model-a }
+      - { model: model-a }
+      # $sTextRefusal
+      - { model: model-a }
+    scripted-b: { count: 0 }
+  delivered:
+    $sTextRefusal: { text: "SYN-REFUSAL I cannot help with that request.", fallback: false }
