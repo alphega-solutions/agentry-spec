@@ -22,10 +22,14 @@ description: >-
   on scripted-b, so the call switches to scripted-a, where the retrieved
   part carries [phi] and the principal's part none.
 
-  Reading chosen: the hook's `content` is the parts of the assembled
-  messages in order, system content included ("the assembled request",
-  Area 5 §3; CTX-011 "as it will be sent"); the annotate index relies on
-  it.
+  The hook's `content` is the parts of the assembled messages in order,
+  system parts included and reasoning parts excluded (Area 7 amendment,
+  readings settled with the fixtures and in review); the annotate index
+  relies on it. The `hook.decision` records the labels per part
+  (`annotations`). The scripted-a request is asserted exactly: one
+  `system` message with one text part per instruction source, then the
+  turn-2 principal message. Persistence of such a label in later
+  requests is shown in context.assembly-annotation-persists.
 requirements: [CTX-011]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -141,8 +145,8 @@ expect:
         items:
           - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-b, role: primary } }
           - { type: turn.started, turn: 2 }
-          - { type: context.compacted, payload: { mode: truncate, units: [{ turn: 1 }] } }
-          - { type: hook.decision, payload: { hook: inspector@1, point: beforeModelCall, result: annotate, labelsAdded: [phi] } }
+          - { type: context.compacted, turn: 2, step: 1, payload: { mode: truncate, units: [{ turn: 1 }] } }
+          - { type: hook.decision, payload: { hook: inspector@1, point: beforeModelCall, result: annotate, labelsAdded: [phi], annotations: [{ part: 3, labels: [phi] }] } }
           - { type: policy.decision, payload: { kind: routing, outcome: switch } }
           - { type: model.request, turn: 2, step: 1, payload: { provider: scripted-a, role: fallback, fallbackReason: routing } }
       absentEvents:
@@ -166,10 +170,11 @@ expect:
               parts: [{ type: text, text: { $regex: "^SYNTHETIC-FILLER-0000 " }, provenance: principal }]
     scripted-a:
       - messages:
-          $all:
-            - $count: { of: { parts: { $contains: [{ type: text, text: { $regex: "SYNTHETIC-FILLER" } }] } }, equals: 0 }
-            - $contains:
-                - role: principal
-                  parts:
-                    - { type: text, text: "Check the widget schedule", provenance: principal, labels: [] }
-                    - { type: text, text: "SYN-KB-0005 widget schedule is weekly", provenance: "retrieval:kb", labels: [phi] }
+          - role: system
+            parts:
+              - { type: text, text: "Follow organisational policy.", provenance: system, labels: [] }
+              - { type: text, text: "You are a test assistant.", provenance: system, labels: [] }
+          - role: principal
+            parts:
+              - { type: text, text: "Check the widget schedule", provenance: principal, labels: [] }
+              - { type: text, text: "SYN-KB-0005 widget schedule is weekly", provenance: "retrieval:kb", labels: [phi] }

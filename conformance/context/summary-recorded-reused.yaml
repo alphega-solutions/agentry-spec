@@ -23,7 +23,9 @@ description: >-
     text, rebuilt from the recorded event and blob (CTX-083), and the
     summarizer is not called again.
 
-  Reading chosen: system content is matched by role only.
+  Every candidate sets maxOutputTokens 20, so the default reserve is 20.
+  Turn-2 and turn-3 requests are asserted exactly, starting with the one
+  `system` message (one text part per instruction source).
 requirements: [CTX-082, CTX-083]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -115,6 +117,8 @@ expect:
         items:
           - { type: model.response, turn: 1, step: 1 }
           - type: context.compacted
+            turn: 2
+            step: 1
             payload:
               mode: summarize
               units: [{ turn: 1 }]
@@ -137,23 +141,25 @@ expect:
     scripted-a:
       - {}
       - messages:
-          $all:
-            - $count: { of: { role: { $not: system } }, equals: 2 }
-            - $contains:
-                - role: assistant
-                  parts: [{ type: text, text: "SYN-SUMMARY-0001 SYN-SUMMARY-0002 SYN-SUMMARY-0003 SYN-SUMMARY-0004 SYN-SUMMARY-0005", provenance: model, labels: [] }]
-                - role: principal
-                  parts: [{ type: text, text: "SYN-BP-01 SYN-BP-02 SYN-BP-03 SYN-BP-04 SYN-BP-05 SYN-BP-06 SYN-BP-07 SYN-BP-08 SYN-BP-09 SYN-BP-10 SYN-BP-11 SYN-BP-12 SYN-BP-13 SYN-BP-14 SYN-BP-15 SYN-BP-16 SYN-BP-17 SYN-BP-18 SYN-BP-19 SYN-BP-20 SYN-BP-21 SYN-BP-22 SYN-BP-23 SYN-BP-24 SYN-BP-25 SYN-BP-26 SYN-BP-27 SYN-BP-28 SYN-BP-29 SYN-BP-30 SYN-BP-31 SYN-BP-32 SYN-BP-33 SYN-BP-34 SYN-BP-35 SYN-BP-36 SYN-BP-37 SYN-BP-38 SYN-BP-39 SYN-BP-40 SYN-BP-41 SYN-BP-42 SYN-BP-43 SYN-BP-44 SYN-BP-45", provenance: principal, labels: [] }]
+          - role: system
+            parts:
+              - { type: text, text: "Follow organisational policy.", provenance: system }
+              - { type: text, text: "You are a test assistant.", provenance: system }
+          - role: assistant
+            parts: [{ type: text, text: "SYN-SUMMARY-0001 SYN-SUMMARY-0002 SYN-SUMMARY-0003 SYN-SUMMARY-0004 SYN-SUMMARY-0005", provenance: model, labels: [] }]
+          - role: principal
+            parts: [{ type: text, text: "SYN-BP-01 SYN-BP-02 SYN-BP-03 SYN-BP-04 SYN-BP-05 SYN-BP-06 SYN-BP-07 SYN-BP-08 SYN-BP-09 SYN-BP-10 SYN-BP-11 SYN-BP-12 SYN-BP-13 SYN-BP-14 SYN-BP-15 SYN-BP-16 SYN-BP-17 SYN-BP-18 SYN-BP-19 SYN-BP-20 SYN-BP-21 SYN-BP-22 SYN-BP-23 SYN-BP-24 SYN-BP-25 SYN-BP-26 SYN-BP-27 SYN-BP-28 SYN-BP-29 SYN-BP-30 SYN-BP-31 SYN-BP-32 SYN-BP-33 SYN-BP-34 SYN-BP-35 SYN-BP-36 SYN-BP-37 SYN-BP-38 SYN-BP-39 SYN-BP-40 SYN-BP-41 SYN-BP-42 SYN-BP-43 SYN-BP-44 SYN-BP-45", provenance: principal, labels: [] }]
       - messages:
-          $all:
-            - $count: { of: { role: { $not: system } }, equals: 4 }
-            - $contains:
-                - role: assistant
-                  parts: [{ type: text, text: "SYN-SUMMARY-0001 SYN-SUMMARY-0002 SYN-SUMMARY-0003 SYN-SUMMARY-0004 SYN-SUMMARY-0005", provenance: model, labels: [] }]
-                - role: principal
-                  parts: [{ type: text, text: "SYN-BP-01 SYN-BP-02 SYN-BP-03 SYN-BP-04 SYN-BP-05 SYN-BP-06 SYN-BP-07 SYN-BP-08 SYN-BP-09 SYN-BP-10 SYN-BP-11 SYN-BP-12 SYN-BP-13 SYN-BP-14 SYN-BP-15 SYN-BP-16 SYN-BP-17 SYN-BP-18 SYN-BP-19 SYN-BP-20 SYN-BP-21 SYN-BP-22 SYN-BP-23 SYN-BP-24 SYN-BP-25 SYN-BP-26 SYN-BP-27 SYN-BP-28 SYN-BP-29 SYN-BP-30 SYN-BP-31 SYN-BP-32 SYN-BP-33 SYN-BP-34 SYN-BP-35 SYN-BP-36 SYN-BP-37 SYN-BP-38 SYN-BP-39 SYN-BP-40 SYN-BP-41 SYN-BP-42 SYN-BP-43 SYN-BP-44 SYN-BP-45", provenance: principal, labels: [] }]
-                - role: assistant
-                  parts: [{ type: text, text: "SYN-BR-01 SYN-BR-02 SYN-BR-03 SYN-BR-04 SYN-BR-05", provenance: model }]
-                - role: principal
-                  parts: [{ type: text, text: "SYN-CP-01 SYN-CP-02 SYN-CP-03 SYN-CP-04 SYN-CP-05 SYN-CP-06 SYN-CP-07 SYN-CP-08 SYN-CP-09 SYN-CP-10", provenance: principal, labels: [] }]
+          - role: system
+            parts:
+              - { type: text, text: "Follow organisational policy.", provenance: system }
+              - { type: text, text: "You are a test assistant.", provenance: system }
+          - role: assistant
+            parts: [{ type: text, text: "SYN-SUMMARY-0001 SYN-SUMMARY-0002 SYN-SUMMARY-0003 SYN-SUMMARY-0004 SYN-SUMMARY-0005", provenance: model, labels: [] }]
+          - role: principal
+            parts: [{ type: text, text: "SYN-BP-01 SYN-BP-02 SYN-BP-03 SYN-BP-04 SYN-BP-05 SYN-BP-06 SYN-BP-07 SYN-BP-08 SYN-BP-09 SYN-BP-10 SYN-BP-11 SYN-BP-12 SYN-BP-13 SYN-BP-14 SYN-BP-15 SYN-BP-16 SYN-BP-17 SYN-BP-18 SYN-BP-19 SYN-BP-20 SYN-BP-21 SYN-BP-22 SYN-BP-23 SYN-BP-24 SYN-BP-25 SYN-BP-26 SYN-BP-27 SYN-BP-28 SYN-BP-29 SYN-BP-30 SYN-BP-31 SYN-BP-32 SYN-BP-33 SYN-BP-34 SYN-BP-35 SYN-BP-36 SYN-BP-37 SYN-BP-38 SYN-BP-39 SYN-BP-40 SYN-BP-41 SYN-BP-42 SYN-BP-43 SYN-BP-44 SYN-BP-45", provenance: principal, labels: [] }]
+          - role: assistant
+            parts: [{ type: text, text: "SYN-BR-01 SYN-BR-02 SYN-BR-03 SYN-BR-04 SYN-BR-05", provenance: model }]
+          - role: principal
+            parts: [{ type: text, text: "SYN-CP-01 SYN-CP-02 SYN-CP-03 SYN-CP-04 SYN-CP-05 SYN-CP-06 SYN-CP-07 SYN-CP-08 SYN-CP-09 SYN-CP-10", provenance: principal, labels: [] }]
     scripted-b: { count: 0 }

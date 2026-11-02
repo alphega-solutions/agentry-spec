@@ -10,7 +10,9 @@ description: >-
   principal's text), the effective limit, and one entry per result, in
   the port's order, holding a BlobStore reference (the result part stored
   in full, CTX-003) and its labels (empty here). The event carries
-  provenance `retrieval:kb`. Both blobs are in the tenant's BlobStore.
+  provenance `retrieval:kb` and the turn it served. Both blobs are in the
+  tenant's BlobStore as `application/json` (each result part's JSON;
+  Area 7 amendment, readings settled with the fixtures).
 
   Automatic retrieval is not a tool call (CTX-033): no `tool.call` or
   `tool.result` event is emitted; the model request's tools are exactly
@@ -91,6 +93,7 @@ expect:
         items:
           - { type: turn.started, turn: 1 }
           - type: context.retrieved
+            turn: 1
             provenances: ["retrieval:kb"]
             labels: []
             payload:
@@ -109,8 +112,8 @@ expect:
     blobStore:
       t1:
         $contains:
-          - { id: $b1 }
-          - { id: $b2 }
+          - { id: $b1, mediaType: application/json }
+          - { id: $b2, mediaType: application/json }
   providerRequests:
     scripted-a:
       - tools: { $all: [{ $len: 2 }, { $contains: [{ name: lookup }, { name: update_record }] }] }

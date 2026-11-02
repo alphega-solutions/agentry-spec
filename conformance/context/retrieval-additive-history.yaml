@@ -12,11 +12,11 @@ description: >-
   the principal's own part (CTX-043, CTX-010). Turn 1's request is
   asserted exactly too, as the baseline the second one only adds to.
 
-  Reading (not fixed by the spec): system content is one `system`
-  message whose parts are the bundle's `policyInstructions` then the
-  persona's `instructions` (CTX-010 item 1), each a text part with
-  provenance `system` and no labels. Token use is far below the scripted
-  default limits; no compaction.
+  System content is one `system` message with one text part per
+  instruction source, the bundle's `policyInstructions` then the persona's
+  `instructions`, each with provenance `system` and no labels (Area 7
+  amendment, readings settled with the fixtures). Token use is far below
+  the scripted default limits; no compaction.
 requirements: [CTX-043]
 contract: ">=0.1.0 <1.0.0"
 features: []

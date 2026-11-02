@@ -224,3 +224,4 @@ Schemas: the `context.retrieved` and `context.compacted` payloads in `schemas/co
 - CTX-084: if the turn budget runs out during summarization, no `context.compacted` is emitted, and the summarizer's usage is recorded as `unrecordedUsage` on `run.ended`.
 - CTX-085: summarizer errors are handled by CTX-085, notwithstanding CORE-191/192: an `unavailable` error is retried as `retry.unavailable` allows; the summarizer has no fallback models; any remaining failure falls back to `truncate`.
 - CTX-040, CTX-081: an empty automatic retrieval taints the session (its provenance is recorded in the session's taint provenances, HOOK-126) but adds no part, so it contributes no provenance to the units of its turn or to a summary of them.
+- CTX-090, CTX-001: a turn that overflowed before any model call keeps its principal message in history, since context derives from the session's events; later compaction may drop it like any earlier turn.

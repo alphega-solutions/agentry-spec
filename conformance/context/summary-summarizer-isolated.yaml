@@ -17,8 +17,8 @@ description: >-
 
   - The summarizer request has `tools: []` (the session's requests list
     lookup and update_record), carries turn 1, and carries neither the
-    current turn's principal text nor the persona's instructions: only the
-    content being summarized (its own instructions are
+    current turn's principal text, nor the persona's instructions, nor the
+    bundle's `policyInstructions`: only the content being summarized (its own instructions are
     implementation-defined and not asserted).
   - `observer` runs only around the two session model calls (four
     invocations), never around the summarizer call.
@@ -166,6 +166,8 @@ expect:
           - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-a } }
           - { type: model.response, turn: 1, step: 1, payload: { provider: scripted-a } }
           - type: context.compacted
+            turn: 2
+            step: 1
             payload:
               mode: summarize
               units: [{ turn: 1 }]
@@ -192,6 +194,7 @@ expect:
                   parts: [{ type: text, text: "SYN-AR-01 SYN-AR-02 SYN-AR-03 SYN-AR-04 SYN-AR-05 SYN-AR-06 SYN-AR-07 SYN-AR-08 SYN-AR-09 SYN-AR-10 SYN-AR-11 SYN-AR-12 SYN-AR-13 SYN-AR-14 SYN-AR-15 SYN-AR-16 SYN-AR-17 SYN-AR-18 SYN-AR-19 SYN-AR-20", provenance: model }]
             - $count: { of: { parts: { $contains: [{ text: "SYN-BP-01 SYN-BP-02 SYN-BP-03 SYN-BP-04 SYN-BP-05 SYN-BP-06 SYN-BP-07 SYN-BP-08 SYN-BP-09 SYN-BP-10 SYN-BP-11 SYN-BP-12 SYN-BP-13 SYN-BP-14 SYN-BP-15 SYN-BP-16 SYN-BP-17 SYN-BP-18 SYN-BP-19 SYN-BP-20 SYN-BP-21 SYN-BP-22 SYN-BP-23 SYN-BP-24 SYN-BP-25 SYN-BP-26 SYN-BP-27 SYN-BP-28 SYN-BP-29 SYN-BP-30 SYN-BP-31 SYN-BP-32 SYN-BP-33 SYN-BP-34 SYN-BP-35 SYN-BP-36 SYN-BP-37 SYN-BP-38 SYN-BP-39 SYN-BP-40 SYN-BP-41 SYN-BP-42 SYN-BP-43 SYN-BP-44 SYN-BP-45" }] } }, equals: 0 }
             - $count: { of: { parts: { $contains: [{ text: { $regex: "You are a test assistant\\." } }] } }, equals: 0 }
+            - $count: { of: { parts: { $contains: [{ text: { $regex: "Follow organisational policy\\." } }] } }, equals: 0 }
     scripted-a:
       - tools: { $contains: [{ name: lookup }, { name: update_record }] }
       - tools: { $contains: [{ name: lookup }, { name: update_record }] }

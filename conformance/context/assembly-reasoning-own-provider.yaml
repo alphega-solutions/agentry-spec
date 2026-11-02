@@ -14,10 +14,10 @@ description: >-
   part again.
 
 
-  Reading chosen: a reasoning part stays in the assistant message where it
-  was produced and is sent with later history whenever the request goes to
-  its own provider (CTX-013, CORE-142); PROV-055 forbids it only after a
-  provider switch within a turn. Failover to a different provider is
+  As settled (Area 7 amendment, readings settled with the fixtures), a
+  reasoning part stays in history, in the assistant message where it was
+  produced, and is sent only to the provider that produced it (CTX-013,
+  CORE-142, PROV-055). Failover to a different provider is
   allowed only before a turn's first model call (PROV-062), so the switch
   to scripted-b and the return to scripted-a happen at turn boundaries.
   Context limits are the defaults; nothing is compacted.

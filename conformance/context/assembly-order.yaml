@@ -21,10 +21,17 @@ description: >-
     162. Step 1 calls lookup; step 2 adds a tool_call and a tool_result
     (10 each): 63 ≤ 162, no further compaction.
 
-  The turn-3 requests are asserted exactly (arrays match exactly). Reading
-  chosen for the system content, which the spec orders but does not lay
-  out: one `system`-role message whose parts are each instruction text, in
-  order (bundle stack order, then persona), unchanged. The summary is one
+  The summarize compaction picks the smallest prefix of droppable units
+  whose removal fits without counting the summary (turn 1: 12 + 7 + 18 =
+  37 ≤ 162), calls the summarizer once, then fits with the summary
+  counted (43). Every candidate (scripted-a, scripted-b) sets
+  maxOutputTokens explicitly, so the default reserve is 20.
+
+  The turn-3 requests are asserted exactly (arrays match exactly). System
+  content is one `system`-role message with one text part per instruction
+  source: each bundle's `policyInstructions` in stack order, then the
+  persona's `instructions` (Area 7 amendment, readings settled with the
+  fixtures). The summary is one
   `assistant`-role message with one text part (Area 7 amendment
   2026-11-01) whose provenance is the least-trusted of turn 1's
   (principal, model → model). The retrieved part follows the principal's

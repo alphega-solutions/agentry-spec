@@ -1,0 +1,265 @@
+schemaVersion: "0.1.0"
+id: context.assembly-annotation-persists
+title: A label a `beforeModelCall` hook adds to a retrieved part persists in later requests; a `beforeModelCall` rewrite applies to that request only
+description: >-
+  Automatic retrieval from `kb` is on. The persona requires the native
+  beforeModelCall hook `labeler` (results annotate and rewrite). Turn 1's
+  retrieval returns one record stored without labels. Every request is
+  far below the default context limits, so nothing compacts.
+
+  - Turn 1, step 1: the hook sees the two system parts, the principal's
+    text and the retrieved part (index 3) and annotates the retrieved part
+    with `pii` (allowed on both providers, so no routing switch). The
+    `hook.decision` records `annotations: [{part: 3, labels: [pii]}]`. The
+    request carries the retrieved part with [pii]. The model calls lookup.
+  - Step 2: the hook rewrites, part by part (HOOK-021): it repeats every
+    part it saw except the principal's text, which it replaces. The step-2
+    request carries the rewritten text, and the retrieved part still with
+    [pii]. The model calls lookup again.
+  - Step 3: the hook answers `continue` and annotates nothing. Labels a
+    `beforeModelCall` hook adds persist on the parts they label for the
+    rest of the session (HOOK-022; Area 7 amendment, further readings
+    settled in review), so the hook sees, and the request carries, the
+    retrieved part with [pii]. A `beforeModelCall` rewrite applies to that
+    model request only, so the step-3 request carries the principal's
+    original text again.
+  - Turn 2: retrieval returns nothing; the hook answers `continue`. The
+    request still carries turn 1's principal message with its original
+    text and its retrieved part labelled [pii] in history.
+
+  Requests are asserted exactly: one `system` message with one text part
+  per instruction source, then the turn's messages in event order.
+requirements: [CTX-011, CTX-001]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+          vectorStore: { adapter: memory, region: test-region, sources: [kb] }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+        context:
+          retrieval: { auto: true, source: kb }
+      - kind: Hook
+        id: labeler
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeModelCall]
+        results: [annotate, rewrite]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.labeler }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [labeler@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 18, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: lookup, arguments: { key: k2 } }]
+          usage: { inputTokens: 38, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Widget k1 is blue." }]
+          usage: { inputTokens: 58, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "You are welcome." }]
+          usage: { inputTokens: 63, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      responses: []
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "SYN-VALUE-0001" } }
+        - ok: { output: { value: "SYN-VALUE-0002" } }
+    vectorStores:
+      kb:
+        - results: [{ id: kb-1, text: "SYN-KB-0001 widget k1 is blue", tenant: t1 }]
+        - results: []
+    nativeHooks:
+      labeler:
+        # turn 1, step 1
+        - result: annotate
+          labels: [{ part: 3, labels: [pii] }]
+        # turn 1, step 2
+        - result: rewrite
+          parts:
+            - { type: text, text: "Follow organisational policy." }
+            - { type: text, text: "You are a test assistant." }
+            - { type: text, text: "Look up widget SYN-REWRITTEN-0001" }
+            - { type: text, text: "SYN-KB-0001 widget k1 is blue" }
+            - { type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }
+            - { type: tool_result, callId: c1, tool: lookup, result: { ok: { output: { value: "SYN-VALUE-0001" } } } }
+        # turn 1, step 3
+        - result: continue
+        # turn 2, step 1
+        - result: continue
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up widget k1" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Thanks" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: context.retrieved, turn: 1, payload: { source: kb } }
+          - { type: hook.decision, payload: { hook: labeler@1, point: beforeModelCall, result: annotate, labelsAdded: [pii], annotations: [{ part: 3, labels: [pii] }] } }
+          - { type: model.request, turn: 1, step: 1 }
+          - { type: hook.decision, payload: { hook: labeler@1, point: beforeModelCall, result: rewrite } }
+          - { type: model.request, turn: 1, step: 2 }
+          - { type: model.request, turn: 1, step: 3 }
+          - { type: run.ended, payload: { reason: responded } }
+          - { type: context.retrieved, turn: 2, payload: { source: kb, results: [] } }
+          - { type: model.request, turn: 2, step: 1 }
+          - { type: run.ended, payload: { reason: responded } }
+  stubCalls:
+    labeler:
+      - arguments: { point: beforeModelCall, session: { turn: 1, step: 1 } }
+      - arguments:
+          point: beforeModelCall
+          session: { turn: 1, step: 2 }
+          content:
+            - { type: text, text: "Follow organisational policy.", provenance: system, labels: [] }
+            - { type: text, text: "You are a test assistant.", provenance: system, labels: [] }
+            - { type: text, text: "Look up widget k1", provenance: principal, labels: [] }
+            - { type: text, text: "SYN-KB-0001 widget k1 is blue", provenance: "retrieval:kb", labels: [pii] }
+            - { type: tool_call, callId: c1, tool: lookup, provenance: model }
+            - { type: tool_result, callId: c1, provenance: "tool:lookup" }
+      - arguments:
+          point: beforeModelCall
+          session: { turn: 1, step: 3 }
+          content:
+            - { type: text, text: "Follow organisational policy.", provenance: system, labels: [] }
+            - { type: text, text: "You are a test assistant.", provenance: system, labels: [] }
+            - { type: text, text: "Look up widget k1", provenance: principal, labels: [] }
+            - { type: text, text: "SYN-KB-0001 widget k1 is blue", provenance: "retrieval:kb", labels: [pii] }
+            - { type: tool_call, callId: c1, tool: lookup, provenance: model }
+            - { type: tool_result, callId: c1, provenance: "tool:lookup" }
+            - { type: tool_call, callId: c2, tool: lookup, provenance: model }
+            - { type: tool_result, callId: c2, provenance: "tool:lookup" }
+      - arguments: { point: beforeModelCall, session: { turn: 2, step: 1 } }
+  providerRequests:
+    scripted-a:
+      # turn 1, step 1: annotated in this request
+      - messages:
+          - role: system
+            parts:
+              - { type: text, text: "Follow organisational policy.", provenance: system, labels: [] }
+              - { type: text, text: "You are a test assistant.", provenance: system, labels: [] }
+          - role: principal
+            parts:
+              - { type: text, text: "Look up widget k1", provenance: principal, labels: [] }
+              - { type: text, text: "SYN-KB-0001 widget k1 is blue", provenance: "retrieval:kb", labels: [pii] }
+      # turn 1, step 2: rewritten principal text; label kept
+      - messages:
+          - role: system
+            parts:
+              - { type: text, text: "Follow organisational policy.", provenance: system, labels: [] }
+              - { type: text, text: "You are a test assistant.", provenance: system, labels: [] }
+          - role: principal
+            parts:
+              - { type: text, text: "Look up widget SYN-REWRITTEN-0001", provenance: principal, labels: [] }
+              - { type: text, text: "SYN-KB-0001 widget k1 is blue", provenance: "retrieval:kb", labels: [pii] }
+          - role: assistant
+            parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 }, provenance: model }]
+          - role: tool
+            parts: [{ type: tool_result, callId: c1, result: { ok: { output: { value: "SYN-VALUE-0001" } } }, provenance: "tool:lookup" }]
+      # turn 1, step 3: no annotation, no rewrite — label persists, rewrite does not
+      - messages:
+          - role: system
+            parts:
+              - { type: text, text: "Follow organisational policy.", provenance: system, labels: [] }
+              - { type: text, text: "You are a test assistant.", provenance: system, labels: [] }
+          - role: principal
+            parts:
+              - { type: text, text: "Look up widget k1", provenance: principal, labels: [] }
+              - { type: text, text: "SYN-KB-0001 widget k1 is blue", provenance: "retrieval:kb", labels: [pii] }
+          - role: assistant
+            parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 }, provenance: model }]
+          - role: tool
+            parts: [{ type: tool_result, callId: c1, result: { ok: { output: { value: "SYN-VALUE-0001" } } }, provenance: "tool:lookup" }]
+          - role: assistant
+            parts: [{ type: tool_call, callId: c2, tool: lookup, arguments: { key: k2 }, provenance: model }]
+          - role: tool
+            parts: [{ type: tool_result, callId: c2, result: { ok: { output: { value: "SYN-VALUE-0002" } } }, provenance: "tool:lookup" }]
+      # turn 2, step 1: still labelled in history
+      - messages:
+          - role: system
+            parts:
+              - { type: text, text: "Follow organisational policy.", provenance: system, labels: [] }
+              - { type: text, text: "You are a test assistant.", provenance: system, labels: [] }
+          - role: principal
+            parts:
+              - { type: text, text: "Look up widget k1", provenance: principal, labels: [] }
+              - { type: text, text: "SYN-KB-0001 widget k1 is blue", provenance: "retrieval:kb", labels: [pii] }
+          - role: assistant
+            parts: [{ type: tool_call, callId: c1, provenance: model }]
+          - role: tool
+            parts: [{ type: tool_result, callId: c1, provenance: "tool:lookup" }]
+          - role: assistant
+            parts: [{ type: tool_call, callId: c2, provenance: model }]
+          - role: tool
+            parts: [{ type: tool_result, callId: c2, provenance: "tool:lookup" }]
+          - role: assistant
+            parts: [{ type: text, text: "Widget k1 is blue.", provenance: model }]
+          - role: principal
+            parts: [{ type: text, text: "Thanks", provenance: principal, labels: [] }]
+    scripted-b: { count: 0 }

@@ -10,12 +10,16 @@ description: >-
 
   Turn 1: automatic retrieval returns kb-pii-1; its `context.retrieved`
   event carries only a blob reference (no inline text, by schema) and the
-  blob is in the tenant's BlobStore, with a size no smaller than the text
-  (43 bytes), so it holds more than a mask. The model then calls
-  search_kb, which returns kb-pii-2; the tool.result event is labelled pii
-  and its inline view must not hold the raw text (CORE-154 redaction). The
-  step-2 request nevertheless carries both texts in full, with their
-  labels.
+  blob is in the tenant's BlobStore as `application/json` (the part's
+  JSON), with a size no smaller than the text (43 bytes), so it holds more
+  than a mask. The model then calls search_kb, which returns kb-pii-2; the
+  tool.result event is labelled pii and its inline view must not hold the
+  raw text (CORE-154 redaction). Because redaction changed its payload,
+  the event carries `contentRef`, a reference to the full payload content
+  in the BlobStore (`application/json`, at least as large as the 44-byte
+  text), and that blob is in the tenant's BlobStore (Area 7 amendment,
+  readings settled with the fixtures). The step-2 request nevertheless
+  carries both texts in full, with their labels.
 
 
   The implementation is then restarted (no crash; in-process state is
@@ -23,11 +27,6 @@ description: >-
   events do not hold them, so they can only come from the BlobStore
   (CTX-003). The pii texts cannot be listed under noPersistedContent,
   since that check covers blobs, which must hold them.
-
-
-  Not asserted: where the tool.result event references the blob of a
-  redacted retrieval-tool result (see the fixture report; `result.ok.blob`
-  means a result passed to the model by reference, TOOL-072).
 requirements: [CTX-003]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -150,12 +149,13 @@ expect:
               source: kb
               query: "Who owns account A1?"
               results:
-                - blob: { id: $b1, hash: { $regex: "^sha256:[0-9a-f]{64}$" }, size: { $gte: 43 } }
+                - blob: { id: $b1, hash: { $regex: "^sha256:[0-9a-f]{64}$" }, mediaType: application/json, size: { $gte: 43 } }
                   labels: [pii]
           - type: tool.result
             turn: 1
             provenances: ["retrieval:kb"]
             labels: [pii]
+            contentRef: { id: $b2, hash: { $regex: "^sha256:[0-9a-f]{64}$" }, mediaType: application/json, size: { $gte: 44 } }
             payload: { callId: c1, tool: search_kb }
           - { type: run.ended, turn: 1, payload: { reason: responded } }
           - { type: model.request, turn: 2, step: 1 }
@@ -166,7 +166,8 @@ expect:
     blobStore:
       t1:
         $contains:
-          - { id: $b1, size: { $gte: 43 } }
+          - { id: $b1, mediaType: application/json, size: { $gte: 43 } }
+          - { id: $b2, mediaType: application/json, size: { $gte: 44 } }
   providerRequests:
     scripted-a:
       - messages:

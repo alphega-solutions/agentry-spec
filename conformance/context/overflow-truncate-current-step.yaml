@@ -5,24 +5,27 @@ description: >-
   Both candidate models declare contextLimit 100 and maxOutputTokens 20 and
   count every non-text part as 30 tokens (tokenCounting.nonTextPart), so a
   tool call and its result together cost 60. Available space is 100 − 20 =
-  80 (reserveOutputTokens defaults to maxOutputTokens); the trigger level is
+  80 (reserveOutputTokens defaults to the largest maxOutputTokens among the
+  candidates, 20); the trigger level is
   90% of 80 = 72. System content is 8 tokens (3 + 5). The profile compacts
   by truncate.
 
 
   $over, turn 1, step 1: 8 + 20 (input D01..D20) = 28, so the call is made;
   the model calls lookup (c1). Before step 2: 8 + 20 + 30 (tool_call) + 30
-  (tool_result) = 88 > 72, so compaction runs, but nothing is droppable:
-  there is no earlier turn, and the step-1 response with its tool call and
-  result is the current step (CTX-060). 88 > 80, so it cannot fit after
-  compaction: no step-2 model call, an error event (limit,
+  (tool_result) = 88 > 72, but nothing is droppable: there is no earlier
+  turn, and the step-1 response with its tool call and result is the
+  current step (CTX-060). The protected content alone, 88, exceeds the
+  space of 80, so the run overflows without compacting (no
+  `context.compacted`): no step-2 model call, an error event (limit,
   agentry.context.overflow), run end context_limit, session idle. The tool
   itself ran (its result is recorded).
 
 
   Turn 2 ("Hi"): 8 + 80 (turn 1: 20 + 30 + 30) + 1 = 89 > 72; truncate drops
   turn 1 (one unit) and leaves 9, so the call is made and the run
-  responds. The request carries only the new principal message.
+  responds. The request carries exactly the `system` message (one text
+  part per instruction source) and the new principal message.
 
 
   Control $fit: input "Lookup k1" (2 words). Before step 2: 8 + 2 + 30 + 30 =
@@ -30,11 +33,9 @@ description: >-
   responds.
 
 
-  Reading: for the model call that follows a tool step, "tool calls and
-  results in the current step" (CTX-060) are that step's response, calls
-  and results — the step the call answers. Nothing here depends on whether
-  truncation aims at the trigger level or at the available space: 88
-  exceeds both and 9 is under both.
+  As settled (Area 7 amendment): at the model call of step N the current
+  step is step N−1's response with its tool calls and results, the step
+  the call answers.
 requirements: [CTX-090]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -121,7 +122,7 @@ expect:
           - { type: error, runId: $r1, payload: { error: { category: limit, code: agentry.context.overflow } } }
           - { type: run.ended, runId: $r1, payload: { reason: context_limit } }
           - { type: turn.started, runId: $r2, turn: 2 }
-          - { type: context.compacted, runId: $r2, payload: { mode: truncate, units: [{ turn: 1 }] } }
+          - { type: context.compacted, runId: $r2, turn: 2, step: 1, payload: { mode: truncate, units: [{ turn: 1 }] } }
           - { type: model.request, runId: $r2, turn: 2 }
           - { type: run.ended, runId: $r2, payload: { reason: responded } }
       absentEvents:
@@ -143,12 +144,12 @@ expect:
     scripted-a:
       - {}
       - messages:
-          $all:
-            - $count: { of: { role: principal }, equals: 1 }
-            - $count: { of: { role: tool }, equals: 0 }
-            - $contains:
-                - role: principal
-                  parts: [{ type: text, text: "Hi", provenance: principal }]
+          - role: system
+            parts:
+              - { type: text, text: "Follow organisational policy.", provenance: system }
+              - { type: text, text: "You are a test assistant.", provenance: system }
+          - role: principal
+            parts: [{ type: text, text: "Hi", provenance: principal }]
       - {}
       - messages:
           $contains:

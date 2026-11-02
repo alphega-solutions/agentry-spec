@@ -26,11 +26,13 @@ description: >-
     units `[{turn: 1}]`. The request holds only turn 2's principal message.
 
   scripted-sum receives exactly one request, $sFail's; $sDenied's phi
-  content never reaches it. The relative order of the error or policy
-  decision and `context.compacted` is not specified, so events are
-  matched in `contains` mode; that the compaction precedes turn 2's call
-  is shown by the request contents. Reading chosen: system content is
-  matched by role only.
+  content never reaches it. On a fallback the `error` or `policy.decision`
+  precedes `context.compacted` (Area 7 amendment, readings settled with
+  the fixtures), which precedes turn 2's model call, so events are
+  matched as a subsequence. Every candidate sets maxOutputTokens 20, so
+  the default reserve is 20. Turn-2 requests are asserted exactly: one
+  `system` message (one text part per instruction source) and turn 2's
+  principal message.
 requirements: [CTX-085]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -146,10 +148,10 @@ expect:
   sessions:
     $sFail:
       events:
-        mode: contains
+        mode: subsequence
         items:
           - { type: error, payload: { error: { source: provider } } }
-          - { type: context.compacted, payload: { mode: truncate, fallback: summarizer_failed, units: [{ turn: 1 }], summary: { $absent: true } } }
+          - { type: context.compacted, turn: 2, step: 1, payload: { mode: truncate, fallback: summarizer_failed, units: [{ turn: 1 }], summary: { $absent: true } } }
           - { type: model.request, turn: 2, step: 1 }
           - { type: run.ended, payload: { reason: responded } }
       absentEvents:
@@ -157,10 +159,10 @@ expect:
         - { type: policy.decision, payload: { kind: summarizer } }
     $sDenied:
       events:
-        mode: contains
+        mode: subsequence
         items:
           - { type: policy.decision, payload: { kind: summarizer, outcome: block } }
-          - { type: context.compacted, payload: { mode: truncate, fallback: policy_denied, units: [{ turn: 1 }], summary: { $absent: true } } }
+          - { type: context.compacted, turn: 2, step: 1, payload: { mode: truncate, fallback: policy_denied, units: [{ turn: 1 }], summary: { $absent: true } } }
           - { type: model.request, turn: 2, step: 1 }
           - { type: run.ended, payload: { reason: responded } }
       absentEvents:
@@ -175,18 +177,20 @@ expect:
       # $sFail
       - {}
       - messages:
-          $all:
-            - $count: { of: { role: { $not: system } }, equals: 1 }
-            - $contains:
-                - role: principal
-                  parts: [{ type: text, text: "SYN-FQ-01 SYN-FQ-02 SYN-FQ-03 SYN-FQ-04 SYN-FQ-05 SYN-FQ-06 SYN-FQ-07 SYN-FQ-08 SYN-FQ-09 SYN-FQ-10 SYN-FQ-11 SYN-FQ-12 SYN-FQ-13 SYN-FQ-14 SYN-FQ-15 SYN-FQ-16 SYN-FQ-17 SYN-FQ-18 SYN-FQ-19 SYN-FQ-20 SYN-FQ-21 SYN-FQ-22 SYN-FQ-23 SYN-FQ-24 SYN-FQ-25 SYN-FQ-26 SYN-FQ-27 SYN-FQ-28 SYN-FQ-29 SYN-FQ-30 SYN-FQ-31 SYN-FQ-32 SYN-FQ-33 SYN-FQ-34 SYN-FQ-35 SYN-FQ-36 SYN-FQ-37 SYN-FQ-38 SYN-FQ-39 SYN-FQ-40 SYN-FQ-41 SYN-FQ-42 SYN-FQ-43 SYN-FQ-44 SYN-FQ-45", provenance: principal, labels: [] }]
+          - role: system
+            parts:
+              - { type: text, text: "Follow organisational policy.", provenance: system }
+              - { type: text, text: "You are a test assistant.", provenance: system }
+          - role: principal
+            parts: [{ type: text, text: "SYN-FQ-01 SYN-FQ-02 SYN-FQ-03 SYN-FQ-04 SYN-FQ-05 SYN-FQ-06 SYN-FQ-07 SYN-FQ-08 SYN-FQ-09 SYN-FQ-10 SYN-FQ-11 SYN-FQ-12 SYN-FQ-13 SYN-FQ-14 SYN-FQ-15 SYN-FQ-16 SYN-FQ-17 SYN-FQ-18 SYN-FQ-19 SYN-FQ-20 SYN-FQ-21 SYN-FQ-22 SYN-FQ-23 SYN-FQ-24 SYN-FQ-25 SYN-FQ-26 SYN-FQ-27 SYN-FQ-28 SYN-FQ-29 SYN-FQ-30 SYN-FQ-31 SYN-FQ-32 SYN-FQ-33 SYN-FQ-34 SYN-FQ-35 SYN-FQ-36 SYN-FQ-37 SYN-FQ-38 SYN-FQ-39 SYN-FQ-40 SYN-FQ-41 SYN-FQ-42 SYN-FQ-43 SYN-FQ-44 SYN-FQ-45", provenance: principal, labels: [] }]
       # $sDenied
       - {}
       - {}
       - messages:
-          $all:
-            - $count: { of: { role: { $not: system } }, equals: 1 }
-            - $contains:
-                - role: principal
-                  parts: [{ type: text, text: "SYN-DQ-01 SYN-DQ-02 SYN-DQ-03 SYN-DQ-04 SYN-DQ-05 SYN-DQ-06 SYN-DQ-07 SYN-DQ-08 SYN-DQ-09 SYN-DQ-10 SYN-DQ-11 SYN-DQ-12 SYN-DQ-13 SYN-DQ-14 SYN-DQ-15 SYN-DQ-16 SYN-DQ-17 SYN-DQ-18 SYN-DQ-19 SYN-DQ-20 SYN-DQ-21 SYN-DQ-22 SYN-DQ-23 SYN-DQ-24 SYN-DQ-25 SYN-DQ-26 SYN-DQ-27 SYN-DQ-28 SYN-DQ-29 SYN-DQ-30 SYN-DQ-31 SYN-DQ-32 SYN-DQ-33 SYN-DQ-34 SYN-DQ-35 SYN-DQ-36 SYN-DQ-37 SYN-DQ-38 SYN-DQ-39 SYN-DQ-40 SYN-DQ-41 SYN-DQ-42 SYN-DQ-43 SYN-DQ-44 SYN-DQ-45", provenance: principal, labels: [] }]
+          - role: system
+            parts:
+              - { type: text, text: "Follow organisational policy.", provenance: system }
+              - { type: text, text: "You are a test assistant.", provenance: system }
+          - role: principal
+            parts: [{ type: text, text: "SYN-DQ-01 SYN-DQ-02 SYN-DQ-03 SYN-DQ-04 SYN-DQ-05 SYN-DQ-06 SYN-DQ-07 SYN-DQ-08 SYN-DQ-09 SYN-DQ-10 SYN-DQ-11 SYN-DQ-12 SYN-DQ-13 SYN-DQ-14 SYN-DQ-15 SYN-DQ-16 SYN-DQ-17 SYN-DQ-18 SYN-DQ-19 SYN-DQ-20 SYN-DQ-21 SYN-DQ-22 SYN-DQ-23 SYN-DQ-24 SYN-DQ-25 SYN-DQ-26 SYN-DQ-27 SYN-DQ-28 SYN-DQ-29 SYN-DQ-30 SYN-DQ-31 SYN-DQ-32 SYN-DQ-33 SYN-DQ-34 SYN-DQ-35 SYN-DQ-36 SYN-DQ-37 SYN-DQ-38 SYN-DQ-39 SYN-DQ-40 SYN-DQ-41 SYN-DQ-42 SYN-DQ-43 SYN-DQ-44 SYN-DQ-45", provenance: principal, labels: [] }]
     scripted-b: { count: 0 }

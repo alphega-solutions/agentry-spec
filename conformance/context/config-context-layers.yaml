@@ -26,7 +26,7 @@ description: >-
   Run time, on the accepted configuration. Both candidate models declare
   contextLimit 100 and maxOutputTokens 20. Effective reserveOutputTokens is
   min(15, 10) = 10: space 90, trigger level 81 (bundle's 15 would give 76.5;
-  the default 20 would give 72). System content is 11 tokens ("Follow
+  the default, the largest candidate maxOutputTokens, 20, would give 72). System content is 11 tokens ("Follow
   organisational policy." 3 + "Follow department policy." 3 + persona 5).
   Each turn retrieves one unlabelled record (1 word), which carries the
   union of defaultLabels, pii and phi (both allowed for scripted-a).

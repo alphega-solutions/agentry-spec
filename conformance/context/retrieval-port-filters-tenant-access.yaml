@@ -13,6 +13,9 @@ description: >-
   5. a4 — t1, no access restriction (SYN-OPEN-0041);
   6. a5 — t1, no access restriction (SYN-BEYOND-LIMIT-0041).
 
+  The port is queried with the principal's `{subject, tenant, roles}`
+  (PORT-080 as amended), so it can filter by role as well as by subject;
+  the recorded queries carry p1's role analyst and p2's empty role list.
   The port filters by tenant and access first, then applies the limit
   (CTX-041, PORT-080). p1 may read a2, a4, a5 and gets a2, a4; p2 may
   read a3, a4, a5 and gets a3, a4. Had the limit been applied before
@@ -144,7 +147,7 @@ expect:
                 - { type: text, text: "SYN-OPEN-0041", provenance: "retrieval:kb" }
   stubCalls:
     vectorStore/kb:
-      - arguments: { tenant: t1, text: "Summarise the plan notes", limit: 2 }
-      - arguments: { tenant: t1, text: "Summarise the plan notes", limit: 2 }
+      - arguments: { tenant: t1, principal: { subject: user-1, tenant: t1, roles: [analyst] }, text: "Summarise the plan notes", limit: 2 }
+      - arguments: { tenant: t1, principal: { subject: user-2, tenant: t1, roles: [] }, text: "Summarise the plan notes", limit: 2 }
   noPersistedContent: ["SYN-OTHER-TENANT-0041", "SYN-NO-ACCESS-0041", "SYN-BEYOND-LIMIT-0041"]
   noTransmittedContent: ["SYN-OTHER-TENANT-0041", "SYN-NO-ACCESS-0041", "SYN-BEYOND-LIMIT-0041"]

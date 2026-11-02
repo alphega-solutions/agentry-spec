@@ -21,10 +21,15 @@ description: >-
     2}]`; the request holds the summary, turn 3 and turn 4's principal
     message.
 
-  The figures are chosen so that the unit count is the same whether
-  "fits" is read as within the trigger level (90) or within the space
-  (100), and whether or not the summary's own size is counted when choosing
-  units. Reading chosen: system content is matched by role only.
+  Under the settled readings, context fits at or below the trigger level
+  (90), and `summarize` picks the smallest prefix of droppable units whose
+  removal fits without counting the summary (turn 1 alone: 103 > 90;
+  turns 1–2: 83), calls the summarizer once, then applies the fit rule
+  with the summary counted (86 ≤ 90). The figures also give the same unit
+  count if "fits" were read as within the space (100). Every candidate
+  sets maxOutputTokens 20, so the default reserve is 20. Turn-4 requests
+  are asserted exactly, starting with the one `system` message (one text
+  part per instruction source).
 requirements: [CTX-070]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -202,30 +207,32 @@ expect:
       - {}
       - {}
       - messages:
-          $all:
-            - $count: { of: { role: { $not: system } }, equals: 3 }
-            - $contains:
-                - role: principal
-                  parts: [{ type: text, text: "SYN-TCP-01 SYN-TCP-02 SYN-TCP-03 SYN-TCP-04 SYN-TCP-05 SYN-TCP-06 SYN-TCP-07 SYN-TCP-08 SYN-TCP-09 SYN-TCP-10", provenance: principal, labels: [] }]
-                - role: assistant
-                  parts: [{ type: text, text: "SYN-TCR-01 SYN-TCR-02 SYN-TCR-03 SYN-TCR-04 SYN-TCR-05 SYN-TCR-06 SYN-TCR-07 SYN-TCR-08 SYN-TCR-09 SYN-TCR-10", provenance: model }]
-                - role: principal
-                  parts: [{ type: text, text: "SYN-TDP-01 SYN-TDP-02 SYN-TDP-03 SYN-TDP-04 SYN-TDP-05 SYN-TDP-06 SYN-TDP-07 SYN-TDP-08 SYN-TDP-09 SYN-TDP-10 SYN-TDP-11 SYN-TDP-12 SYN-TDP-13 SYN-TDP-14 SYN-TDP-15 SYN-TDP-16 SYN-TDP-17 SYN-TDP-18 SYN-TDP-19 SYN-TDP-20 SYN-TDP-21 SYN-TDP-22 SYN-TDP-23 SYN-TDP-24 SYN-TDP-25 SYN-TDP-26 SYN-TDP-27 SYN-TDP-28 SYN-TDP-29 SYN-TDP-30 SYN-TDP-31 SYN-TDP-32 SYN-TDP-33 SYN-TDP-34 SYN-TDP-35 SYN-TDP-36 SYN-TDP-37 SYN-TDP-38 SYN-TDP-39 SYN-TDP-40 SYN-TDP-41 SYN-TDP-42 SYN-TDP-43 SYN-TDP-44 SYN-TDP-45 SYN-TDP-46 SYN-TDP-47 SYN-TDP-48 SYN-TDP-49 SYN-TDP-50 SYN-TDP-51 SYN-TDP-52 SYN-TDP-53 SYN-TDP-54 SYN-TDP-55 SYN-TDP-56 SYN-TDP-57 SYN-TDP-58 SYN-TDP-59 SYN-TDP-60", provenance: principal, labels: [] }]
+          - role: system
+            parts:
+              - { type: text, text: "Follow organisational policy.", provenance: system }
+              - { type: text, text: "You are a test assistant.", provenance: system }
+          - role: principal
+            parts: [{ type: text, text: "SYN-TCP-01 SYN-TCP-02 SYN-TCP-03 SYN-TCP-04 SYN-TCP-05 SYN-TCP-06 SYN-TCP-07 SYN-TCP-08 SYN-TCP-09 SYN-TCP-10", provenance: principal, labels: [] }]
+          - role: assistant
+            parts: [{ type: text, text: "SYN-TCR-01 SYN-TCR-02 SYN-TCR-03 SYN-TCR-04 SYN-TCR-05 SYN-TCR-06 SYN-TCR-07 SYN-TCR-08 SYN-TCR-09 SYN-TCR-10", provenance: model }]
+          - role: principal
+            parts: [{ type: text, text: "SYN-TDP-01 SYN-TDP-02 SYN-TDP-03 SYN-TDP-04 SYN-TDP-05 SYN-TDP-06 SYN-TDP-07 SYN-TDP-08 SYN-TDP-09 SYN-TDP-10 SYN-TDP-11 SYN-TDP-12 SYN-TDP-13 SYN-TDP-14 SYN-TDP-15 SYN-TDP-16 SYN-TDP-17 SYN-TDP-18 SYN-TDP-19 SYN-TDP-20 SYN-TDP-21 SYN-TDP-22 SYN-TDP-23 SYN-TDP-24 SYN-TDP-25 SYN-TDP-26 SYN-TDP-27 SYN-TDP-28 SYN-TDP-29 SYN-TDP-30 SYN-TDP-31 SYN-TDP-32 SYN-TDP-33 SYN-TDP-34 SYN-TDP-35 SYN-TDP-36 SYN-TDP-37 SYN-TDP-38 SYN-TDP-39 SYN-TDP-40 SYN-TDP-41 SYN-TDP-42 SYN-TDP-43 SYN-TDP-44 SYN-TDP-45 SYN-TDP-46 SYN-TDP-47 SYN-TDP-48 SYN-TDP-49 SYN-TDP-50 SYN-TDP-51 SYN-TDP-52 SYN-TDP-53 SYN-TDP-54 SYN-TDP-55 SYN-TDP-56 SYN-TDP-57 SYN-TDP-58 SYN-TDP-59 SYN-TDP-60", provenance: principal, labels: [] }]
       # $sSum
       - {}
       - {}
       - {}
       - messages:
-          $all:
-            - $count: { of: { role: { $not: system } }, equals: 4 }
-            - $contains:
-                - role: assistant
-                  parts: [{ type: text, text: "SYN-SUMMARY-0001 SYN-SUMMARY-0002 SYN-SUMMARY-0003" }]
-                - role: principal
-                  parts: [{ type: text, text: "SYN-SCP-01 SYN-SCP-02 SYN-SCP-03 SYN-SCP-04 SYN-SCP-05 SYN-SCP-06 SYN-SCP-07 SYN-SCP-08 SYN-SCP-09 SYN-SCP-10", provenance: principal, labels: [] }]
-                - role: assistant
-                  parts: [{ type: text, text: "SYN-SCR-01 SYN-SCR-02 SYN-SCR-03 SYN-SCR-04 SYN-SCR-05 SYN-SCR-06 SYN-SCR-07 SYN-SCR-08 SYN-SCR-09 SYN-SCR-10", provenance: model }]
-                - role: principal
-                  parts: [{ type: text, text: "SYN-SDP-01 SYN-SDP-02 SYN-SDP-03 SYN-SDP-04 SYN-SDP-05 SYN-SDP-06 SYN-SDP-07 SYN-SDP-08 SYN-SDP-09 SYN-SDP-10 SYN-SDP-11 SYN-SDP-12 SYN-SDP-13 SYN-SDP-14 SYN-SDP-15 SYN-SDP-16 SYN-SDP-17 SYN-SDP-18 SYN-SDP-19 SYN-SDP-20 SYN-SDP-21 SYN-SDP-22 SYN-SDP-23 SYN-SDP-24 SYN-SDP-25 SYN-SDP-26 SYN-SDP-27 SYN-SDP-28 SYN-SDP-29 SYN-SDP-30 SYN-SDP-31 SYN-SDP-32 SYN-SDP-33 SYN-SDP-34 SYN-SDP-35 SYN-SDP-36 SYN-SDP-37 SYN-SDP-38 SYN-SDP-39 SYN-SDP-40 SYN-SDP-41 SYN-SDP-42 SYN-SDP-43 SYN-SDP-44 SYN-SDP-45 SYN-SDP-46 SYN-SDP-47 SYN-SDP-48 SYN-SDP-49 SYN-SDP-50 SYN-SDP-51 SYN-SDP-52 SYN-SDP-53 SYN-SDP-54 SYN-SDP-55", provenance: principal, labels: [] }]
+          - role: system
+            parts:
+              - { type: text, text: "Follow organisational policy.", provenance: system }
+              - { type: text, text: "You are a test assistant.", provenance: system }
+          - role: assistant
+            parts: [{ type: text, text: "SYN-SUMMARY-0001 SYN-SUMMARY-0002 SYN-SUMMARY-0003" }]
+          - role: principal
+            parts: [{ type: text, text: "SYN-SCP-01 SYN-SCP-02 SYN-SCP-03 SYN-SCP-04 SYN-SCP-05 SYN-SCP-06 SYN-SCP-07 SYN-SCP-08 SYN-SCP-09 SYN-SCP-10", provenance: principal, labels: [] }]
+          - role: assistant
+            parts: [{ type: text, text: "SYN-SCR-01 SYN-SCR-02 SYN-SCR-03 SYN-SCR-04 SYN-SCR-05 SYN-SCR-06 SYN-SCR-07 SYN-SCR-08 SYN-SCR-09 SYN-SCR-10", provenance: model }]
+          - role: principal
+            parts: [{ type: text, text: "SYN-SDP-01 SYN-SDP-02 SYN-SDP-03 SYN-SDP-04 SYN-SDP-05 SYN-SDP-06 SYN-SDP-07 SYN-SDP-08 SYN-SDP-09 SYN-SDP-10 SYN-SDP-11 SYN-SDP-12 SYN-SDP-13 SYN-SDP-14 SYN-SDP-15 SYN-SDP-16 SYN-SDP-17 SYN-SDP-18 SYN-SDP-19 SYN-SDP-20 SYN-SDP-21 SYN-SDP-22 SYN-SDP-23 SYN-SDP-24 SYN-SDP-25 SYN-SDP-26 SYN-SDP-27 SYN-SDP-28 SYN-SDP-29 SYN-SDP-30 SYN-SDP-31 SYN-SDP-32 SYN-SDP-33 SYN-SDP-34 SYN-SDP-35 SYN-SDP-36 SYN-SDP-37 SYN-SDP-38 SYN-SDP-39 SYN-SDP-40 SYN-SDP-41 SYN-SDP-42 SYN-SDP-43 SYN-SDP-44 SYN-SDP-45 SYN-SDP-46 SYN-SDP-47 SYN-SDP-48 SYN-SDP-49 SYN-SDP-50 SYN-SDP-51 SYN-SDP-52 SYN-SDP-53 SYN-SDP-54 SYN-SDP-55", provenance: principal, labels: [] }]
     scripted-b: { count: 0 }
     scripted-sum: { count: 1 }

@@ -1,16 +1,18 @@
 schemaVersion: "0.1.0"
 id: context.config-context-defaults
-title: "With no `context` block set, compaction truncates at 90% of the space left after reserving maxOutputTokens, and automatic retrieval is off; when enabled, it takes 5 results"
+title: "With no `context` block set, compaction truncates at 90% of the space left after reserving the largest candidate maxOutputTokens, and automatic retrieval is off; when enabled, it takes 5 results"
 description: >-
   No policy bundle or profile sets any of reserveOutputTokens,
   compaction.mode, compaction.triggerPercent or retrieval.limit. Both
-  candidate models declare contextLimit 100 and maxOutputTokens 20. System
+  candidate models declare contextLimit 100; the primary scripted-a
+  declares maxOutputTokens 10 and the fallback scripted-b 20. System
   content is 8 tokens (3 + 5).
 
 
-  $s on default@1 (no context block at all). If reserveOutputTokens
-  defaults to maxOutputTokens (20) and triggerPercent to 90, the trigger
-  level is 0.9 × (100 − 20) = 72.
+  $s on default@1 (no context block at all). reserveOutputTokens defaults
+  to the largest maxOutputTokens among the candidates (Area 7 amendment,
+  further readings settled in review), 20, and triggerPercent to 90, so
+  the trigger level is 0.9 × (100 − 20) = 72.
 
   - Turn 1: 8 + 30 (A01..A30) = 38; reply 4 words (R01..R04).
 
@@ -24,8 +26,8 @@ description: >-
     and no overflow), dropping turn 1 (34 tokens) to leave 40. One
     context.compacted with mode truncate and units [turn 1]; the request
     carries turn 2's and turn 3's principal messages only. Compacting at 74
-    rules out a larger effective trigger level (e.g. a reserve of 0, giving
-    90).
+    rules out a larger effective trigger level: the primary's own
+    maxOutputTokens (10) would give 81, a reserve of 0 would give 90.
 
   Automatic retrieval is off by default: no context.retrieved event on $s,
   and the vector store is queried only once in the fixture.
@@ -101,7 +103,7 @@ setup:
       principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
   providers:
     scripted-a:
-      capabilities: { contextLimit: 100, maxOutputTokens: 20 }
+      capabilities: { contextLimit: 100, maxOutputTokens: 10 }
       responses:
         # $s turn 1
         - parts: [{ type: text, text: "R01 R02 R03 R04" }]
@@ -163,7 +165,7 @@ expect:
         items:
           - { type: model.request, runId: $r1, turn: 1 }
           - { type: model.request, runId: $r2, turn: 2 }
-          - { type: context.compacted, runId: $r3, payload: { mode: truncate, units: [{ turn: 1 }] } }
+          - { type: context.compacted, runId: $r3, turn: 3, step: 1, payload: { mode: truncate, units: [{ turn: 1 }] } }
           - { type: model.request, runId: $r3, turn: 3 }
           - { type: run.ended, runId: $r3, payload: { reason: responded } }
       absentEvents:

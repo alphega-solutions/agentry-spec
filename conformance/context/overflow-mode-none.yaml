@@ -4,7 +4,8 @@ title: "With `compaction.mode: none`, context that does not fit overflows even w
 description: >-
   Both candidate models (scripted-a and its fallback scripted-b, PROV-044)
   declare contextLimit 100 and maxOutputTokens 20; reserveOutputTokens
-  defaults to maxOutputTokens, so the available space is 100 − 20 = 80 and
+  defaults to the largest maxOutputTokens among the candidates, 20, so the
+  available space is 100 − 20 = 80 and
   the trigger level is 90% of 80 = 72. The profile sets compaction.mode
   none. System content is 8 tokens ("Follow organisational policy." 3 +
   "You are a test assistant." 5).
@@ -26,8 +27,9 @@ description: >-
   compaction and no error.
 
 
-  Reading: "does not fit" (CTX-090) means exceeds the available space; with
-  mode none, crossing triggerPercent alone neither compacts nor overflows.
+  As settled (Area 7 amendment): with mode none only exceeding the
+  available space matters; crossing triggerPercent alone neither compacts
+  nor overflows.
 requirements: [CTX-090]
 contract: ">=0.1.0 <1.0.0"
 features: []

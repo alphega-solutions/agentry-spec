@@ -1,6 +1,6 @@
 schemaVersion: "0.1.0"
 id: context.retrieval-tool-definition
-title: A retrieval tool must be `read`, declare a required string `query`, and name a declared vector store source
+title: A retrieval tool must be `read`, declare a required string `query` (and at most an integer `limit` besides), and name a declared vector store source
 description: >-
   The deployment declares the vector store source `kb`. Each failing load
   adds one `kb_search` tool bound `{ kind: retrieval }` that breaks one
@@ -12,18 +12,20 @@ description: >-
   - `query` declared as an integer;
   - `query` declared but not listed in `required`;
   - an optional `limit` declared as a string (it may only be an integer);
+  - an `input` declaring a property beyond `query` and `limit` (here
+    `filter`): the input declares nothing else (Area 7 amendment
+    2026-11-01; `schemas/config/v1/tool.yaml`);
   - a binding naming the source `archive`, which the deployment's
-    `ports.vectorStore.sources` does not declare. No numbered requirement
-    states this rule for retrieval bindings; the fixture reads it as
-    TOOL-010 ("every binding MUST resolve"), with the tool schema's
-    binding description ("a vector store source ID from the deployment's
-    `ports.vectorStore.sources`") naming what resolving means.
+    `ports.vectorStore.sources` does not declare: a configuration error
+    for a retrieval tool as for `retrieval.source` (CTX-101 as amended,
+    readings settled with the fixtures), and an unresolved binding
+    (TOOL-010).
 
   The tools are not referenced by any persona: every binding in the
   snapshot must resolve. The final load adds a valid retrieval tool
   (`effect: read`, required string `query`, optional integer `limit`,
   source `kb`) and succeeds.
-requirements: [CTX-020, TOOL-010]
+requirements: [CTX-020, CTX-101, TOOL-010]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:
@@ -80,6 +82,11 @@ script:
   - load:
       artifacts:
         - { kind: Tool, id: kb_search, version: 1, schemaVersion: "0.1.0", description: Search the knowledge base., input: { type: object, additionalProperties: false, required: [query], properties: { query: { type: string }, limit: { type: string } } }, effect: read, binding: { kind: retrieval, source: kb } }
+    expect: { ok: false, error: { category: configuration } }
+  # A property beyond `query` and `limit`.
+  - load:
+      artifacts:
+        - { kind: Tool, id: kb_search, version: 1, schemaVersion: "0.1.0", description: Search the knowledge base., input: { type: object, additionalProperties: false, required: [query], properties: { query: { type: string }, limit: { type: integer }, filter: { type: string } } }, effect: read, binding: { kind: retrieval, source: kb } }
     expect: { ok: false, error: { category: configuration } }
   # Source not declared in the deployment.
   - load:
