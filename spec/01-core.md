@@ -405,3 +405,7 @@ Writing schemas and fixtures for this area exposed these gaps. Requirement text 
 - **CORE-040/041** a TTL has elapsed when the current time is equal to or later than the expiry time.
 - **CORE-150/170** `model.response` is persisted after `afterModelCall` hooks, and records the response as those hooks left it, with any labels they added (consistent with TOOL-073 for tool results).
 
+## Amendment 2026-11-01 — from Phase 4 (Area 4)
+
+- **CORE-191** `unavailable`: for errors returned by a **tool**, handling follows TOOL-052/053 as amended — non-retryable tool errors are delivered to the model; retryable ones are retried, or treated as `fatal` when they may not be retried or retries are exhausted. The "then treated as `fatal`" rule applies to provider, port, and harness errors.
+

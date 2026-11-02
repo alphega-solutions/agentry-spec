@@ -214,5 +214,10 @@ agentry sessions are designed to run as steps inside a host's workflow engine (A
 
 ## Amendment 2026-11-01 — from Phase 4 (Area 4 fixtures)
 
-- **HITL-091** gains a first case, checked before the others: if every in-flight call of the orphaned run already has an outcome recorded in the idempotency store, the recorded outcomes are appended as the calls' `tool.result` events and the run **MUST** continue (TOOL-061). This applies whatever the tool's idempotency, since nothing is re-dispatched. Previously such a run fell through to "end the run `failed`", discarding a completed action.
+- **HITL-091** is replaced by this ordered procedure for an orphaned run's in-flight tool calls, applied per call:
+  1. **Outcome recorded** in the idempotency store: the call re-enters the tool pipeline at stage 9 with the recorded outcome (result checks, `afterToolCall` hooks, recording), so redaction applies exactly as for a live call (TOOL-073). Nothing is re-dispatched, whatever the tool's idempotency.
+  2. **Read call** with no recorded outcome: re-dispatched.
+  3. **Idempotent mutating call** with a started record and no outcome: re-dispatched with the same idempotency key.
+  4. **Non-idempotent mutating call** with a started record and no outcome: raises a `recovery` pending action.
 
+  If any call took step 4, the run ends `escalated` once the other calls are processed. Otherwise the run continues. A run with no in-flight call ends `failed`. A continuing orphaned run keeps its `runId` and emits no new `run.started`. The host call that triggered recovery (HITL-092) proceeds with its own run after the orphaned run ends, and receives its own outcome.
