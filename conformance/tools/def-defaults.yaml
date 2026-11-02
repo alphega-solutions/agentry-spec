@@ -1,0 +1,181 @@
+schemaVersion: "0.1.0"
+id: tool.def-defaults
+title: Optional tool fields take their TOOL-001 defaults — approval never, egress false, onTainted escalate, onTaintedEgress block
+description: >-
+  `mark_record` (mutating), `fetch_note` (read, labelled `pii`) and
+  `share_note` (read, egress) declare none of `approval`, `egress`,
+  `onTainted` or `onTaintedEgress`.
+
+  - $sPlain: in an untainted session `mark_record` is dispatched with no
+    escalation and no policy decision (`approval` defaults to `never`).
+  - $sMutate: an untrusted lookup result taints the session; `mark_record`
+    then escalates through the taint rule (`onTainted` defaults to
+    `escalate`).
+  - $sEgress: the first `fetch_note` result taints the session and puts
+    `pii`-labelled content in context. A second `fetch_note` call proceeds
+    with no taint decision, because `egress` defaults to `false` and the tool
+    is not mutating. `share_note` declares `egress: true`, so it is blocked
+    (`onTaintedEgress` defaults to `block`) and the turn continues.
+requirements: [TOOL-001]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: mark_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Mark a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: mutating
+        binding: { kind: native, handler: test.mark_record }
+      - kind: Tool
+        id: fetch_note
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Fetch a note.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        sensitivity: [pii]
+        binding: { kind: native, handler: test.fetch_note }
+      - kind: Tool
+        id: share_note
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Share a note externally.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        egress: true
+        binding: { kind: native, handler: test.share_note }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, mark_record@1, fetch_note@1, share_note@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # $sPlain
+        - parts: [{ type: tool_call, callId: c1, tool: mark_record, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Marked." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sMutate
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: mark_record, arguments: { key: k1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sEgress
+        - parts: [{ type: tool_call, callId: c1, tool: fetch_note, arguments: { key: n1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: fetch_note, arguments: { key: n2 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c3, tool: share_note, arguments: { key: n1 } }]
+          usage: { inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Could not share." }]
+          usage: { inputTokens: 50, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      mark_record:
+        - ok: { output: { marked: true } }
+      lookup:
+        - ok: { output: { value: "synthetic untrusted value" } }
+      fetch_note:
+        - ok: { output: { note: "Synthetic note one" } }
+        - ok: { output: { note: "Synthetic note two" } }
+      share_note: []
+script:
+  - action: run
+    bind: $sPlain
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Mark k1" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sMutate
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1 then mark it" }]
+    expect: { ok: true, endReason: escalated }
+  - action: run
+    bind: $sEgress
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Fetch n1 and n2, then share n1" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sPlain:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: mark_record } }
+          - { type: tool.result, payload: { callId: c1, result: { ok: { output: { marked: true } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: policy.decision }
+        - { type: escalation.raised }
+    $sMutate:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: c1 } }
+          - { type: policy.decision, payload: { kind: taint, outcome: escalate, callId: c2, tool: mark_record } }
+          - { type: escalation.raised, payload: { escalation: { sources: [taint] } } }
+          - { type: run.ended, payload: { reason: escalated } }
+      absentEvents:
+        - { type: tool.call, payload: { callId: c2 } }
+    $sEgress:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: c1 } }
+          - { type: tool.call, payload: { callId: c2, tool: fetch_note } }
+          - { type: tool.result, payload: { callId: c2, result: { ok: { output: { note: "Synthetic note two" } } } } }
+          - { type: policy.decision, payload: { kind: taint, outcome: block, callId: c3, tool: share_note } }
+          - { type: tool.result, payload: { callId: c3, result: { error: { category: policy } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: policy.decision, payload: { callId: c2 } }
+        - { type: tool.call, payload: { callId: c3 } }
+        - { type: escalation.raised }
+  stubCalls:
+    mark_record: { count: 1 }
+    lookup: { count: 1 }
+    fetch_note: { count: 2 }
+    share_note: { count: 0 }

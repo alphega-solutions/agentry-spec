@@ -1,0 +1,167 @@
+schemaVersion: "0.1.0"
+id: tool.idem-recorded-outcome-not-redispatched
+title: A call whose key has a recorded outcome is not dispatched or governed again when its step resumes after a restart
+description: >-
+  An untrusted lookup result (step 1) taints the session. The step-2 model
+  response then requests two mutating calls, both with `onTainted: allow`
+  so that each taint-rule evaluation emits an `allow` decision (HOOK-124):
+  c1 update_record (approval never) and c2 delete_record (approval always).
+  c1 passes the taint rule once, is dispatched, and its outcome is recorded
+  in the idempotency store (`state: completed`, with the outcome); c2
+  passes the taint rule and escalates, and the run ends `escalated`. The
+  implementation then restarts (in-process state is lost; ports are kept).
+  On resume with c2 approved, c1 has a recorded outcome, so it is not
+  dispatched again (the update_record stub has a second behaviour that a
+  re-dispatch would consume, and is called exactly once) and its recorded
+  outcome is what the model receives; c2 is dispatched once and its outcome
+  recorded.
+
+  Stage order: whether the implementation processes the step again (stage
+  3 finds c1's recorded outcome and skips stages 4–9) or uses held results,
+  exactly one taint decision exists for c1. An implementation that applied
+  the taint rule (stage 5) before the idempotency check (stage 3) would
+  emit a second one.
+
+  Not covered: stage 3 before stage 4. A principal's assurance and the
+  session's snapshot cannot change (CORE-012), so a call that already has a
+  recorded outcome has already passed its assurance check, and a passing
+  check need not emit an event.
+requirements: [TOOL-061, TOOL-030]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        onTainted: allow
+        binding: { kind: native, handler: test.update_record }
+      - kind: Tool
+        id: delete_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Delete a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        onTainted: allow
+        binding: { kind: native, handler: test.delete_record }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, delete_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c0, tool: lookup, arguments: { key: k0 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts:
+            - { type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }
+            - { type: tool_call, callId: c2, tool: delete_record, arguments: { key: k2 } }
+          usage: { inputTokens: 20, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated k1 and deleted k2." }]
+          usage: { inputTokens: 40, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "synthetic untrusted value" } }
+      update_record:
+        - ok: { output: { updated: true, attempt: "first" } }
+        - ok: { output: { updated: true, attempt: "second" } }
+      delete_record:
+        - ok: { output: { deleted: true } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k0, then set k1 to v1 and delete k2" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $esc, payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  - restart: {}
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000001", pendingActionId: $act, type: approve }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, runId: $r1, payload: { callId: c0 } }
+          - { type: tool.call, runId: $r1, payload: { callId: c1, tool: update_record } }
+          - { type: escalation.raised, runId: $r1, payload: { escalation: { pendingActions: [{ kind: tool_call, callId: c2, tool: delete_record }] } } }
+          - { type: run.ended, runId: $r1, payload: { reason: escalated } }
+          - { type: run.started, runId: $r2, payload: { kind: resume } }
+          - { type: tool.call, runId: $r2, payload: { callId: c2, tool: delete_record } }
+          - { type: model.request, runId: $r2, step: 3 }
+          - { type: run.ended, runId: $r2, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call, runId: $r2, payload: { callId: c1 } }
+        - { type: tool.result, payload: { result: { ok: { output: { attempt: "second" } } } } }
+  stubCalls:
+    update_record: [{ arguments: { key: k1, value: v1 }, context: { idempotencyKey: $k1 } }]
+    delete_record: [{ arguments: { key: k2 }, context: { idempotencyKey: $k2 } }]
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $all:
+            - $count: { of: { type: policy.decision, payload: { kind: taint, callId: c1 } }, equals: 1 }
+            - $count: { of: { type: policy.decision, payload: { kind: taint, callId: c2 } }, equals: 1 }
+            - $count: { of: { type: tool.result, payload: { callId: c1 } }, equals: 1 }
+    idempotencyStore:
+      t1:
+        $k1: { state: completed, outcome: { ok: { output: { updated: true, attempt: "first" } } } }
+        $k2: { state: completed, outcome: { ok: { output: { deleted: true } } } }
+  providerRequests:
+    scripted-a:
+      - {}
+      - {}
+      - messages:
+          $contains:
+            - role: tool
+              parts:
+                $contains:
+                  - { type: tool_result, callId: c1, result: { ok: { output: { updated: true, attempt: "first" } } } }

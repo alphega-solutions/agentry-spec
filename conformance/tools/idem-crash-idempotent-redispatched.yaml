@@ -1,0 +1,121 @@
+schemaVersion: "0.1.0"
+id: tool.idem-crash-idempotent-redispatched
+title: A crash after dispatching an idempotent mutating call leads to re-dispatch with the same idempotency key, without escalation
+description: >-
+  set_flag is mutating and idempotent. The implementation is crashed at
+  `after_dispatch` during the second run: the stub has received the call,
+  but its result never reached the implementation (`completed: false`) and
+  no outcome has been recorded. After a restart and a clock advance past
+  the run lease (`limits.leaseTtl`, default PT5M), run() on the session
+  performs recovery first (HITL-092; HITL-091 as amended 2026-11-01, step
+  3): the call is re-dispatched with the same idempotency key (TOOL-041,
+  stable across resumes), its outcome reaches the model, and the orphaned
+  run continues to `responded`, keeping its `runId` and emitting no new
+  `run.started`. No escalation is raised. The triggering run() then runs
+  its own run (its own `run.started`, turn 3) and responds. The stub is
+  called exactly twice, both times with the same key and arguments, and
+  the second call completes.
+requirements: [TOOL-041, TOOL-062, HITL-091]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: set_flag
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Set a flag on a record. Safe to repeat with the same idempotency key.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, flag]
+          properties: { key: { type: string }, flag: { type: boolean } }
+        effect: mutating
+        idempotent: true
+        binding: { kind: native, handler: test.set_flag }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, set_flag@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: set_flag, arguments: { key: k1, flag: true } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Flag set." }]
+          usage: { inputTokens: 40, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "You're welcome." }]
+          usage: { inputTokens: 50, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      set_flag:
+        - ok: { output: { set: true, attempt: "first" } }
+        - ok: { output: { set: true, attempt: "second" } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - crash: { at: after_dispatch, session: $s }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Flag k1" }]
+  - restart: {}
+  - clock: { advance: PT1H }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Thanks" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, runId: $r2, turn: 2, payload: { callId: c1, tool: set_flag } }
+          - { type: tool.result, runId: $r2, turn: 2, payload: { callId: c1, tool: set_flag, result: { ok: { output: { set: true, attempt: "second" } } } } }
+          - { type: model.request, runId: $r2, turn: 2, step: 2 }
+          - { type: turn.completed, runId: $r2, turn: 2 }
+          - { type: run.ended, runId: $r2, payload: { reason: responded } }
+          - { type: run.started, runId: { $all: [$r3, { $not: $r2 }] }, payload: { kind: run } }
+          - { type: turn.started, runId: $r3, turn: 3 }
+          - { type: run.ended, runId: $r3, payload: { reason: responded } }
+      absentEvents:
+        - { type: escalation.raised }
+  stubCalls:
+    set_flag:
+      - { arguments: { key: k1, flag: true }, completed: false, context: { sessionId: $s, idempotencyKey: $k } }
+      - { arguments: { key: k1, flag: true }, completed: true, context: { sessionId: $s, idempotencyKey: $k } }
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $count: { of: { type: run.started }, equals: 3 }
+  providerRequests:
+    scripted-a: { count: 4 }

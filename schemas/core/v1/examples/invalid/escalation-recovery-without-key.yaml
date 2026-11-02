@@ -1,0 +1,22 @@
+schema: https://alphega.io/agentry/schemas/core/event/v1.json
+instance:
+  schemaVersion: "0.1.0"
+  sessionId: 0190a3c4-0000-7000-8000-000000000001
+  runId: 0190a3c4-0000-7000-8000-000000000002
+  timestamp: "2026-01-01T00:00:00Z"
+  tenantId: t1
+  principalRef: { subject: user-1, tenant: t1 }
+  snapshotHash: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  traceContext: { traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" }
+  eventId: 0190a3c4-0000-7000-8000-000000000026
+  seq: 9
+  type: escalation.raised
+  payload:
+    escalation:
+      id: 0190a3c4-0000-7000-8000-000000000027
+      step: 1
+      sources: [recovery]
+      pendingActions:
+        - { id: a1, kind: recovery, source: recovery, tool: update_record, arguments: { key: k1, value: v1 }, allowedDecisions: [confirm] }
+      createdAt: "2026-01-01T00:00:00Z"
+      expiresAt: "2026-01-04T00:00:00Z"

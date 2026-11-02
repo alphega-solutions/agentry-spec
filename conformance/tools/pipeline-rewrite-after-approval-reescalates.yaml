@@ -1,0 +1,225 @@
+schemaVersion: "0.1.0"
+id: tool.pipeline-rewrite-after-approval-reescalates
+title: If a stage after an approved escalation rewrites the arguments, the call escalates again with the rewritten arguments before dispatch
+description: >-
+  Two beforeToolCall remote hooks are required, in order: `gate` (may
+  escalate) and `normalise` (may rewrite). Both match only update_record.
+
+  - $sTaint: an untrusted lookup result taints the session, so update_record
+    escalates at stage 5 (`onTainted` default). On approval, processing
+    continues at stage 6; `gate` continues and `normalise` rewrites the
+    value. The approved arguments would change, so the call escalates
+    again; on the second approval it is dispatched with the rewritten
+    arguments.
+  - $sHook: untainted; `gate` escalates. On approval the chain resumes at
+    `normalise` (gate is not called again), which rewrites; the call
+    escalates again and, once approved, is dispatched with the rewritten
+    arguments.
+
+  In both, the first escalation's pending action shows the model's
+  arguments, the second shows the rewritten ones, and the arguments
+  dispatched (the `tool.call` and the stub call) equal the second pending
+  action's `arguments` exactly: the call is never dispatched with arguments
+  a reviewer has not seen and approved, and is dispatched exactly once.
+requirements: [TOOL-036]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        remoteHooks:
+          - { id: gate, endpoint: "memory://hook-gate", region: test-region }
+          - { id: normalise, endpoint: "memory://hook-normalise", region: test-region }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: Hook
+        id: gate
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [escalate]
+        timeoutMs: 1000
+        match: "tool.id == 'update_record'"
+        source: { kind: remote, endpoint: gate }
+      - kind: Hook
+        id: normalise
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [rewrite]
+        timeoutMs: 1000
+        match: "tool.id == 'update_record'"
+        source: { kind: remote, endpoint: normalise }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [gate@1, normalise@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        # $sTaint
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated k1." }]
+          usage: { inputTokens: 40, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sHook
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k2, value: v2 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated k2." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "synthetic untrusted value" } }
+      update_record:
+        - ok: { output: { updated: true } }
+        - ok: { output: { updated: true } }
+    remoteHooks:
+      gate:
+        - { result: continue }
+        - { result: escalate, reasonCode: test.gate.review }
+      normalise:
+        - result: rewrite
+          parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: k1, value: V1-NORMALISED } }]
+        - result: rewrite
+          parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k2, value: V2-NORMALISED } }]
+script:
+  # $sTaint
+  - action: run
+    bind: $sTaint
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1 then set it to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $escT1, payload.escalation.pendingActions.0.id: $actT1 }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $sTaint
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000001", pendingActionId: $actT1, type: approve }
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $escT2, payload.escalation.pendingActions.0.id: $actT2 }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $sTaint
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000002", pendingActionId: $actT2, type: approve }
+    expect: { ok: true, endReason: responded }
+  # $sHook
+  - action: run
+    bind: $sHook
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k2 to v2" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $escH1, payload.escalation.pendingActions.0.id: $actH1 }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $sHook
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000003", pendingActionId: $actH1, type: approve }
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $escH2, payload.escalation.pendingActions.0.id: $actH2 }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $sHook
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000004", pendingActionId: $actH2, type: approve }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sTaint:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: policy.decision, runId: $rT1, payload: { kind: taint, outcome: escalate, callId: c2 } }
+          - { type: escalation.raised, runId: $rT1, payload: { escalation: { id: $escT1, sources: [taint], pendingActions: [{ callId: c2, arguments: { key: k1, value: v1 } }] } } }
+          - { type: run.ended, runId: $rT1, payload: { reason: escalated } }
+          - { type: hook.decision, runId: $rT2, payload: { hook: normalise@1, point: beforeToolCall, result: rewrite } }
+          - { type: escalation.raised, runId: $rT2, payload: { escalation: { id: { $all: [$escT2, { $not: $escT1 }] }, pendingActions: [{ callId: c2, arguments: { $all: [$argsT2, { key: k1, value: V1-NORMALISED }] } }] } } }
+          - { type: run.ended, runId: $rT2, payload: { reason: escalated } }
+          - { type: tool.call, runId: $rT3, payload: { callId: c2, arguments: $argsT2 } }
+          - { type: tool.result, runId: $rT3, payload: { callId: c2 } }
+          - { type: run.ended, runId: $rT3, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call, payload: { arguments: { value: v1 } } }
+        - { type: tool.call, runId: $rT1 }
+        - { type: tool.call, runId: $rT2 }
+        - { type: policy.decision, runId: $rT2 }
+        - { type: policy.decision, runId: $rT3 }
+    $sHook:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, runId: $rH1, payload: { hook: gate@1, point: beforeToolCall, result: escalate } }
+          - { type: escalation.raised, runId: $rH1, payload: { escalation: { id: $escH1, sources: [hook], pendingActions: [{ callId: c1, arguments: { key: k2, value: v2 } }] } } }
+          - { type: run.ended, runId: $rH1, payload: { reason: escalated } }
+          - { type: hook.decision, runId: $rH2, payload: { hook: normalise@1, point: beforeToolCall, result: rewrite } }
+          - { type: escalation.raised, runId: $rH2, payload: { escalation: { id: { $all: [$escH2, { $not: $escH1 }] }, pendingActions: [{ callId: c1, arguments: { $all: [$argsH2, { key: k2, value: V2-NORMALISED }] } }] } } }
+          - { type: run.ended, runId: $rH2, payload: { reason: escalated } }
+          - { type: tool.call, runId: $rH3, payload: { callId: c1, arguments: $argsH2 } }
+          - { type: tool.result, runId: $rH3, payload: { callId: c1 } }
+          - { type: run.ended, runId: $rH3, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call, payload: { arguments: { value: v2 } } }
+        - { type: tool.call, runId: $rH1 }
+        - { type: tool.call, runId: $rH2 }
+        - { type: hook.decision, runId: $rH2, payload: { hook: gate@1 } }
+        - { type: hook.decision, runId: $rH3 }
+  stubCalls:
+    gate: { count: 2 }
+    normalise: { count: 2 }
+    update_record:
+      - { arguments: $argsT2 }
+      - { arguments: $argsH2 }

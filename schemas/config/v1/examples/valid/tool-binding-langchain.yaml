@@ -1,0 +1,12 @@
+# TOOL-013: optional langchain binding.
+schema: https://alphega.io/agentry/schemas/config/tool/v1.json
+instance:
+  kind: Tool
+  id: wiki_lookup
+  version: 1
+  schemaVersion: "0.1.0"
+  description: Look up a Wikipedia article.
+  input: { type: object, required: [title], properties: { title: { type: string } } }
+  effect: read
+  egress: true
+  binding: { kind: langchain, tool: wikipedia }

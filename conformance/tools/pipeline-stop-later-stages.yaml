@@ -1,0 +1,338 @@
+schemaVersion: "0.1.0"
+id: tool.pipeline-stop-later-stages
+title: A call stopped at any pipeline stage reaches no later stage
+description: >-
+  `set_status` is set up so that every governance stage would act on it if
+  reached: it is mutating with `onTainted: block` (stage 5 would block in a
+  tainted session), `approval: always` (stage 7 would escalate), and
+  `minAssurance: multi_factor` (stage 4 would block the single_factor
+  principal p0). `archive_record`, in the catalog but not in the persona's
+  allowlist, has the same settings. Remote hooks `pre` (beforeToolCall) and
+  `post` (afterToolCall) match every tool except lookup, so a stub call
+  shows whether stage 6 or stage 10 ran. Each session stops one call at one
+  stage:
+
+  - $sAvailability (p0, tainted): in one step, `archive_record` (c2,
+    out of scope) and the unknown `purge_records` (c3), each with INVALID
+    arguments (a numeric key) → both stopped at stage 1 with `policy`
+    (`agentry.tool.unavailable`), reasons `out_of_scope` and `unknown`,
+    never `invalid_input`: availability is checked before argument
+    validation, so a swap of stages 1 and 2 would fail this session. No
+    assurance or taint decision.
+  - $sArguments (p0, tainted): `set_status` with a numeric key → stage 2
+    `invalid_input` (`agentry.tool.invalid_arguments`); no assurance or
+    taint decision.
+  - $sAssurance (p0, tainted): valid `set_status` → stage 4 `policy`
+    (`agentry.tool.assurance`); no taint decision.
+  - $sTaint (p1, tainted): valid `set_status` → stage 5 block; the
+    beforeToolCall hook is not called and there is no approval escalation.
+  - $sHook (p1, untainted): the `pre` hook blocks at stage 6; no approval
+    escalation.
+  - $sApproval (p1, untainted): `pre` continues; stage 7 escalates; the
+    reviewer rejects; the call is never dispatched and the afterToolCall
+    hook is never called.
+
+  In every session the stopped call is never dispatched, and the turn
+  continues. Across the fixture, `pre` is called only in $sHook and
+  $sApproval, and `post` is never called.
+requirements: [TOOL-030]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        remoteHooks:
+          - { id: pre, endpoint: "memory://hook-pre", region: test-region }
+          - { id: post, endpoint: "memory://hook-post", region: test-region }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: Hook
+        id: pre
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [block]
+        timeoutMs: 1000
+        match: "tool.id != 'lookup'"
+        source: { kind: remote, endpoint: pre }
+      - kind: Hook
+        id: post
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [afterToolCall]
+        results: [annotate]
+        timeoutMs: 1000
+        match: "tool.id != 'lookup'"
+        source: { kind: remote, endpoint: post }
+      - kind: Tool
+        id: set_status
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Set a record's status.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: mutating
+        onTainted: block
+        approval: always
+        minAssurance: multi_factor
+        binding: { kind: native, handler: test.set_status }
+      - kind: Tool
+        id: archive_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Archive a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: mutating
+        onTainted: block
+        approval: always
+        minAssurance: multi_factor
+        binding: { kind: native, handler: test.archive_record }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, set_status@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [pre@1, post@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p0, subject: user-0, assurance: single_factor }
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        # $sAvailability
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts:
+            - { type: tool_call, callId: c2, tool: archive_record, arguments: { key: 5 } }
+            - { type: tool_call, callId: c3, tool: purge_records, arguments: { key: 5 } }
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Stopped." }]
+          usage: { inputTokens: 40, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sArguments
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: set_status, arguments: { key: 5 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Stopped." }]
+          usage: { inputTokens: 40, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sAssurance
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: set_status, arguments: { key: k1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Stopped." }]
+          usage: { inputTokens: 40, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sTaint
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: set_status, arguments: { key: k1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Stopped." }]
+          usage: { inputTokens: 40, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sHook
+        - parts: [{ type: tool_call, callId: c1, tool: set_status, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Stopped." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sApproval
+        - parts: [{ type: tool_call, callId: c1, tool: set_status, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "The change was rejected." }]
+          usage: { inputTokens: 30, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "synthetic untrusted value" } }
+        - ok: { output: { value: "synthetic untrusted value" } }
+        - ok: { output: { value: "synthetic untrusted value" } }
+        - ok: { output: { value: "synthetic untrusted value" } }
+      set_status: []
+      archive_record: []
+    remoteHooks:
+      pre:
+        - { result: block, reasonCode: test.pre.blocked }
+        - { result: continue }
+      post: []
+script:
+  - action: run
+    bind: $sAvailability
+    tenant: t1
+    principal: p0
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1 then archive it" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sArguments
+    tenant: t1
+    principal: p0
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1 then set its status" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sAssurance
+    tenant: t1
+    principal: p0
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1 then set its status" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sTaint
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1 then set its status" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sHook
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set the status of k1" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sApproval
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set the status of k1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $esc, payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $sApproval
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000001", pendingActionId: $act, type: reject }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sAvailability:
+      events:
+        mode: contains
+        items:
+          - { type: tool.result, payload: { callId: c1 } }
+          - { type: policy.decision, payload: { kind: scope, outcome: block, callId: c2, reason: out_of_scope } }
+          - { type: tool.result, payload: { callId: c2, result: { error: { category: policy, code: agentry.tool.unavailable } } } }
+          - { type: policy.decision, payload: { kind: scope, outcome: block, callId: c3, reason: unknown } }
+          - { type: tool.result, payload: { callId: c3, result: { error: { category: policy, code: agentry.tool.unavailable } } } }
+          - { type: model.request, step: 3 }
+      absentEvents:
+        - { type: tool.result, payload: { result: { error: { category: invalid_input } } } }
+        - { type: tool.call, payload: { callId: c3 } }
+        - { type: policy.decision, payload: { kind: assurance } }
+        - { type: policy.decision, payload: { kind: taint } }
+        - { type: hook.decision }
+        - { type: escalation.raised }
+        - { type: tool.call, payload: { callId: c2 } }
+    $sArguments:
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: c1 } }
+          - { type: tool.result, payload: { callId: c2, result: { error: { category: invalid_input, code: agentry.tool.invalid_arguments } } } }
+          - { type: model.request, step: 3 }
+      absentEvents:
+        - { type: policy.decision, payload: { kind: assurance } }
+        - { type: policy.decision, payload: { kind: taint } }
+        - { type: hook.decision }
+        - { type: escalation.raised }
+        - { type: tool.call, payload: { callId: c2 } }
+    $sAssurance:
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: c1 } }
+          - { type: policy.decision, payload: { kind: assurance, outcome: block, callId: c2 } }
+          - { type: tool.result, payload: { callId: c2, result: { error: { category: policy, code: agentry.tool.assurance } } } }
+          - { type: model.request, step: 3 }
+      absentEvents:
+        - { type: policy.decision, payload: { kind: taint } }
+        - { type: hook.decision }
+        - { type: escalation.raised }
+        - { type: tool.call, payload: { callId: c2 } }
+    $sTaint:
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: c1 } }
+          - { type: policy.decision, payload: { kind: taint, outcome: block, callId: c2 } }
+          - { type: tool.result, payload: { callId: c2, result: { error: { category: policy } } } }
+          - { type: model.request, step: 3 }
+      absentEvents:
+        - { type: hook.decision }
+        - { type: escalation.raised }
+        - { type: tool.call, payload: { callId: c2 } }
+    $sHook:
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: pre@1, point: beforeToolCall, result: block } }
+          - { type: tool.result, payload: { callId: c1, result: { error: { category: policy } } } }
+          - { type: model.request, step: 2 }
+      absentEvents:
+        - { type: policy.decision, payload: { kind: taint } }
+        - { type: escalation.raised }
+        - { type: tool.call }
+        - { type: hook.decision, payload: { point: afterToolCall } }
+    $sApproval:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: escalation.raised, runId: $rA1, payload: { escalation: { sources: [approval], pendingActions: [{ callId: c1, tool: set_status }] } } }
+          - { type: run.ended, runId: $rA1, payload: { reason: escalated } }
+          - { type: tool.result, runId: $rA2, payload: { callId: c1, result: { error: { $any: true } } } }
+          - { type: model.request, runId: $rA2, step: 2 }
+          - { type: run.ended, runId: $rA2, payload: { reason: responded } }
+      absentEvents:
+        - { type: policy.decision, payload: { kind: taint } }
+        - { type: hook.decision }
+        - { type: tool.call }
+        - { type: tool.result, runId: $rA1 }
+  stubCalls:
+    lookup: { count: 4 }
+    set_status: { count: 0 }
+    archive_record: { count: 0 }
+    pre: { count: 2 }
+    post: { count: 0 }

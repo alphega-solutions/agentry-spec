@@ -1,0 +1,199 @@
+schemaVersion: "0.1.0"
+id: tool.def-assurance-order
+title: Assurance levels order none < single_factor < multi_factor < phishing_resistant; a principal meets minAssurance at an equal or stronger level
+description: >-
+  Four read tools require each level in turn. Each principal calls the tool
+  at its own level (passes: equal) and the tool one level above (fails:
+  weaker). The phishing_resistant principal also calls the `none` tool
+  (passes: stronger). A passing call is dispatched and is never blocked
+  (whether a passing check records a decision is not asserted); a failing
+  one is stopped at pipeline stage 4 with `policy`
+  (`agentry.tool.assurance`) and a blocking assurance `policy.decision`, and
+  the turn continues.
+requirements: [TOOL-005]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: read_none
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Read at assurance none.
+        input: { type: object, additionalProperties: false, properties: {} }
+        effect: read
+        minAssurance: none
+        binding: { kind: native, handler: test.read_none }
+      - kind: Tool
+        id: read_single
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Read at assurance single_factor.
+        input: { type: object, additionalProperties: false, properties: {} }
+        effect: read
+        minAssurance: single_factor
+        binding: { kind: native, handler: test.read_single }
+      - kind: Tool
+        id: read_multi
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Read at assurance multi_factor.
+        input: { type: object, additionalProperties: false, properties: {} }
+        effect: read
+        minAssurance: multi_factor
+        binding: { kind: native, handler: test.read_multi }
+      - kind: Tool
+        id: read_phish
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Read at assurance phishing_resistant.
+        input: { type: object, additionalProperties: false, properties: {} }
+        effect: read
+        minAssurance: phishing_resistant
+        binding: { kind: native, handler: test.read_phish }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [read_none@1, read_single@1, read_multi@1, read_phish@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals:
+        - { id: pNone, subject: user-none, assurance: none }
+        - { id: pSingle, subject: user-single, assurance: single_factor }
+        - { id: pMulti, subject: user-multi, assurance: multi_factor }
+        - { id: pPhish, subject: user-phish, assurance: phishing_resistant }
+  providers:
+    scripted-a:
+      responses:
+        # $sNone: read_none passes, read_single fails
+        - parts: [{ type: tool_call, callId: c1, tool: read_none, arguments: {} }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: read_single, arguments: {} }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Done." }]
+          usage: { inputTokens: 40, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sSingle: read_single passes, read_multi fails
+        - parts: [{ type: tool_call, callId: c1, tool: read_single, arguments: {} }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: read_multi, arguments: {} }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Done." }]
+          usage: { inputTokens: 40, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sMulti: read_multi passes, read_phish fails
+        - parts: [{ type: tool_call, callId: c1, tool: read_multi, arguments: {} }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: read_phish, arguments: {} }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Done." }]
+          usage: { inputTokens: 40, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sPhish: read_phish passes, read_none passes
+        - parts: [{ type: tool_call, callId: c1, tool: read_phish, arguments: {} }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: read_none, arguments: {} }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Done." }]
+          usage: { inputTokens: 40, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      read_none:
+        - ok: { output: { level: none } }
+        - ok: { output: { level: none } }
+      read_single:
+        - ok: { output: { level: single_factor } }
+      read_multi:
+        - ok: { output: { level: multi_factor } }
+      read_phish:
+        - ok: { output: { level: phishing_resistant } }
+script:
+  - action: run
+    bind: $sNone
+    tenant: t1
+    principal: pNone
+    persona: assistant@1
+    input: [{ type: text, text: "Read both" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sSingle
+    tenant: t1
+    principal: pSingle
+    persona: assistant@1
+    input: [{ type: text, text: "Read both" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sMulti
+    tenant: t1
+    principal: pMulti
+    persona: assistant@1
+    input: [{ type: text, text: "Read both" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sPhish
+    tenant: t1
+    principal: pPhish
+    persona: assistant@1
+    input: [{ type: text, text: "Read both" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sNone:
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: read_none } }
+          - { type: policy.decision, payload: { kind: assurance, outcome: block, callId: c2, tool: read_single } }
+          - { type: tool.result, payload: { callId: c2, result: { error: { category: policy, code: agentry.tool.assurance } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: policy.decision, payload: { callId: c1, outcome: block } }
+        - { type: tool.call, payload: { callId: c2 } }
+    $sSingle:
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: read_single } }
+          - { type: policy.decision, payload: { kind: assurance, outcome: block, callId: c2, tool: read_multi } }
+          - { type: tool.result, payload: { callId: c2, result: { error: { category: policy, code: agentry.tool.assurance } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: policy.decision, payload: { callId: c1, outcome: block } }
+        - { type: tool.call, payload: { callId: c2 } }
+    $sMulti:
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: read_multi } }
+          - { type: policy.decision, payload: { kind: assurance, outcome: block, callId: c2, tool: read_phish } }
+          - { type: tool.result, payload: { callId: c2, result: { error: { category: policy, code: agentry.tool.assurance } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: policy.decision, payload: { callId: c1, outcome: block } }
+        - { type: tool.call, payload: { callId: c2 } }
+    $sPhish:
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: read_phish } }
+          - { type: tool.call, payload: { callId: c2, tool: read_none } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: policy.decision, payload: { outcome: block } }
+  stubCalls:
+    read_none: { count: 2 }
+    read_single: { count: 1 }
+    read_multi: { count: 1 }
+    read_phish: { count: 1 }

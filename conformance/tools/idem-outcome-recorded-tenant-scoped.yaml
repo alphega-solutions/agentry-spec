@@ -1,0 +1,67 @@
+schemaVersion: "0.1.0"
+id: tool.idem-outcome-recorded-tenant-scoped
+title: A completed mutating call's outcome is recorded in the idempotency store of its own tenant only
+description: >-
+  Principals in tenants t1 and t2 each make one update_record call. Each
+  call's outcome is recorded in the idempotency store under the call's
+  idempotency key (taken from the tool context), in its own tenant. Neither
+  tenant's store holds the other's key. (That the started record is written
+  before dispatch is verified by the crash fixtures
+  idem-crash-before-dispatch-escalates and
+  idem-crash-after-dispatch-escalates.)
+requirements: [TOOL-060]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+    - id: t2
+      principals: [{ id: p2, subject: user-2, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v2 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true, by: "t1-call" } }
+        - ok: { output: { updated: true, by: "t2-call" } }
+script:
+  - action: run
+    bind: $s1
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $s2
+    tenant: t2
+    principal: p2
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v2" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  stubCalls:
+    update_record:
+      - { arguments: { key: k1, value: v1 }, context: { sessionId: $s1, idempotencyKey: $k1 } }
+      - { arguments: { key: k1, value: v2 }, context: { sessionId: $s2, idempotencyKey: $k2 } }
+  ports:
+    idempotencyStore:
+      t1:
+        $k1: { state: completed, outcome: { ok: { output: { updated: true, by: "t1-call" } } } }
+        $k2: { $absent: true }
+      t2:
+        $k2: { state: completed, outcome: { ok: { output: { updated: true, by: "t2-call" } } } }
+        $k1: { $absent: true }

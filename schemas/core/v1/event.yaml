@@ -243,7 +243,22 @@ $defs:
       callId: { type: string }
       tool: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/toolId" }
       provenances: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/provenances" }
+      reason:
+        description: >-
+          Why the decision was taken. Required for `scope` decisions (pipeline
+          stage 1, TOOL-030 as amended 2026-11-01): `unknown` (no such tool in
+          the catalog), `out_of_scope` (in the catalog but outside the
+          session's visible set: not in the persona allowlist or the runtime
+          scope), or `delegation` (outside a delegated session's visible set
+          only because of the caller's visible tools, TOOL-022, ORCH-013). The
+          model-facing error is identical in every case (TOOL-023).
+        type: string
+        minLength: 1
       details: { type: object }
+    if: { properties: { kind: { const: scope } } }
+    then:
+      required: [reason]
+      properties: { reason: { enum: [unknown, out_of_scope, delegation] } }
 
   checkpointSaved:
     type: object
@@ -298,10 +313,28 @@ $defs:
                 callId: { type: string }
                 tool: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/toolId" }
                 point: { enum: [sessionStart, beforeModelCall, afterModelCall, beforeToolCall, afterToolCall, beforeResponse] }
+                arguments:
+                  description: The call's arguments, for `tool_call` and `recovery` actions (HITL-011); for `tool_call`, the arguments a decision applies to.
+                  type: object
+                idempotencyKey:
+                  description: The call's idempotency key, for `recovery` actions (HITL-011, TOOL-062).
+                  type: string
+                  minLength: 1
+                contentRef:
+                  description: The content under review, stored in the BlobStore, for `content` actions (HITL-011, CORE-154).
+                  $ref: "https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/blobRef"
                 allowedDecisions:
                   type: array
                   minItems: 1
                   items: { enum: [approve, reject, edit, confirm] }
+              allOf:
+                # contents per kind (HITL-011)
+                - if: { properties: { kind: { const: tool_call } } }
+                  then: { required: [tool, arguments] }
+                - if: { properties: { kind: { const: recovery } } }
+                  then: { required: [tool, arguments, idempotencyKey] }
+                - if: { properties: { kind: { const: content } } }
+                  then: { required: [point, contentRef] }
           createdAt: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/timestamp" }
           expiresAt: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/timestamp" }
 

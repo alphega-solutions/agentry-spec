@@ -98,7 +98,7 @@ script:
     session: $sSusp
     reviewer: r1
     decisions:
-      - { decisionId: "01900000-0000-7000-8000-0000000000d1", escalationId: $esc, actionId: $act, type: approve }
+      - { decisionId: "01900000-0000-7000-8000-0000000000d1", pendingActionId: $act, type: approve }
     expect: { ok: true, endReason: responded }
   - action: run
     session: $sIdle

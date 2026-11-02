@@ -1,0 +1,12 @@
+# TOOL-004: trustedOutput must not appear in a tool definition.
+schema: https://alphega.io/agentry/schemas/config/tool/v1.json
+instance:
+  kind: Tool
+  id: lookup
+  version: 1
+  schemaVersion: "0.1.0"
+  description: Look up a record.
+  input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }
+  effect: read
+  trustedOutput: true
+  binding: { kind: native, handler: test.lookup }

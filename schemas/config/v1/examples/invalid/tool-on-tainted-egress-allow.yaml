@@ -1,0 +1,13 @@
+# TOOL-001: onTaintedEgress is block or escalate, never allow.
+schema: https://alphega.io/agentry/schemas/config/tool/v1.json
+instance:
+  kind: Tool
+  id: lookup
+  version: 1
+  schemaVersion: "0.1.0"
+  description: Look up a record.
+  input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }
+  effect: read
+  egress: true
+  onTaintedEgress: allow
+  binding: { kind: native, handler: test.lookup }

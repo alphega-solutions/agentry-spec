@@ -1,0 +1,15 @@
+# Copy of conformance/shared/baseline/tool-lookup.yaml.
+schema: https://alphega.io/agentry/schemas/config/tool/v1.json
+instance:
+  kind: Tool
+  id: lookup
+  version: 1
+  schemaVersion: "0.1.0"
+  description: Look up a record by key.
+  input:
+    type: object
+    additionalProperties: false
+    required: [key]
+    properties: { key: { type: string } }
+  effect: read
+  binding: { kind: native, handler: test.lookup }

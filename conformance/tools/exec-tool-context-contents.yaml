@@ -1,0 +1,93 @@
+schemaVersion: "0.1.0"
+id: tool.exec-tool-context-contents
+title: Every dispatched call receives a tool context with session, run, principal, idempotency key, deadline, cancellation signal and trace context
+description: >-
+  Two calls in one turn: lookup (timeoutMs 5000) at step 1 and update_record
+  (profile timeouts.tool PT30S) at step 2. The scripted provider and stubs
+  take no virtual time, so each call is dispatched at 2026-01-01T00:00:00Z
+  and its deadline is that instant plus its own timeout. Each stub record's
+  context carries the session ID and run ID of the persisted events, the
+  session's principal, a non-empty idempotency key (different for the two
+  calls, TOOL-041), the deadline, and a W3C trace context; the cancellation
+  signal is present but not raised (`cancelled: false`).
+requirements: [TOOL-040, TOOL-041]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: lookup
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Look up a record by key.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        timeoutMs: 5000
+        binding: { kind: native, handler: test.lookup }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Done." }]
+          usage: { inputTokens: 40, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "synthetic-value" } }
+      update_record:
+        - ok: { output: { updated: true } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1, then set it to v1" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: run.started, runId: $r }
+          - { type: tool.call, runId: $r, step: 1, payload: { callId: c1, tool: lookup } }
+          - { type: tool.call, runId: $r, step: 2, payload: { callId: c2, tool: update_record } }
+          - { type: run.ended, runId: $r, payload: { reason: responded } }
+  stubCalls:
+    lookup:
+      - arguments: { key: k1 }
+        cancelled: false
+        completed: true
+        context:
+          sessionId: $s
+          runId: $r
+          principal: { subject: user-1 }
+          idempotencyKey: { $all: [$k1, { $regex: "^.+$" }] }
+          deadline: { $regex: "^2026-01-01T00:00:05(\\.0+)?Z$" }
+          traceContext: { traceparent: { $regex: "^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$" } }
+    update_record:
+      - arguments: { key: k1, value: v1 }
+        cancelled: false
+        completed: true
+        context:
+          sessionId: $s
+          runId: $r
+          principal: { subject: user-1 }
+          idempotencyKey: { $all: [{ $regex: "^.+$" }, { $not: $k1 }] }
+          deadline: { $regex: "^2026-01-01T00:00:30(\\.0+)?Z$" }
+          traceContext: { traceparent: { $regex: "^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$" } }

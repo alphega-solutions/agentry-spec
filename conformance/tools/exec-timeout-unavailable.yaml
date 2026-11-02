@@ -1,0 +1,118 @@
+schemaVersion: "0.1.0"
+id: tool.exec-timeout-unavailable
+title: A call exceeding its timeout is cancelled and produces `unavailable` (`agentry.tool.timeout`, retryable)
+description: >-
+  Both tools declare timeoutMs 1000; the profile's timeouts.tool is PT30S,
+  and each slow stub takes 10 s on the virtual clock, so only the per-call
+  timeout can fire. Session 1: update_record (mutating, not idempotent)
+  times out. The stub receives the cancellation signal; the call's
+  tool.result is `unavailable`, `agentry.tool.timeout`, `retryable: true`;
+  the call may not be retried, so the run ends `failed` (TOOL-053). Session
+  2: lookup (read) times out on its first attempt; because the timeout is
+  retryable it is retried, the retry succeeds, and the run responds.
+requirements: [TOOL-051]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        timeoutMs: 1000
+        binding: { kind: native, handler: test.update_record }
+      - kind: Tool
+        id: lookup
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Look up a record by key.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        timeoutMs: 1000
+        binding: { kind: native, handler: test.lookup }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Found it." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - { ok: { output: { updated: true } }, delayMs: 10000 }
+      lookup:
+        - { ok: { output: { value: "slow-value" } }, delayMs: 10000 }
+        - ok: { output: { value: "fast-value" } }
+script:
+  - action: run
+    bind: $s1
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    expect: { ok: true, endReason: failed }
+  - action: run
+    bind: $s2
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s1:
+      state: closed
+      closeReason: failed
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: update_record } }
+          - type: tool.result
+            payload:
+              callId: c1
+              tool: update_record
+              result: { error: { category: unavailable, code: agentry.tool.timeout, retryable: true } }
+          - { type: run.ended, payload: { reason: failed } }
+      absentEvents:
+        - { type: model.request, step: 2 }
+        - { type: tool.result, payload: { result: { ok: { $any: true } } } }
+    $s2:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: c1, tool: lookup, result: { ok: { output: { value: "fast-value" } } } } }
+          - { type: model.request, step: 2 }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.result, payload: { result: { ok: { output: { value: "slow-value" } } } } }
+  stubCalls:
+    update_record:
+      - { arguments: { key: k1, value: v1 }, cancelled: true }
+    lookup:
+      - { arguments: { key: k1 }, cancelled: true }
+      - { arguments: { key: k1 }, cancelled: false, completed: true }
+  providerRequests:
+    scripted-a: { count: 3 }

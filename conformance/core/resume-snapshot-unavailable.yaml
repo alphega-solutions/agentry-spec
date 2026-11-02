@@ -72,7 +72,7 @@ script:
     session: $s
     reviewer: r1
     decisions:
-      - { decisionId: "01900000-0000-7000-8000-0000000000d3", escalationId: $esc, actionId: $act, type: approve }
+      - { decisionId: "01900000-0000-7000-8000-0000000000d3", pendingActionId: $act, type: approve }
     expect: { ok: false, error: { category: not_found, code: agentry.config.snapshot_unavailable } }
 expect:
   sessions:

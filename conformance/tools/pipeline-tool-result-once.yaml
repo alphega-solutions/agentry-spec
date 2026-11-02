@@ -1,0 +1,101 @@
+schemaVersion: "0.1.0"
+id: tool.pipeline-tool-result-once
+title: Every call produces exactly one `tool.result`; only dispatched calls produce `tool.call`, emitted before their result
+description: >-
+  Step 1 requests four calls in parallel: c1 lookup (dispatched, ok), c2
+  lookup (dispatched, the tool returns `not_found`), c3 an unknown tool
+  (stopped at stage 1) and c4 lookup with invalid arguments (stopped at
+  stage 2). The lookup results taint the session, so step 2's c5
+  update_record escalates through the taint rule; the reviewer rejects it on
+  resume.
+
+  c1 and c2 each have one `tool.call` followed by one `tool.result`. c3 and
+  c4 have no `tool.call` and one `tool.result` each, produced by the
+  harness. c5 has no `tool.call`, no result while it awaits the decision,
+  and one `tool.result` after the rejection. "Exactly one" is asserted on
+  the event log with `$count`.
+requirements: [TOOL-034]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      capabilities: { parallelToolCalls: true }
+      responses:
+        - parts:
+            - { type: tool_call, callId: c1, tool: lookup, arguments: { key: a } }
+            - { type: tool_call, callId: c2, tool: lookup, arguments: { key: b } }
+            - { type: tool_call, callId: c3, tool: ghost_tool, arguments: { key: c } }
+            - { type: tool_call, callId: c4, tool: lookup, arguments: { id: d } }
+          usage: { inputTokens: 20, outputTokens: 20, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c5, tool: update_record, arguments: { key: a, value: v1 } }]
+          usage: { inputTokens: 60, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Finished." }]
+          usage: { inputTokens: 70, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "A" } }
+        - error: { category: not_found, code: test.lookup.missing, retryable: false, message: "No such record." }
+      update_record: []
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up a, b, c and d, then update a" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $esc, payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000001", pendingActionId: $act, type: reject }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, runId: $r1, step: 1, payload: { callId: c1 } }
+          - { type: tool.result, runId: $r1, step: 1, payload: { callId: c1, result: { ok: { output: { value: "A" } } } } }
+          - { type: escalation.raised, runId: $r1, payload: { escalation: { pendingActions: [{ callId: c5 }] } } }
+          - { type: tool.result, runId: $r2, step: 2, payload: { callId: c5 } }
+      absentEvents:
+        - { type: tool.call, payload: { callId: c3 } }
+        - { type: tool.call, payload: { callId: c4 } }
+        - { type: tool.call, payload: { callId: c5 } }
+        - { type: tool.result, runId: $r1, payload: { callId: c5 } }
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $all:
+            - $contains:
+                - { type: tool.call, payload: { callId: c2 } }
+                - { type: tool.result, step: 1, payload: { callId: c2, result: { error: { category: not_found } } } }
+                - { type: tool.result, step: 1, payload: { callId: c3, result: { error: { category: policy, code: agentry.tool.unavailable } } } }
+                - { type: tool.result, step: 1, payload: { callId: c4, result: { error: { category: invalid_input, code: agentry.tool.invalid_arguments } } } }
+            - $count: { of: { type: tool.call, payload: { callId: c1 } }, equals: 1 }
+            - $count: { of: { type: tool.call, payload: { callId: c2 } }, equals: 1 }
+            - $count: { of: { type: tool.result, payload: { callId: c1 } }, equals: 1 }
+            - $count: { of: { type: tool.result, payload: { callId: c2 } }, equals: 1 }
+            - $count: { of: { type: tool.result, payload: { callId: c3 } }, equals: 1 }
+            - $count: { of: { type: tool.result, payload: { callId: c4 } }, equals: 1 }
+            - $count: { of: { type: tool.result, payload: { callId: c5 } }, equals: 1 }
+  stubCalls:
+    lookup: { count: 2 }
+    update_record: { count: 0 }

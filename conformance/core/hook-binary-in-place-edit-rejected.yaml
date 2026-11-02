@@ -130,9 +130,9 @@ expect:
         $all:
           - $contains:
               - { id: blob-img-1, hash: "sha256:82e0d9513a9797c3e32e35d6fff5c8648db4b0a8c74ffea2be6d5b827d3c7aa7", size: 20, data: "U1lOVEhFVElDLUlNQUdFLTAwMDE=" }
-          - $not:
-              $contains:
-                - { hash: "sha256:4977272cf888ce6f517bbabbd62ea59e9c231c9d17e7d70dd5dd822a60e5eb67" }
+          - $count:
+              of: { hash: "sha256:4977272cf888ce6f517bbabbd62ea59e9c231c9d17e7d70dd5dd822a60e5eb67" }
+              equals: 0
   delivered:
     $s: { text: "This request was blocked.", fallback: true }
   noPersistedContent:

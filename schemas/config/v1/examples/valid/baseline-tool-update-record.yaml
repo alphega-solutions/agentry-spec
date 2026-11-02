@@ -1,0 +1,16 @@
+# Copy of conformance/shared/baseline/tool-update-record.yaml.
+schema: https://alphega.io/agentry/schemas/config/tool/v1.json
+instance:
+  kind: Tool
+  id: update_record
+  version: 1
+  schemaVersion: "0.1.0"
+  description: Update a record.
+  input:
+    type: object
+    additionalProperties: false
+    required: [key, value]
+    properties: { key: { type: string }, value: { type: string } }
+  effect: mutating
+  idempotent: false
+  binding: { kind: native, handler: test.update_record }

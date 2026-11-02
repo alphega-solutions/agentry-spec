@@ -1,0 +1,276 @@
+schemaVersion: "0.1.0"
+id: tool.def-mutating-egress-stricter
+title: A tool that is both mutating and egress is subject to both taint outcomes; the stricter applies, after combining with bundle defaults
+description: >-
+  Every session except $sNoLabel is tainted by a `fetch_note` result that
+  also puts `pii`-labelled content in context, so both the mutating and the
+  egress condition hold for the mutating egress tools.
+
+  - $sEgressStricter: `send_update` (onTainted escalate, onTaintedEgress
+    block) → block.
+  - $sMutatingStricter: `push_update` (onTainted block, onTaintedEgress
+    escalate) → block.
+  - $sBothEscalate: `relay_update` (both escalate) → escalate. Neither
+    condition alone forces block.
+  - $sBundle: `notify_update` (onTainted allow, onTaintedEgress escalate);
+    the bundle's `toolTaintDefaults` entry `block` applies to each outcome,
+    so the effective outcome is block.
+  - $sNoLabel: tainted by an unlabelled lookup result, so only the mutating
+    condition holds for `send_update`; its outcome is escalate. This shows
+    the block in $sEgressStricter comes from the egress outcome.
+requirements: [TOOL-003]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: fetch_note
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Fetch a note.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        sensitivity: [pii]
+        binding: { kind: native, handler: test.fetch_note }
+      - kind: Tool
+        id: send_update
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Send an update to an external system.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: mutating
+        egress: true
+        onTainted: escalate
+        onTaintedEgress: block
+        binding: { kind: native, handler: test.send_update }
+      - kind: Tool
+        id: push_update
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Push an update to an external system.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: mutating
+        egress: true
+        onTainted: block
+        onTaintedEgress: escalate
+        binding: { kind: native, handler: test.push_update }
+      - kind: Tool
+        id: relay_update
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Relay an update to an external system.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: mutating
+        egress: true
+        onTainted: escalate
+        onTaintedEgress: escalate
+        binding: { kind: native, handler: test.relay_update }
+      - kind: Tool
+        id: notify_update
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Notify an external system of an update.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: mutating
+        egress: true
+        onTainted: allow
+        onTaintedEgress: escalate
+        binding: { kind: native, handler: test.notify_update }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        toolTaintDefaults: { notify_update@1: block }
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, fetch_note@1, send_update@1, push_update@1, relay_update@1, notify_update@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # $sEgressStricter
+        - parts: [{ type: tool_call, callId: c1, tool: fetch_note, arguments: { key: n1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: send_update, arguments: { key: n1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Not sent." }]
+          usage: { inputTokens: 40, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sMutatingStricter
+        - parts: [{ type: tool_call, callId: c1, tool: fetch_note, arguments: { key: n1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: push_update, arguments: { key: n1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Not pushed." }]
+          usage: { inputTokens: 40, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sBothEscalate
+        - parts: [{ type: tool_call, callId: c1, tool: fetch_note, arguments: { key: n1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: relay_update, arguments: { key: n1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sBundle
+        - parts: [{ type: tool_call, callId: c1, tool: fetch_note, arguments: { key: n1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: notify_update, arguments: { key: n1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Not notified." }]
+          usage: { inputTokens: 40, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sNoLabel
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: send_update, arguments: { key: k1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      fetch_note:
+        - ok: { output: { note: "Synthetic note" } }
+        - ok: { output: { note: "Synthetic note" } }
+        - ok: { output: { note: "Synthetic note" } }
+        - ok: { output: { note: "Synthetic note" } }
+      lookup:
+        - ok: { output: { value: "synthetic value" } }
+      send_update: []
+      push_update: []
+      relay_update: []
+      notify_update: []
+script:
+  - action: run
+    bind: $sEgressStricter
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Fetch n1 and send it" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sMutatingStricter
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Fetch n1 and push it" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sBothEscalate
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Fetch n1 and relay it" }]
+    expect: { ok: true, endReason: escalated }
+  - action: run
+    bind: $sBundle
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Fetch n1 and notify" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sNoLabel
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1 and send it" }]
+    expect: { ok: true, endReason: escalated }
+expect:
+  sessions:
+    $sEgressStricter:
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: c1 } }
+          - { type: policy.decision, payload: { kind: taint, outcome: block, callId: c2, tool: send_update } }
+          - { type: tool.result, payload: { callId: c2, result: { error: { category: policy } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: escalation.raised }
+        - { type: tool.call, payload: { callId: c2 } }
+    $sMutatingStricter:
+      events:
+        mode: subsequence
+        items:
+          - { type: policy.decision, payload: { kind: taint, outcome: block, callId: c2, tool: push_update } }
+          - { type: tool.result, payload: { callId: c2, result: { error: { category: policy } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: escalation.raised }
+        - { type: tool.call, payload: { callId: c2 } }
+    $sBothEscalate:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - { type: policy.decision, payload: { kind: taint, outcome: escalate, callId: c2, tool: relay_update } }
+          - { type: escalation.raised, payload: { escalation: { sources: [taint] } } }
+          - { type: run.ended, payload: { reason: escalated } }
+      absentEvents:
+        - { type: policy.decision, payload: { outcome: block } }
+        - { type: tool.call, payload: { callId: c2 } }
+    $sBundle:
+      events:
+        mode: subsequence
+        items:
+          - { type: policy.decision, payload: { kind: taint, outcome: block, callId: c2, tool: notify_update } }
+          - { type: tool.result, payload: { callId: c2, result: { error: { category: policy } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: escalation.raised }
+        - { type: tool.call, payload: { callId: c2 } }
+    $sNoLabel:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - { type: policy.decision, payload: { kind: taint, outcome: escalate, callId: c2, tool: send_update } }
+          - { type: escalation.raised }
+      absentEvents:
+        - { type: policy.decision, payload: { outcome: block } }
+        - { type: tool.call, payload: { callId: c2 } }
+  stubCalls:
+    send_update: { count: 0 }
+    push_update: { count: 0 }
+    relay_update: { count: 0 }
+    notify_update: { count: 0 }

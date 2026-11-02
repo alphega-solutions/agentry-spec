@@ -1,8 +1,10 @@
-# Interim names for Tool and Hook artifacts
+# Interim names for Hook artifacts
 
-Fixtures in Areas 1–3 need `Tool` and `Hook` artifacts before their schemas exist (Areas 4–5). They use these names, which the Area 4 and Area 5 schemas **must adopt**.
+Fixtures in Areas 1–4 need `Hook` artifacts before their schema exists (Area 5). They use these names, which the Area 5 schema **must adopt**.
 
-## Tool `binding`
+## Tool `binding` — now normative
+
+`Tool` names are normative in [`schemas/config/v1/tool.yaml`](../../schemas/config/v1/tool.yaml), which adopted the interim names below unchanged; `tools/validate.py` validates every `Tool` artifact against that schema. The table is kept for reference.
 
 | Kind | Fields |
 |---|---|
@@ -13,9 +15,9 @@ Fixtures in Areas 1–3 need `Tool` and `Hook` artifacts before their schemas ex
 | `retrieval` | `source` — a vector store source ID |
 | `langchain` | `tool` — the LangChain tool name |
 
-Credentials a binding needs are given in `credentials`, a map of names to secret references (`secret://<provider>/<name>`), never inline.
+Credentials a `native` or `langchain` binding needs are given in `credentials`, a map of names to secret references (`secret://<provider>/<name>`), never inline. Other binding kinds take no `credentials`: `mcp` and `http` bindings use their deployment server's or endpoint's credentials; `agent` and `retrieval` bindings take none.
 
-## Hook `source`
+## Hook `source` — interim
 
 | Kind | Fields |
 |---|---|

@@ -1,0 +1,77 @@
+schemaVersion: "0.1.0"
+id: tool.def-id-pattern
+title: A tool `id` must match ^[a-zA-Z0-9_-]{1,64}$
+description: >-
+  Ids containing a `.` (allowed in other artifact ids, but not by every
+  provider's tool-naming rules), a space, or a character outside ASCII, and
+  an id of 65 characters, are each rejected. An id of exactly 64 characters
+  using upper and lower case letters, digits, `_` and `-` loads.
+requirements: [TOOL-002]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  - load:
+      artifacts:
+        - kind: Tool
+          id: records.lookup
+          version: 1
+          schemaVersion: "0.1.0"
+          description: Look up a record.
+          input: { type: object, properties: { key: { type: string } } }
+          effect: read
+          binding: { kind: native, handler: test.lookup }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - kind: Tool
+          id: "record lookup"
+          version: 1
+          schemaVersion: "0.1.0"
+          description: Look up a record.
+          input: { type: object, properties: { key: { type: string } } }
+          effect: read
+          binding: { kind: native, handler: test.lookup }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - kind: Tool
+          id: "récord_lookup"
+          version: 1
+          schemaVersion: "0.1.0"
+          description: Look up a record.
+          input: { type: object, properties: { key: { type: string } } }
+          effect: read
+          binding: { kind: native, handler: test.lookup }
+    expect: { ok: false, error: { category: configuration } }
+  # 65 characters
+  - load:
+      artifacts:
+        - kind: Tool
+          id: "a1234567890123456789012345678901234567890123456789012345678901234"
+          version: 1
+          schemaVersion: "0.1.0"
+          description: Look up a record.
+          input: { type: object, properties: { key: { type: string } } }
+          effect: read
+          binding: { kind: native, handler: test.lookup }
+    expect: { ok: false, error: { category: configuration } }
+  # 64 characters, every permitted character class
+  - load:
+      artifacts:
+        - kind: Tool
+          id: "Record_Lookup-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN"
+          version: 1
+          schemaVersion: "0.1.0"
+          description: Look up a record.
+          input: { type: object, properties: { key: { type: string } } }
+          effect: read
+          binding: { kind: native, handler: test.lookup }
+    expect: { ok: true }
+expect: {}

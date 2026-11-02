@@ -1,0 +1,73 @@
+schemaVersion: "0.1.0"
+id: tool.pipeline-invalid-arguments-corrected
+title: Arguments that fail `input` validation return `invalid_input` to the model, which can correct them in the next step
+description: >-
+  The model first calls lookup with a missing required key, then with an
+  unexpected extra property; each is stopped at stage 2 with `invalid_input`
+  (`agentry.tool.invalid_arguments`), returned to the model as the call's
+  result, and not dispatched. The model then corrects the arguments and the
+  call is dispatched with them. The turn ends `responded`.
+requirements: [TOOL-030]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: {} }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: lookup, arguments: { key: k1, extra: "x" } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c3, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Found it." }]
+          usage: { inputTokens: 50, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "synthetic value" } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, step: 1, payload: { callId: c1, result: { error: { category: invalid_input, code: agentry.tool.invalid_arguments } } } }
+          - { type: tool.result, step: 2, payload: { callId: c2, result: { error: { category: invalid_input, code: agentry.tool.invalid_arguments } } } }
+          - { type: tool.call, step: 3, payload: { callId: c3, arguments: { key: k1 } } }
+          - { type: tool.result, step: 3, payload: { callId: c3, result: { ok: { output: { value: "synthetic value" } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call, payload: { callId: c1 } }
+        - { type: tool.call, payload: { callId: c2 } }
+  stubCalls:
+    lookup: [{ arguments: { key: k1 } }]
+  providerRequests:
+    scripted-a:
+      - {}
+      - messages:
+          $contains:
+            - role: tool
+              parts: [{ type: tool_result, callId: c1, result: { error: { category: invalid_input, code: agentry.tool.invalid_arguments } } }]
+      - messages:
+          $contains:
+            - role: tool
+              parts: [{ type: tool_result, callId: c2, result: { error: { category: invalid_input, code: agentry.tool.invalid_arguments } } }]
+      - {}
+  delivered:
+    $s: { text: "Found it." }

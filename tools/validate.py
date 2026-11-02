@@ -7,6 +7,7 @@ from __future__ import annotations
 import re
 import sys
 
+import yaml
 from jsonschema import Draft202012Validator, FormatChecker
 
 from common import ROOT, fixture_files, load_schemas, load_yaml, registry, spec_requirements
@@ -97,10 +98,14 @@ KIND_SCHEMAS = {
     "Persona": f"{CONFIG}/persona/v1.json",
     "HarnessProfile": f"{CONFIG}/harness-profile/v1.json",
     "Deployment": f"{CONFIG}/deployment/v1.json",
+    "Tool": f"{CONFIG}/tool/v1.json",
 }
-# Kinds whose schemas arrive with Areas 4-5; their artifacts are not yet validated.
-PENDING_KINDS = {"Tool", "Hook"}
+# Kinds whose schemas arrive with Area 5; their artifacts are checked only
+# against the interim names in conformance/shared/NAMES.md.
+PENDING_KINDS = {"Hook"}
 BEHAVIOURAL = ("PolicyBundle", "Persona", "HarnessProfile")
+# Kinds that are not behavioural layers and carry no merge annotations (CFG-021, TOOL-001).
+UNLAYERED = ("Deployment", "Tool")
 MERGE_RULES = {"union", "intersect", "min", "stricter", "locked", "override"}
 # Envelope fields are not merged; extensions are vendor data.
 UNMERGED = {"kind", "id", "version", "schemaVersion", "extensions"}
@@ -128,14 +133,15 @@ SECRET_PATTERN = re.compile(r"^secret://[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9_.-
 # 6 and 7 (HOOK-104, HITL-023, HITL-081, CTX-102). Paths are `Kind.field`,
 # with `*` for a map key. Every `stricter` field in a configuration schema must
 # be listed here with exactly this order, and every listed path in a schema'd
-# kind must exist. Families whose fields live in kinds without a schema yet
-# (Tool, Hook; Areas 4-5) list their paths for when those schemas land.
+# behavioural kind must exist. Tool fields with these values (approval,
+# onTainted, onTaintedEgress) are not merged, so they are not listed; the
+# Hook failure mode lists its paths when the Area 5 schema lands.
 STRICTNESS_ORDERS = [
     # (family, order, paths)
     ("Hook failure mode", ["failClosed", "failOpen"], []),  # Hook schema (Area 5)
     ("Delivery mode", ["buffered", "streamed"], ["HarnessProfile.deliveryMode"]),
-    ("Taint outcome", ["block", "escalate", "allow"], ["PolicyBundle.toolTaintDefaults.*"]),  # + Tool onTainted/onTaintedEgress (Area 4)
-    ("Approval policy", ["always", "policy", "never"], ["PolicyBundle.sensitivityPolicies.*.approval"]),  # + Tool approval (Area 4)
+    ("Taint outcome", ["block", "escalate", "allow"], ["PolicyBundle.toolTaintDefaults.*"]),
+    ("Approval policy", ["always", "policy", "never"], ["PolicyBundle.sensitivityPolicies.*.approval"]),
     ("Checkpoint granularity", ["tool", "turn"], ["HarnessProfile.checkpoint"]),
     ("Include reasoning in traces", [False, True], ["HarnessProfile.trace.includeReasoning"]),
     ("Deterministic guardrails (HOOK-104)", [True, False],
@@ -149,15 +155,8 @@ STRICTNESS_ORDERS = [
 ]
 CANONICAL_ORDER = {path: order for _, order, paths in STRICTNESS_ORDERS for path in paths}
 
-# Interim Tool/Hook names (conformance/shared/NAMES.md) until Areas 4-5 schemas exist.
-TOOL_BINDINGS = {
-    "native": ["handler"],
-    "mcp": ["server", "tool"],
-    "http": ["endpoint", "operation"],
-    "agent": ["persona"],
-    "retrieval": ["source"],
-    "langchain": ["tool"],
-}
+# Interim Hook names (conformance/shared/NAMES.md) until the Area 5 schema exists.
+# Tool names are normative in schemas/config/v1/tool.yaml.
 HOOK_SOURCES = {
     "rule": ["when", "then"],
     "native": ["handler"],
@@ -165,13 +164,12 @@ HOOK_SOURCES = {
     "model": ["model", "instructions", "maxTokens"],
 }
 # Fields whose value is an ID declared elsewhere (deployment or registry), not a URI.
-ID_FIELDS = {"handler", "server", "endpoint", "source"}
+ID_FIELDS = {"handler", "endpoint"}
 
 
 def _check_pending(art: dict) -> list[str]:
-    """Minimal check of a Tool or Hook artifact against NAMES.md."""
-    kind = art.get("kind")
-    key, table = ("binding", TOOL_BINDINGS) if kind == "Tool" else ("source", HOOK_SOURCES)
+    """Minimal check of a Hook artifact against NAMES.md."""
+    key, table = "source", HOOK_SOURCES
     block = art.get(key)
     if not isinstance(block, dict):
         return [f"{key}: missing or not an object (NAMES.md)"]
@@ -190,8 +188,6 @@ def _check_pending(art: dict) -> list[str]:
         v = block.get(f)
         if v is not None and not (isinstance(v, str) and ID_PATTERN.match(v)):
             problems.append(f"{key}.{f}: {v!r} is not an ID (NAMES.md)")
-    if bkind == "agent" and "persona" in block and not REF_PATTERN.match(str(block["persona"])):
-        problems.append(f"{key}.persona: {block['persona']!r} is not id@version")
     creds = block.get("credentials")
     if creds is not None:
         if not isinstance(creds, dict):
@@ -301,7 +297,8 @@ def check_merge_annotations(schemas: dict) -> list[str]:
       STRICTNESS_ORDERS; x-agentry-order appears only with `stricter`;
     - `override` only on allowlisted paths;
     - a field path declared by more than one kind has the same rule in each;
-    - deployments, including everything they reference, carry no annotations.
+    - deployments and tools, including everything they reference, carry no
+      annotations.
     """
     errors: list[str] = []
     rules_by_path: dict[str, dict[str, str]] = {}
@@ -379,22 +376,23 @@ def check_merge_annotations(schemas: dict) -> list[str]:
         if path.split(".")[0] in BEHAVIOURAL and path not in seen_paths:
             errors.append(f"merge: STRICTNESS_ORDERS lists {path}, which no schema declares")
 
-    def no_merge(base: str, node, where: str, seen: set) -> None:
+    def no_merge(kind: str, base: str, node, where: str, seen: set) -> None:
         if isinstance(node, dict):
             if "x-agentry-merge" in node or "x-agentry-order" in node:
-                errors.append(f"merge: {where} carries a merge annotation; deployments are not a behavioural layer (CFG-021)")
+                errors.append(f"merge: {where} carries a merge annotation; {kind} is not a behavioural layer (CFG-021)")
             if isinstance(node.get("$ref"), str):
                 uri, rbase, target = _deref(schemas, base, node["$ref"])
                 if uri not in seen:
-                    no_merge(rbase, target, f"{where}->{uri}", seen | {uri})
+                    no_merge(kind, rbase, target, f"{where}->{uri}", seen | {uri})
             for k, v in node.items():
-                no_merge(base, v, f"{where}/{k}", seen)
+                no_merge(kind, base, v, f"{where}/{k}", seen)
         elif isinstance(node, list):
             for i, v in enumerate(node):
-                no_merge(base, v, f"{where}/{i}", seen)
+                no_merge(kind, base, v, f"{where}/{i}", seen)
 
-    dep = KIND_SCHEMAS["Deployment"]
-    no_merge(dep, schemas[dep], "Deployment", {dep + "#"})
+    for kind in UNLAYERED:
+        sid = KIND_SCHEMAS[kind]
+        no_merge(kind, sid, schemas[sid], kind, {sid + "#"})
     return errors
 
 
@@ -463,8 +461,8 @@ def check_inline_config(doc: dict, schemas: dict, reg) -> list[str]:
     """Inline configuration that is expected to load must be schema-valid.
 
     Artifacts in setup.config.artifacts, and in `load` steps expected to
-    succeed, are validated against their kind's schema (Tool and Hook against
-    the interim names in NAMES.md). Artifacts in steps expected to fail are
+    succeed, are validated against their kind's schema (Hook against the
+    interim names in NAMES.md). Artifacts in steps expected to fail are
     not, since they may be invalid on purpose. Run-request `overrides` must use
     harness profile field paths, and `remove` must name artifacts present in
     the base or previous set when that set is known.
@@ -528,6 +526,303 @@ def check_inline_config(doc: dict, schemas: dict, reg) -> list[str]:
     return problems
 
 
+def _base_artifacts(base: str) -> dict | None:
+    d = ROOT / "conformance" / "shared" / base
+    if not d.is_dir():
+        return None
+    arts = {}
+    for p in sorted(d.glob("*.yaml")):
+        doc = load_yaml(p)
+        if isinstance(doc, dict) and "kind" in doc:
+            arts[(doc.get("kind"), doc.get("id"), doc.get("version"))] = doc
+    return arts
+
+
+def _apply(arts: dict, add, remove) -> dict:
+    out = dict(arts)
+    for a in add or []:
+        if isinstance(a, dict):
+            out[(a.get("kind"), a.get("id"), a.get("version"))] = a
+    for ref in remove or []:
+        rid, _, ver = str(ref).partition("@")
+        for k in [k for k in out if k[1] == rid and str(k[2]) == ver]:
+            del out[k]
+    return out
+
+
+def _native(arts: dict, hooks: bool = False) -> list[tuple[str, str]]:
+    """(artifact ID, handler) of native-bound Tools, and with `hooks` also of
+    Hooks whose `source` is native (NAMES.md)."""
+    found = []
+    for a in arts.values():
+        if a.get("kind") == "Tool":
+            b = a.get("binding")
+        elif hooks and a.get("kind") == "Hook":
+            b = a.get("source")
+        else:
+            continue
+        if isinstance(b, dict) and b.get("kind") == "native" and isinstance(b.get("handler"), str):
+            found.append((str(a.get("id")), b["handler"]))
+    return sorted(found)
+
+
+def _load_succeeds(step: dict) -> bool:
+    """A load is expected to succeed unless its `expect` says `ok: false` or names an error."""
+    exp = step.get("expect") or {}
+    return exp.get("ok") is not False and "error" not in exp
+
+
+def _load_artifacts(load: dict) -> list:
+    """Artifacts a load step adds: `artifacts` plus parsed `raw` YAML texts."""
+    arts = list(load.get("artifacts") or [])
+    for text in load.get("raw") or []:
+        try:
+            doc = yaml.safe_load(text)
+        except Exception:  # noqa: BLE001
+            continue
+        if isinstance(doc, dict):
+            arts.append(doc)
+    return arts
+
+
+def _configs(doc: dict) -> list[tuple[str, dict, bool]] | None:
+    """Every configuration the fixture loads: (where, artifacts, expected to succeed).
+
+    A load starts from the last load expected to succeed (initially setup.config).
+    None when the base set is unknown.
+    """
+    setup = doc.get("setup") or {}
+    cfg = setup.get("config") or {}
+    arts = _base_artifacts(cfg.get("base", "")) if cfg.get("base") else None
+    if arts is None:
+        return None
+    arts = _apply(arts, cfg.get("artifacts"), cfg.get("remove"))
+    configs = [("setup.config", arts, True)]
+    current = arts
+    for i, step in enumerate(doc.get("script", []) or []):
+        if "load" not in step:
+            continue
+        load = step["load"] or {}
+        nxt = _apply(current, _load_artifacts(load), load.get("remove"))
+        ok = _load_succeeds(step)
+        configs.append((f"script[{i}].load", nxt, ok))
+        if ok:
+            current = nxt
+    return configs
+
+
+def check_handlers(doc: dict) -> list[str]:
+    """Native bindings resolve to registered handlers (TOOL-010, fixture `setup.handlers`).
+
+    Covers native-bound Tools and Hooks with a native `source`. By default
+    every native handler is registered except names beginning
+    `unregistered.`; `setup.handlers`, when given, restricts registration to
+    exactly those names. A handler that is not registered may appear only in a
+    load expected to fail (`expect.ok: false` or `expect.error`), which is how
+    fixtures test an unresolved binding; a load with no `expect.ok` is
+    expected to succeed.
+    """
+    setup = doc.get("setup") or {}
+    configs = _configs(doc)
+    if configs is None:
+        return []
+    explicit = set(setup["handlers"]) if "handlers" in setup else None
+
+    def registered(h: str) -> bool:
+        if h.startswith("unregistered."):
+            return False
+        return explicit is None or h in explicit
+
+    problems = []
+    for where, a, must in configs:
+        for aid, h in _native(a, hooks=True):
+            if must and not registered(h):
+                problems.append(f"{where}: native handler {h} of {aid} is not registered "
+                                f"(setup.handlers, TOOL-010)")
+    return sorted(set(problems))
+
+
+MATCHERS = {"$any", "$absent", "$regex", "$len", "$contains", "$not", "$every",
+            "$gte", "$lte", "$all", "$count"}
+
+
+def _pattern_sites(doc: dict):
+    """(path, value) of every place matchers and placeholders may appear:
+    step `expect`, `capture` and `startAfter` (inside `concurrently` too), then
+    the top-level `expect`, in document order."""
+    def step_sites(step: dict, where: str):
+        if "concurrently" in step:
+            for k, sub in enumerate(step["concurrently"] or []):
+                yield from step_sites(sub, f"{where}.concurrently[{k}]")
+        for j, cap in enumerate(step.get("capture") or []):
+            yield f"{where}.capture[{j}]", cap
+        if "startAfter" in step:
+            yield f"{where}.startAfter", step["startAfter"]
+        if "expect" in step:
+            yield f"{where}.expect", step["expect"]
+
+    for i, step in enumerate(doc.get("script", []) or []):
+        if isinstance(step, dict):
+            yield from step_sites(step, f"script[{i}]")
+    yield "expect", doc.get("expect")
+
+
+def check_matchers(doc: dict) -> list[str]:
+    """Matcher keys come from the known list; `$count` is well formed; `$not`
+    never wraps `$contains` (use `$count`). Any other `$`-key must be a
+    placeholder. Walks expectations, captures and `startAfter` patterns."""
+    problems: list[str] = []
+
+    def walk(v, path: str) -> None:
+        if isinstance(v, dict):
+            for k in v:
+                if (isinstance(k, str) and k.startswith("$") and k not in MATCHERS
+                        and not PLACEHOLDER.match(k)):
+                    problems.append(f"{path}: {k!r} is neither a known matcher "
+                                    f"({', '.join(sorted(MATCHERS))}) nor a placeholder")
+            if "$count" in v:
+                c = v["$count"]
+                bounds = [k for k in ("equals", "gte", "lte") if isinstance(c, dict) and k in c]
+                if (not isinstance(c, dict) or "of" not in c or len(bounds) != 1
+                        or set(c) - {"of", "equals", "gte", "lte"}
+                        or not (isinstance(c[bounds[0]], int) and c[bounds[0]] >= 0)):
+                    problems.append(f"{path}: $count must be {{of: m, equals|gte|lte: n}} with exactly one bound")
+            if "$not" in v and isinstance(v["$not"], dict) and "$contains" in v["$not"]:
+                problems.append(f"{path}: $not around $contains; use $count")
+            for k, x in v.items():
+                walk(x, f"{path}/{k}")
+        elif isinstance(v, list):
+            for i, x in enumerate(v):
+                walk(x, f"{path}/{i}")
+
+    for where, value in _pattern_sites(doc):
+        walk(value, where)
+    return problems
+
+
+def check_placeholder_keys(doc: dict) -> list[str]:
+    """A placeholder map key must be bound before `$absent` is applied under it.
+
+    Expectations are evaluated in document order, depth-first (step
+    expectations as their steps run, then the top-level `expect`). A key
+    placeholder binds where it is first matched; under `$absent` nothing can
+    be matched, so the key must already be bound, earlier in document order or
+    by a step's `bind` or `capture`.
+    """
+    problems: list[str] = []
+    bound: set[str] = set()
+
+    def step_binds(step: dict) -> None:
+        if "concurrently" in step:
+            for sub in step["concurrently"] or []:
+                step_binds(sub)
+        if isinstance(step.get("bind"), str):
+            bound.add(step["bind"])
+        for cap in step.get("capture") or []:
+            bound.update((cap.get("bind") or {}).values())
+
+    def has_absent(v) -> bool:
+        return isinstance(v, dict) and "$absent" in v
+
+    def walk(v, path: str, binding: bool) -> None:
+        if isinstance(v, str) and PLACEHOLDER.match(v) and binding:
+            bound.add(v)
+        elif isinstance(v, dict):
+            for k, x in v.items():
+                is_ph = isinstance(k, str) and PLACEHOLDER.match(k) and k not in MATCHERS
+                if is_ph and has_absent(x) and k not in bound:
+                    problems.append(f"{path}: placeholder key {k} is used under $absent before it is bound "
+                                    f"(bind it earlier in document order or by a capture)")
+                if is_ph and binding and not has_absent(x):
+                    bound.add(k)
+                # Nothing under $not or $absent binds.
+                walk(x, f"{path}/{k}", binding and k not in ("$not", "$absent"))
+        elif isinstance(v, list):
+            for i, x in enumerate(v):
+                walk(x, f"{path}/{i}", binding)
+
+    for i, step in enumerate(doc.get("script", []) or []):
+        if isinstance(step, dict):
+            step_binds(step)
+            if "expect" in step:
+                walk(step["expect"], f"script[{i}].expect", True)
+    walk(doc.get("expect"), "expect", True)
+    return problems
+
+
+def check_stub_call_keys(doc: dict) -> list[str]:
+    """`expect.stubCalls` keys name a stub: a native tool ID, `<server>/<tool>`,
+    `<endpoint>/<operation>`, or a remote hook ID. Every `stubs.tools` key is
+    the ID of a native-bound tool in some configuration the fixture loads."""
+    problems: list[str] = []
+    setup = doc.get("setup") or {}
+    stubs = setup.get("stubs") or {}
+    configs = _configs(doc)
+    if configs is not None and stubs.get("tools"):
+        tool_ids = {str(a.get("id")) for _, arts, _ in configs for a in arts.values() if a.get("kind") == "Tool"}
+        native_ids = {tid for _, arts, _ in configs for tid, _ in _native(arts)}
+        for k in stubs["tools"]:
+            if k not in tool_ids:
+                problems.append(f"setup.stubs.tools: {k} is not a tool ID in any configuration the fixture loads")
+            elif k not in native_ids:
+                problems.append(f"setup.stubs.tools: {k} is not native-bound in any configuration the fixture loads "
+                                f"(use stubs.mcpServers or stubs.httpEndpoints)")
+    calls = (doc.get("expect") or {}).get("stubCalls") or {}
+    if not calls:
+        return problems
+    valid = set(stubs.get("tools") or {}) | set(stubs.get("remoteHooks") or {})
+    for srv, server in (stubs.get("mcpServers") or {}).items():
+        names = set((server or {}).get("tools") or {})
+        for change in (server or {}).get("changes") or []:
+            names |= set(change.get("tools") or {})
+        valid |= {f"{srv}/{t}" for t in names}
+    for ep, ops in (stubs.get("httpEndpoints") or {}).items():
+        valid |= {f"{ep}/{op}" for op in (ops or {})}
+    cfg = setup.get("config") or {}
+    arts = _base_artifacts(cfg.get("base", "")) if cfg.get("base") else {}
+    arts = _apply(arts or {}, cfg.get("artifacts"), cfg.get("remove"))
+    for step in doc.get("script", []) or []:
+        if "load" in step:
+            arts = _apply(arts, _load_artifacts(step["load"] or {}), (step["load"] or {}).get("remove"))
+    explicit = set(setup["handlers"]) if "handlers" in setup else None
+    valid |= {tid for tid, h in _native(arts)
+              if not h.startswith("unregistered.") and (explicit is None or h in explicit)}
+    return problems + [f"expect.stubCalls: {k} names no stub (tool ID, <server>/<tool>, <endpoint>/<operation> "
+                       f"or remote hook ID)" for k in calls if k not in valid]
+
+
+def check_crashes(doc: dict) -> list[str]:
+    """A crash step arms a crash for a later action step on its session, and the
+    crashed action is followed by a `restart` step before the next action step."""
+    problems: list[str] = []
+    script = doc.get("script", []) or []
+
+    def is_action(st) -> bool:
+        return isinstance(st, dict) and ("action" in st or "concurrently" in st)
+
+    for i, step in enumerate(script):
+        if "crash" not in step:
+            continue
+        target = (step["crash"] or {}).get("session")
+        crashed = None
+        for j in range(i + 1, len(script)):
+            later = script[j]
+            if "action" in later and (target is None or target in (later.get("session"), later.get("bind"))):
+                crashed = j
+                break
+        if crashed is None:
+            problems.append(f"script[{i}]: crash has no later action step on {target or 'any session'}")
+            continue
+        nxt = next((k for k in range(crashed + 1, len(script))
+                    if "restart" in script[k] or is_action(script[k])), None)
+        if nxt is None:
+            problems.append(f"script[{crashed}]: crashed action is not followed by a `restart` step")
+        elif "restart" not in script[nxt]:
+            problems.append(f"script[{crashed}]: crashed action is followed by action script[{nxt}] "
+                            f"without a `restart` step first")
+    return problems
+
+
 def main() -> int:
     errors: list[str] = []
     schemas = load_schemas()
@@ -579,6 +874,11 @@ def main() -> int:
         if target == FIXTURE_ID:
             errors += [f"{fx.relative_to(ROOT)}: {e}" for e in check_placeholders(doc)]
             errors += [f"{fx.relative_to(ROOT)}: {e}" for e in check_inline_config(doc, schemas, reg)]
+            errors += [f"{fx.relative_to(ROOT)}: {e}" for e in check_handlers(doc)]
+            errors += [f"{fx.relative_to(ROOT)}: {e}" for e in check_matchers(doc)]
+            errors += [f"{fx.relative_to(ROOT)}: {e}" for e in check_placeholder_keys(doc)]
+            errors += [f"{fx.relative_to(ROOT)}: {e}" for e in check_crashes(doc)]
+            errors += [f"{fx.relative_to(ROOT)}: {e}" for e in check_stub_call_keys(doc)]
 
     # 4. Shared configuration artifacts validate against their kind's schema.
     errors += check_shared_config(schemas, reg)

@@ -6,14 +6,42 @@ description: >-
   blob reference in the session's tenant, and no inline data. Its only defect
   is the additional external `url` field for retrieval, so the rejection can
   only come from CORE-114. No session is created, no model call is made, and
-  the URL is never fetched.
+  the URL is never fetched: the deployment declares the URL's host as an
+  HTTP endpoint whose stub records every request.
 requirements: [CORE-114]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:
   clock: "2026-01-01T00:00:00Z"
   idSeed: 1
-  config: { base: baseline }
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        httpEndpoints:
+          - id: files
+            endpoint: "https://files.example.test"
+            region: test-region
+            operations:
+              getChart: { method: GET, path: "/chart.png" }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
   tenants:
     - id: t1
       principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
@@ -31,7 +59,8 @@ setup:
           data: "U1lOVEhFVElDLUlNQUdFLTAwMDE="
   stubs:
     httpEndpoints:
-      "https://files.example.test/chart.png": []
+      files:
+        getChart: []
 script:
   - action: run
     tenant: t1
@@ -49,4 +78,4 @@ expect:
   providerRequests:
     scripted-a: { count: 0 }
   stubCalls:
-    "https://files.example.test/chart.png": { count: 0 }
+    files/getChart: { count: 0 }

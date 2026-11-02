@@ -1,0 +1,11 @@
+# TOOL-002: tool id must match ^[a-zA-Z0-9_-]{1,64}$ (no dots).
+schema: https://alphega.io/agentry/schemas/config/tool/v1.json
+instance:
+  kind: Tool
+  id: records.lookup
+  version: 1
+  schemaVersion: "0.1.0"
+  description: Look up a record.
+  input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }
+  effect: read
+  binding: { kind: native, handler: test.lookup }

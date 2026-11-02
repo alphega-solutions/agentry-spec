@@ -1,0 +1,81 @@
+schemaVersion: "0.1.0"
+id: tool.exec-model-error-excludes-details
+title: A tool error returned to the model carries only its safe message, code and category, never `details`
+description: >-
+  lookup returns an error in the Area 1 shape (TOOL-050) with category
+  `invalid_input`, which is returned to the model, and structured `details`
+  holding a synthetic internal marker. The tool_result part the model
+  receives carries the category, code and message, and no `details` or
+  `extensions`; the marker string appears nowhere in what the model is sent.
+requirements: [TOOL-050, TOOL-054]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "That key is not valid." }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - error:
+            category: invalid_input
+            code: test.lookup.unknown_key
+            retryable: false
+            message: "The key is not known."
+            details: { internalPath: "SYN-DETAIL-0054-INTERNAL", shard: "SYN-SHARD-0054" }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: c1, result: { error: { category: invalid_input, code: test.lookup.unknown_key } } } }
+          - { type: model.request, step: 2 }
+          - { type: run.ended, payload: { reason: responded } }
+  stubCalls:
+    lookup: { count: 1 }
+  providerRequests:
+    scripted-a:
+      - {}
+      - messages:
+          $all:
+            - $contains:
+                - role: tool
+                  parts:
+                    $contains:
+                      - type: tool_result
+                        callId: c1
+                        result:
+                          error:
+                            category: invalid_input
+                            code: test.lookup.unknown_key
+                            message: "The key is not known."
+                            details: { $absent: true }
+                            extensions: { $absent: true }
+            - $count:
+                of:
+                  role: tool
+                  parts:
+                    $count:
+                      of: { result: { error: { message: { $regex: "SYN-DETAIL|SYN-SHARD" } } } }
+                      gte: 1
+                equals: 0

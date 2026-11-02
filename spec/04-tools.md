@@ -240,3 +240,20 @@ Tooling that generates `Tool` artifacts from an MCP server's tool list is encour
 - TOOL-032: agent-bound calls in one step run one at a time, in request order (ORCH-040).
 - TOOL-051: time spent `suspended` does not count toward tool deadlines (ORCH-044).
 - TOOL-053 / TOOL-062: agent-bound tools always record a started record holding the child session ID and are idempotent by construction (ORCH-002); their error results never end the parent run by themselves (ORCH-051).
+
+## Amendment 2026-11-01 — from Phase 4 (Area 4 schemas)
+
+- **TOOL-010, `http` bindings**: a binding names an `endpoint` and an `operation`. Deployments declare `httpEndpoints`, each with a base URL and the operations tools may call (method and path template); an undeclared endpoint or operation is a configuration error. *(Extends CFG-110.)*
+- **Binding fields** are normative in `schemas/config/v1/tool.yaml`: `native.handler`, `mcp.server` and `mcp.tool`, `http.endpoint` and `http.operation`, `agent.persona`, `retrieval.source`, `langchain.tool`, and an optional `credentials` map of secret references on every binding.
+- **TOOL-072, oversized results**: a result larger than `limits.partSize` is replaced by a `limit` error (`agentry.tool.result_too_large`) and the run ends `context_limit` (session → `idle`), the end reason for content that cannot be carried (CORE-191 "matching reason").
+- **TOOL-030 stage 1**: the `policy.decision` for an unavailable tool records `reason`: `unknown` (not in the catalog), `out_of_scope` (outside the persona allowlist or runtime scope), or `delegation` (hidden only because a delegated session is limited to its caller's visible tools, ORCH-013). The model-facing error is identical in every case (TOOL-023).
+- **TOOL-035**: the label-driven approval uses the labels declared on the **tool** (`sensitivity`), as TOOL-035 states; it does not depend on what else is in context.
+- **TOOL-030 stage 1 precedence**: `unknown` takes precedence over `out_of_scope`, which takes precedence over `delegation`.
+- **TOOL-036 with hooks**: when an escalation was raised by a `beforeToolCall` hook, processing resumes within stage 6 at the next hook (HOOK-034), then continues to stage 7. Escalations raised at stages 5 or 7 resume at the next stage.
+- **TOOL-053 and non-retryable errors**: a tool error with `retryable: false` is delivered to the model as the call's result, whatever its category, except `fatal` (ends the run `failed`) and `cancelled`. Only a retryable error that may not be retried (TOOL-052) or has exhausted its retries is treated as `fatal`. This makes ORCH-051 and HITL's confirmed failures consistent without exceptions. *(Amends CORE-191's `unavailable` row for tool errors.)*
+- **TOOL-072 with other calls in the step**: an oversized result ends the run as soon as it is detected; calls in the same step that have not yet been dispatched are not dispatched, and no escalation is raised for them.
+- **TOOL-073, where raw outcomes live**: the idempotency store keeps the raw outcome (it is tenant-scoped and encrypted at rest, PORT-002, PORT-006), so a recovered call can be processed through stage 10. Events, the blobs they reference, and audit records (TOOL-074) hold only the outcome as it stands after `afterToolCall` hooks.
+- **TOOL-092, compatibility**: the server's advertised input schema is compatible when every property the artifact's `input` declares exists in the server schema with the same JSON type, and the server requires no property the artifact does not require. Implementations **MUST** re-check compatibility on the server's tools-changed notification and on reconnect, before the next call.
+- **Binding credentials**: `credentials` is allowed on `native` and `langchain` bindings only. `mcp` and `http` bindings use the credentials on their deployment server or endpoint; `agent` and `retrieval` bindings take none. With `credentialMode: principal`, the references are resolved per principal (CFG-062).
+- **Agent tools** are idempotent by construction (ORCH-002); declaring `idempotent: false` on an `agent`-bound tool is a configuration error.
+
