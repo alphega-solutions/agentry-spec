@@ -1,0 +1,184 @@
+schemaVersion: "0.1.0"
+id: hitl.reviewer-refused-unauthorized
+title: A non-human, other-tenant or rule-failing reviewer is refused with `unauthorized`; bundle and persona reviewer rules must both hold
+description: >-
+  update_record has `approval: always`, so the call escalates (source
+  `approval`). The bundle declares the approval reviewer rule `'approver'
+  in reviewer.roles` and the persona declares `'finance' in
+  reviewer.roles`; they merge by `union`, so the pending action's
+  reviewer requirements list both rules and a reviewer must satisfy each.
+  A rule for source `hook` is also declared and does not apply.
+
+  Each of these decide() calls is refused with category `unauthorized`,
+  naming its decision in `details.decisionId`, and records nothing:
+  r-svc (holds both roles, but `human: false`); r-other (holds both roles,
+  but belongs to tenant t2); r-bundle (satisfies only the bundle rule);
+  r-persona (satisfies only the persona rule). A resume() with no
+  decisions then still fails with `conflict` (`agentry.hitl.pending`):
+  no refused decision decided the action. The control r-ok, a human of
+  t1 holding both roles, is accepted, and the turn completes. Exactly one
+  decision is audited and `escalation.resolved` lists only it.
+requirements: [HITL-021, HITL-022]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        reviewerRules:
+          approval: [{ rule: "'approver' in reviewer.roles" }]
+          hook: [{ rule: "'hook_reviewer' in reviewer.roles" }]
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        reviewerRules:
+          approval: [{ rule: "'finance' in reviewer.roles" }]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.update_record }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r-svc, subject: review-bot, assurance: multi_factor, roles: [approver, finance], human: false, service: true }
+        - { id: r-bundle, subject: reviewer-bundle, assurance: multi_factor, roles: [approver] }
+        - { id: r-persona, subject: reviewer-persona, assurance: multi_factor, roles: [finance] }
+        - { id: r-ok, subject: reviewer-ok, assurance: multi_factor, roles: [approver, finance] }
+    - id: t2
+      principals:
+        - { id: r-other, subject: reviewer-other, assurance: multi_factor, roles: [approver, finance] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $esc, payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  # Not human.
+  - action: decide
+    session: $s
+    reviewer: r-svc
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000221", pendingActionId: $act, type: approve }
+    expect: { ok: false, error: { category: unauthorized, details: { decisionId: "01900000-0000-7000-8000-000000000221" } }, newEvents: 0 }
+  # Another tenant.
+  - action: decide
+    session: $s
+    reviewer: r-other
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000222", pendingActionId: $act, type: approve }
+    expect: { ok: false, error: { category: unauthorized, details: { decisionId: "01900000-0000-7000-8000-000000000222" } }, newEvents: 0 }
+  # Satisfies the bundle rule only.
+  - action: decide
+    session: $s
+    reviewer: r-bundle
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000223", pendingActionId: $act, type: approve }
+    expect: { ok: false, error: { category: unauthorized, details: { decisionId: "01900000-0000-7000-8000-000000000223" } }, newEvents: 0 }
+  # Satisfies the persona rule only.
+  - action: decide
+    session: $s
+    reviewer: r-persona
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000224", pendingActionId: $act, type: reject }
+    expect: { ok: false, error: { category: unauthorized, details: { decisionId: "01900000-0000-7000-8000-000000000224" } }, newEvents: 0 }
+  # Nothing was recorded: the action is still undecided.
+  - action: resume
+    session: $s
+    reviewer: r-ok
+    expect: { ok: false, error: { category: conflict, code: agentry.hitl.pending }, newEvents: 0 }
+  # Control: a reviewer satisfying both rules is accepted.
+  - action: decide
+    session: $s
+    reviewer: r-ok
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000225", pendingActionId: $act, type: approve }
+    expect: { ok: true }
+  - action: resume
+    session: $s
+    reviewer: r-ok
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            payload:
+              escalation:
+                id: $esc
+                sources: [approval]
+                pendingActions:
+                  - id: $act
+                    source: approval
+                    reviewerRequirements:
+                      requiredApprovals: 1
+                      rules: { $all: [{ $contains: ["'approver' in reviewer.roles", "'finance' in reviewer.roles"] }, { $len: 2 }] }
+          - { type: run.ended, payload: { reason: escalated } }
+          - { type: escalation.resolved, payload: { escalationId: $esc, decisions: ["01900000-0000-7000-8000-000000000225"] } }
+          - { type: tool.call, payload: { callId: c1, arguments: { key: k1, value: v1 } } }
+          - { type: run.ended, payload: { reason: responded } }
+  stubCalls:
+    update_record: { count: 1 }
+  ports:
+    auditLog:
+      t1:
+        $all:
+          - $contains:
+              - { type: decision, sessionId: $s, reviewer: { subject: reviewer-ok, tenant: t1 }, details: { id: "01900000-0000-7000-8000-000000000225", type: approve } }
+          - $count: { of: { type: decision }, equals: 1 }

@@ -1,0 +1,270 @@
+schemaVersion: "0.1.0"
+id: hitl.view-redaction-clearance
+title: The reviewer view redacts each part unless the reviewer satisfies the `reviewerRule` of every label on it, from every layer
+description: >-
+  The bundle stack is org@1 then dept@1. org's sensitivity policies give
+  `phi` the reviewerRule `'phi_cleared' in reviewer.roles` and `pii` the
+  reviewerRule `'pii_cleared' in reviewer.roles`; dept adds the pii
+  reviewerRule `reviewer.attributes.site == 'hq'` (merged by `union`: both
+  must hold). Label `pci` has a policy with no reviewerRule.
+
+  The model answers with five text parts. At afterModelCall the bundle's
+  native hook tagger annotates them [phi], [pii], [pci], (none) and
+  [phi, pii]; the persona's native hook gate then escalates, so the
+  pending action is a `content` action whose parts under review are those
+  five. (The persona allows only the buffered profile and streamed@1 is
+  removed, since an escalating afterModelCall hook cannot be used with a
+  streamed profile, HOOK-040.) getReviewerView is called for five reviewers. A redacted part keeps
+  `type`, `provenance` and `labels`, has `redacted: true` and no `text`; a
+  shown part has its text and no `redacted` flag.
+
+  | Reviewer | roles | site | phi | pii | pci | none | phi+pii |
+  |---|---|---|---|---|---|---|---|
+  | r-all | phi_cleared, pii_cleared | hq | shown | shown | shown | shown | shown |
+  | r-none | — | branch | redacted | redacted | shown | shown | redacted |
+  | r-pii-org | pii_cleared | branch | redacted | redacted | shown | shown | redacted |
+  | r-pii-dept | — | hq | redacted | redacted | shown | shown | redacted |
+  | r-pii-both | pii_cleared | hq | redacted | shown | shown | shown | redacted |
+
+  r-pii-org and r-pii-dept each satisfy one layer's pii rule only; r-pii-both
+  satisfies both and sees the pii part, but not the phi+pii part, which
+  also needs phi clearance. No view changes state or emits events.
+requirements: [HITL-030, HITL-031]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    remove: [streamed@1]
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1, dept@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        requiredHooks: [tagger@1]
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+            reviewerRule: "'pii_cleared' in reviewer.roles"
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+            reviewerRule: "'phi_cleared' in reviewer.roles"
+          pci:
+            allowedProviders: [scripted-a, scripted-b]
+      - kind: PolicyBundle
+        id: dept
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow department policy."
+        sensitivityPolicies:
+          pii:
+            reviewerRule: "reviewer.attributes.site == 'hq'"
+      - kind: Hook
+        id: tagger
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [afterModelCall]
+        results: [annotate]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.tagger }
+      - kind: Hook
+        id: gate
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [afterModelCall]
+        results: [escalate]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.gate }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        requiredHooks: [gate@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r-all, subject: reviewer-all, assurance: multi_factor, roles: [phi_cleared, pii_cleared], attributes: { site: hq } }
+        - { id: r-none, subject: reviewer-none, assurance: multi_factor, roles: [], attributes: { site: branch } }
+        - { id: r-pii-org, subject: reviewer-pii-org, assurance: multi_factor, roles: [pii_cleared], attributes: { site: branch } }
+        - { id: r-pii-dept, subject: reviewer-pii-dept, assurance: multi_factor, roles: [], attributes: { site: hq } }
+        - { id: r-pii-both, subject: reviewer-pii-both, assurance: multi_factor, roles: [pii_cleared], attributes: { site: hq } }
+  providers:
+    scripted-a:
+      responses:
+        - parts:
+            - { type: text, text: "SYN-PHI-0031" }
+            - { type: text, text: "SYN-PII-0031" }
+            - { type: text, text: "SYN-PCI-0031" }
+            - { type: text, text: "SYN-PLAIN-0031" }
+            - { type: text, text: "SYN-PHIPII-0031" }
+          usage: { inputTokens: 20, outputTokens: 25, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    nativeHooks:
+      tagger:
+        - result: annotate
+          labels:
+            - { part: 0, labels: [phi] }
+            - { part: 1, labels: [pii] }
+            - { part: 2, labels: [pci] }
+            - { part: 4, labels: [phi, pii] }
+      gate:
+        - result: escalate
+          reasonCode: test.hook.review
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Summarise the record" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $esc, payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  - action: getReviewerView
+    session: $s
+    tenant: t1
+    reviewer: r-all
+    expect:
+      ok: true
+      newEvents: 0
+      view:
+        escalation: { id: $esc, pendingActions: [{ id: $act, kind: content, point: afterModelCall }] }
+        actions:
+          - pendingActionId: $act
+            decided: false
+            decisions: []
+            content:
+              - { type: text, text: "SYN-PHI-0031", labels: [phi], redacted: { $absent: true } }
+              - { type: text, text: "SYN-PII-0031", labels: [pii], redacted: { $absent: true } }
+              - { type: text, text: "SYN-PCI-0031", labels: [pci], redacted: { $absent: true } }
+              - { type: text, text: "SYN-PLAIN-0031", labels: [], redacted: { $absent: true } }
+              - { type: text, text: "SYN-PHIPII-0031", labels: { $all: [{ $contains: [phi, pii] }, { $len: 2 }] }, redacted: { $absent: true } }
+  - action: getReviewerView
+    session: $s
+    tenant: t1
+    reviewer: r-none
+    expect:
+      ok: true
+      newEvents: 0
+      view:
+        actions:
+          - pendingActionId: $act
+            content:
+              - { type: text, provenance: model, labels: [phi], redacted: true, text: { $absent: true } }
+              - { type: text, provenance: model, labels: [pii], redacted: true, text: { $absent: true } }
+              - { type: text, text: "SYN-PCI-0031", labels: [pci], redacted: { $absent: true } }
+              - { type: text, text: "SYN-PLAIN-0031", redacted: { $absent: true } }
+              - { type: text, provenance: model, labels: { $all: [{ $contains: [phi, pii] }, { $len: 2 }] }, redacted: true, text: { $absent: true } }
+  - action: getReviewerView
+    session: $s
+    tenant: t1
+    reviewer: r-pii-org
+    expect:
+      ok: true
+      newEvents: 0
+      view:
+        actions:
+          - pendingActionId: $act
+            content:
+              - { type: text, labels: [phi], redacted: true, text: { $absent: true } }
+              - { type: text, labels: [pii], redacted: true, text: { $absent: true } }
+              - { type: text, text: "SYN-PCI-0031", redacted: { $absent: true } }
+              - { type: text, text: "SYN-PLAIN-0031", redacted: { $absent: true } }
+              - { type: text, redacted: true, text: { $absent: true } }
+  - action: getReviewerView
+    session: $s
+    tenant: t1
+    reviewer: r-pii-dept
+    expect:
+      ok: true
+      newEvents: 0
+      view:
+        actions:
+          - pendingActionId: $act
+            content:
+              - { type: text, labels: [phi], redacted: true, text: { $absent: true } }
+              - { type: text, labels: [pii], redacted: true, text: { $absent: true } }
+              - { type: text, text: "SYN-PCI-0031", redacted: { $absent: true } }
+              - { type: text, text: "SYN-PLAIN-0031", redacted: { $absent: true } }
+              - { type: text, redacted: true, text: { $absent: true } }
+  - action: getReviewerView
+    session: $s
+    tenant: t1
+    reviewer: r-pii-both
+    expect:
+      ok: true
+      newEvents: 0
+      view:
+        actions:
+          - pendingActionId: $act
+            content:
+              - { type: text, labels: [phi], redacted: true, text: { $absent: true } }
+              - { type: text, text: "SYN-PII-0031", labels: [pii], redacted: { $absent: true } }
+              - { type: text, text: "SYN-PCI-0031", redacted: { $absent: true } }
+              - { type: text, text: "SYN-PLAIN-0031", redacted: { $absent: true } }
+              - { type: text, redacted: true, text: { $absent: true } }
+expect:
+  sessions:
+    $s:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: tagger@1, point: afterModelCall, result: annotate } }
+          - type: escalation.raised
+            payload:
+              escalation:
+                id: $esc
+                sources: [hook]
+                pendingActions:
+                  - id: $act
+                    kind: content
+                    source: hook
+                    point: afterModelCall
+                    hook: gate@1
+                    reasonCode: test.hook.review
+                    labels: { $all: [{ $contains: [phi, pii, pci] }, { $len: 3 }] }
+          - { type: run.ended, payload: { reason: escalated } }
+  stubCalls:
+    tagger: { count: 1 }
+    gate: { count: 1 }
+  providerRequests:
+    scripted-a: { count: 1 }

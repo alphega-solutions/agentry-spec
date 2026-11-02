@@ -1,0 +1,168 @@
+schemaVersion: "0.1.0"
+id: hitl.view-decisions-decided
+title: The reviewer view lists, per pending action, the decisions recorded so far and whether the action is decided
+description: >-
+  The model requests two update_record calls in one step; update_record has
+  `approval: always`, so one escalation holds two `tool_call` actions, a1
+  (c1) and a2 (c2), in request order. The bundle's approval reviewer rule
+  sets `requiredApprovals: 2`.
+
+  1. Before any decision, both actions have no decisions and are undecided.
+  2. r1 approves a1 (D1) and rejects a2 (D2). a1 lists D1 and is still
+     undecided (one of two approvals); a2 lists D2 and is decided (a single
+     reject decides, HITL-051).
+  3. r2 approves a1 (D3). a1 lists D1 then D3, in recording order, and is
+     decided; a2 is unchanged.
+
+  Each listed decision is the decision record: ID, escalation, pending
+  action, type, `decidedBy: reviewer` and the reviewer. The view is called
+  by r3, who decides nothing. resume() then completes the turn: c1 is
+  dispatched, c2 is not.
+requirements: [HITL-030]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        reviewerRules:
+          approval: [{ rule: "reviewer.subject != principal.subject", requiredApprovals: 2 }]
+        sensitivityPolicies:
+          pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+          phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.update_record }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+        - { id: r2, subject: reviewer-2, assurance: multi_factor, roles: [reviewer] }
+        - { id: r3, subject: reviewer-3, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts:
+            - { type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }
+            - { type: tool_call, callId: c2, tool: update_record, arguments: { key: k2, value: v2 } }
+          usage: { inputTokens: 20, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated k1; k2 was rejected." }]
+          usage: { inputTokens: 40, outputTokens: 8, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1 and k2 to v2" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind:
+          payload.escalation.id: $esc
+          payload.escalation.pendingActions.0.id: $a1
+          payload.escalation.pendingActions.1.id: $a2
+    expect: { ok: true, endReason: escalated }
+  # 1. Nothing decided yet.
+  - action: getReviewerView
+    session: $s
+    tenant: t1
+    reviewer: r3
+    expect:
+      ok: true
+      view:
+        escalation: { id: $esc, pendingActions: [{ id: $a1, callId: c1 }, { id: $a2, callId: c2 }] }
+        actions:
+          - { pendingActionId: $a1, decisions: [], decided: false, content: [{ type: tool_call, callId: c1, arguments: { key: k1, value: v1 } }] }
+          - { pendingActionId: $a2, decisions: [], decided: false, content: [{ type: tool_call, callId: c2, arguments: { key: k2, value: v2 } }] }
+  # 2. One approval of two on a1; a reject on a2.
+  - action: decide
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-0000000002d1", pendingActionId: $a1, type: approve }
+      - { decisionId: "01900000-0000-7000-8000-0000000002d2", pendingActionId: $a2, type: reject }
+    expect: { ok: true }
+  - action: getReviewerView
+    session: $s
+    tenant: t1
+    reviewer: r3
+    expect:
+      ok: true
+      view:
+        actions:
+          - pendingActionId: $a1
+            decided: false
+            decisions:
+              - { id: "01900000-0000-7000-8000-0000000002d1", escalationId: $esc, pendingActionId: $a1, type: approve, decidedBy: reviewer, reviewer: { subject: reviewer-1, tenant: t1 } }
+          - pendingActionId: $a2
+            decided: true
+            decisions:
+              - { id: "01900000-0000-7000-8000-0000000002d2", escalationId: $esc, pendingActionId: $a2, type: reject, decidedBy: reviewer, reviewer: { subject: reviewer-1, tenant: t1 } }
+  # 3. The second approval decides a1.
+  - action: decide
+    session: $s
+    reviewer: r2
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-0000000002d3", pendingActionId: $a1, type: approve }
+    expect: { ok: true }
+  - action: getReviewerView
+    session: $s
+    tenant: t1
+    reviewer: r3
+    expect:
+      ok: true
+      view:
+        actions:
+          - pendingActionId: $a1
+            decided: true
+            decisions:
+              - { id: "01900000-0000-7000-8000-0000000002d1", reviewer: { subject: reviewer-1 } }
+              - { id: "01900000-0000-7000-8000-0000000002d3", type: approve, decidedBy: reviewer, reviewer: { subject: reviewer-2, tenant: t1 } }
+          - pendingActionId: $a2
+            decided: true
+            decisions: [{ id: "01900000-0000-7000-8000-0000000002d2" }]
+  - action: resume
+    session: $s
+    reviewer: r3
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: escalation.raised, payload: { escalation: { id: $esc, pendingActions: [{ id: $a1, reviewerRequirements: { requiredApprovals: 2 } }, { id: $a2, reviewerRequirements: { requiredApprovals: 2 } }] } } }
+          - type: escalation.resolved
+            payload:
+              escalationId: $esc
+              decisions: ["01900000-0000-7000-8000-0000000002d1", "01900000-0000-7000-8000-0000000002d2", "01900000-0000-7000-8000-0000000002d3"]
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call, payload: { callId: c2 } }
+  stubCalls:
+    update_record: [{ arguments: { key: k1, value: v1 } }]
