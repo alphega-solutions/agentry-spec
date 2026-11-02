@@ -15,6 +15,7 @@ from common import ROOT, fixture_files, load_schemas, load_yaml, registry, spec_
 FIXTURE_ID = "https://alphega.io/agentry/schemas/conformance/fixture/v1.json"
 CEL_ID = "https://alphega.io/agentry/schemas/conformance/cel-fixture/v1.json"
 ADAPTER_ID = "https://alphega.io/agentry/schemas/conformance/adapter-case/v1.json"
+PORT_CASE_ID = "https://alphega.io/agentry/schemas/conformance/port-case/v1.json"
 
 
 PLACEHOLDER = re.compile(r"^\$[A-Za-z_][A-Za-z0-9_]*$")
@@ -843,8 +844,9 @@ def main() -> int:
         doc = load_yaml(fx)
         rel = fx.relative_to(ROOT / "conformance").parts
         target = (CEL_ID if rel[0] == "cel"
-                  else ADAPTER_ID if rel[:2] == ("adapters", "cases") else FIXTURE_ID)
-        prefix = {CEL_ID: "cel.", ADAPTER_ID: "adapter."}.get(target)
+                  else ADAPTER_ID if rel[:2] == ("adapters", "cases")
+                  else PORT_CASE_ID if rel[0] == "ports" else FIXTURE_ID)
+        prefix = {CEL_ID: "cel.", ADAPTER_ID: "adapter.", PORT_CASE_ID: "port."}.get(target)
         if prefix and not str(doc.get("id", "")).startswith(prefix):
             errors.append(f"{fx.relative_to(ROOT)}: id must start with {prefix!r}")
         checked = _self_provider_as_string(doc) if target == ADAPTER_ID else doc

@@ -506,6 +506,7 @@ $defs:
       - $ref: "#/$defs/abandonStep"
       - $ref: "#/$defs/concurrentStep"
       - $ref: "#/$defs/loadStep"
+      - $ref: "#/$defs/retentionStep"
 
   actionStep:
     type: object
@@ -707,6 +708,20 @@ $defs:
             enum: [after_started_record, after_dispatch, after_outcome_recorded, after_event_append, after_model_request]
           session: { $ref: "#/$defs/placeholder" }
 
+  retentionStep:
+    description: >-
+      Runs the implementation's retention processing at the current virtual
+      time (PORT-110–115): everything due for deletion under the
+      deployment's retention periods and legal holds is deleted, in an order
+      that keeps dependent data (PORT-112). Implementations may also delete
+      on their own schedule; fixtures assert only the state after this step.
+    type: object
+    additionalProperties: false
+    required: [retention]
+    properties:
+      retention: { type: object, additionalProperties: false }
+      expect: { $ref: "#/$defs/stepOutcome" }
+
   restartStep:
     type: object
     additionalProperties: false
@@ -840,8 +855,9 @@ $defs:
                 `reasoning` (reasoning parts kept for continuation),
                 `escalation` (the open escalation, with `decisions` and
                 partial approvals), `heldResults` (results held while
-                suspended), `lease` (`{ holder, expiresAt }`),
-                `parentSessionId` and `childSessionIds`.
+                suspended), `lease` (`{ holder, token, expiresAt }`),
+                `parentSessionId` and `childSessionIds`: the `checkpoint`
+                record of `schemas/ports/v1/records.yaml`.
               type: object
       providerRequests:
         description: >-
@@ -926,6 +942,14 @@ $defs:
             fallback: { type: boolean, description: The response was the fixed fallback message. }
       noPersistedContent:
         description: Strings that must not appear anywhere in persisted events, checkpoints, audit records, blobs, or configuration snapshots.
+        type: array
+        items: { type: string }
+      noTelemetryContent:
+        description: >-
+          Strings that must not appear in any span exported through the
+          deployment's telemetry binding (PORT-101). Applies to fixtures
+          whose deployment binds `telemetry`; the runner captures exported
+          spans with an in-memory exporter.
         type: array
         items: { type: string }
       noTransmittedContent:

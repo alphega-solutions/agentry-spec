@@ -192,3 +192,20 @@ All rules here are new; this is a Tier 3 area.
 ## Amendment 2026-11-01 — from Phase 4 (Area 7 fixtures)
 
 - PORT-080: `principal` is the principal's subject, tenant and roles, so a port can filter by role as well as by subject.
+
+## Amendment 2026-11-02 — from Phase 4 (schemas and fixtures)
+
+Schemas: stored records in `schemas/ports/v1/records.yaml` (checkpoint, idempotency record, snapshot, blob metadata, audit record, lease); the port test-kit case format in `conformance/schema/port-case.yaml`.
+
+**Two kinds of fixture**
+
+- The adapter test kit (PORT-009, PORT-130) is a set of **port cases** in `conformance/ports/`. Each calls one port's operations directly, with language-neutral names and arguments listed in the format; every adapter of that port, in every language, must pass every case for it. In-memory adapters used by the conformance suite pass them too (EVAL-033).
+- Harness-level storage behaviour (retention, legal holds, consistency between events and checkpoints, residency, redaction at the boundary) is verified by ordinary fixtures in `conformance/storage/`. A `retention: {}` step runs retention processing at the current virtual time.
+- PORT-001, PORT-009: substitutability is verified by running the whole suite with each conforming adapter; results must be identical.
+
+**Records and leases**
+
+- PORT-030: the checkpoint record is the `checkpoint` schema; `version` increases by one on every save, including lease renewals, and `lastSeq` is the last event sequence number it accounts for.
+- PORT-020, PORT-031, PORT-040: a lease carries a **fencing token**, strictly greater for each new lease of a session and unchanged by renewal. Every port that takes a lease rejects with `conflict` a write whose token is lower than the highest it has accepted for that session. This is how the event log and idempotency store recognise a stale lease without consulting the checkpoint store.
+- PORT-071, PORT-073: the audit record is the `auditRecord` schema, with `details` per type as earlier areas define them; a tamper-evident log chains `hash` and `prevHash` (SHA-256 of the RFC 8785 canonical record without `hash`), and keeps the hash of the last deleted record as the next record's `prevHash` after retention.
+- PORT-006: every storing port reports through `describe` whether encryption at rest is configured.

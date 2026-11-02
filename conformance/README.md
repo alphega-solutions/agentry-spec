@@ -17,6 +17,8 @@ Data-only test cases every agentry implementation must pass (Area 11). An implem
 | `context/` | Area 7 fixtures |
 | `orchestration/` | Area 8 fixtures |
 | `providers/` | Area 9 fixtures (harness-level, on scripted providers) |
+| `ports/` | Area 10 port adapter test-kit cases (format `schema/port-case.yaml`) |
+| `storage/` | Area 10 fixtures (harness-level: retention, legal holds, consistency, residency, redaction) |
 | `adapters/` | Area 9 provider adapter cases (format `schema/adapter-case.yaml`) and recorded vendor transcripts |
 | `cel/` | CEL rule fixtures (EVAL-005, HOOK-110–115) |
 | `coverage.yaml` | Which areas have complete fixtures, and therefore enforced coverage |
@@ -26,7 +28,7 @@ Data-only test cases every agentry implementation must pass (Area 11). An implem
 A fixture has three parts:
 
 1. **`setup`** — virtual clock and ID seed, configuration (`base` plus overrides), tenants and principals, registered native handlers, scripted provider responses, stubs (native tools, MCP servers, HTTP endpoints, remote hooks), initial port contents, implementation limits.
-2. **`script`** — ordered steps: host actions (`run`, `resume`, `decide`, `close`, `cancel`, `getReviewerView`, `listPendingEscalations`), configuration loads, clock advances, crashes, restarts, abandoned streams, concurrent actions.
+2. **`script`** — ordered steps (also `retention: {}`, which runs retention processing at the current virtual time): host actions (`run`, `resume`, `decide`, `close`, `cancel`, `getReviewerView`, `listPendingEscalations`), configuration loads, clock advances, crashes, restarts, abandoned streams, concurrent actions.
 3. **`expect`** — event patterns per session, session states, step outcomes, captured provider requests and stub calls, port contents, and content that must never be persisted.
 
 A step's captures are processed in order, so a capture may use `session:` with a placeholder bound by an earlier capture of the same step (e.g. a child session). Placeholders (`$session`, `$run1`) bind on first match in `expect`, or through a step's `capture`, and must match consistently: a placeholder binds the whole value at its first match (scalar, object or array), and every later occurrence must equal that value exactly — deep equality, not the partial matching used for objects written out in an expectation. A placeholder used in a step must be captured by an earlier step. Placeholders may be map keys (e.g. an idempotency key under `ports.idempotencyStore`). `expect` is evaluated in document order, depth-first; a placeholder key must be bound (earlier in document order, or by a capture) before a matcher such as `$absent` is applied to the value under it.
@@ -69,7 +71,7 @@ Matchers: `{"$any": true}`, `{"$absent": true}`, `{"$regex": "..."}`, `{"$len": 
 - **Stub calls** (`expect.stubCalls`), keyed by native tool ID, `<serverId>/<toolName>`, `<endpointId>/<operationId>`, or remote hook ID: `{ arguments, context: { sessionId, runId, principal, idempotencyKey, deadline, traceContext }, cancelled, completed }`; `arguments` are the tool's arguments (HTTP stubs included), and `completed` is whether the stub's result reached the implementation. Remote and native hook invocations record `{ arguments }`, the `HookRequest` (`schemas/core/v1/hook.yaml`), keyed by remote hook ID or hook ID.
 - **Vector store queries** (`expect.stubCalls.vectorStore/<sourceId>`): `{ arguments: { tenant, principal: { subject, tenant, roles }, text, limit } }`.
 - **Provider requests** (`expect.providerRequests`): `{ provider, model, messages, tools: [{ name, description, input }], outputSchema, params, singleToolCall }`; a tool's `name` is its tool ID. A step's tool results are sent as ONE message with role `tool` holding all its `tool_result` parts in request order (TOOL-032).
-- **Ports** (`expect.ports`, keyed by port name, then tenant):
+- **Ports** (`expect.ports`, keyed by port name, then tenant; record shapes normative in `schemas/ports/v1/records.yaml`):
   - `eventLog: {t1: {<sessionId>: [events]}}`;
   - `idempotencyStore: {t1: {<key>: { state: started|completed, outcome, childSessionId? }}}`;
   - `auditLog: {t1: [{ timestamp, tenant, sessionId, principalRef, snapshotHash, type, reviewer?, eventIds, details }]}`, with `type` one of `hook_decision`, `policy_decision`, `escalation`, `decision`, `tool_call` (details `{ callId, tool, arguments, outcome }`) (PORT-071);
