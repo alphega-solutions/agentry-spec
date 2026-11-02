@@ -1,0 +1,35 @@
+# langdef: if any predicate is false, `all` is false, ignoring errors from other
+# predicates; `exists` is the dual. x = 0 divides by zero in both.
+schemaVersion: 0.1.0
+id: cel.macro-all-exists-error-absorbed
+requirements:
+- HOOK-110
+point: beforeModelCall
+expression: '[[0, 2].all(x, 2 / x == 2), [0, 1].exists(x, 1 / x == 1)]'
+variables:
+  principal:
+    subject: user-1
+    tenant: t1
+    roles:
+    - clinician
+    - reviewer
+    attributes:
+      department: SYN-cardiology
+      site: SYN-site-7
+      manager: null
+    assurance: multi_factor
+  session:
+    persona: assistant@1
+    tainted: false
+    turn: 3
+    step: 2
+  content:
+  - type: text
+    text: Look up record SYN-1001 please
+    provenance: principal
+    labels:
+    - pii
+expect:
+  value:
+  - false
+  - true

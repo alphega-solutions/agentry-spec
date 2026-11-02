@@ -1,0 +1,97 @@
+schemaVersion: "0.1.0"
+id: hook.record-input-hash
+title: "A hook decision records a hash of the hook's input: identical input gives the same hash, different input a different one"
+description: >-
+  The rule hook hasher annotates at sessionStart every time. $sFirst and
+  $sSame are separate sessions with the same principal, persona and first
+  input; $sOther differs only in its input text. Each decision's inputHash
+  is a sha256 value. $sFirst and $sSame record the same inputHash;
+  $sOther records a different one. Reading: the hashed input is the hook's
+  view of the content and variables at its point (canonicalized with RFC
+  8785, EVAL-000), not session or run identifiers, which differ between
+  any two sessions and would make every hash distinct and replay
+  (EVAL-063) impossible. Replay itself is Area 11's.
+requirements: [HOOK-062]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Hook
+        id: hasher
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [sessionStart]
+        results: [annotate]
+        timeoutMs: 1000
+        source: { kind: rule, when: "true", then: { result: annotate, labels: [pii] } }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [hasher@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "One." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Two." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Three." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $sFirst
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYN-INPUT-0062-A" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sSame
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYN-INPUT-0062-A" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sOther
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYN-INPUT-0062-B" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sFirst:
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: hasher@1, point: sessionStart, result: annotate, inputHash: { $all: [$h, { $regex: "^sha256:[0-9a-f]{64}$" }] } } }
+    $sSame:
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: hasher@1, point: sessionStart, result: annotate, inputHash: $h } }
+    $sOther:
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: hasher@1, point: sessionStart, result: annotate, inputHash: { $all: [{ $not: $h }, { $regex: "^sha256:[0-9a-f]{64}$" }] } } }

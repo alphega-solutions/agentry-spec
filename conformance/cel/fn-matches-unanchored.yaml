@@ -1,0 +1,39 @@
+# `matches` succeeds if the pattern matches a substring (langdef); it is not
+# anchored unless the pattern uses ^ and $. Receiver and global forms.
+schemaVersion: 0.1.0
+id: cel.fn-matches-unanchored
+requirements:
+- HOOK-110
+- HOOK-114
+point: beforeModelCall
+expression: '[''xSYN-42y''.matches(''SYN-[0-9]+''), ''xSYN-42y''.matches(''^SYN-[0-9]+$''), ''SYN-42''.matches(''^SYN-[0-9]+$''),
+  matches(content[0].text, ''SYN-[0-9]{4}'')]'
+variables:
+  principal:
+    subject: user-1
+    tenant: t1
+    roles:
+    - clinician
+    - reviewer
+    attributes:
+      department: SYN-cardiology
+      site: SYN-site-7
+      manager: null
+    assurance: multi_factor
+  session:
+    persona: assistant@1
+    tainted: false
+    turn: 3
+    step: 2
+  content:
+  - type: text
+    text: Look up record SYN-1001 please
+    provenance: principal
+    labels:
+    - pii
+expect:
+  value:
+  - true
+  - false
+  - true
+  - true

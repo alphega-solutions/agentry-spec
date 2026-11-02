@@ -1,0 +1,36 @@
+# CEL has no automatic numeric conversions (langdef: "there are no automatic
+# arithmetic conversions for the numeric types"). `session.turn` is declared int
+# (§9.1), so `_*_` has no (int, double) overload and the checker rejects it.
+# Control: op-arith-mixed-explicit-conversion.
+schemaVersion: 0.1.0
+id: cel.op-arith-mixed-int-double-rejected
+requirements:
+- HOOK-110
+- HOOK-112
+point: beforeModelCall
+expression: session.turn * 1.5 > 4.0
+variables:
+  principal:
+    subject: user-1
+    tenant: t1
+    roles:
+    - clinician
+    - reviewer
+    attributes:
+      department: SYN-cardiology
+      site: SYN-site-7
+      manager: null
+    assurance: multi_factor
+  session:
+    persona: assistant@1
+    tainted: false
+    turn: 3
+    step: 2
+  content:
+  - type: text
+    text: Look up record SYN-1001 please
+    provenance: principal
+    labels:
+    - pii
+expect:
+  failure: type_check

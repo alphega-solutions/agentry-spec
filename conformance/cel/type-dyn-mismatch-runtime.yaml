@@ -1,0 +1,46 @@
+# `call.arguments` is a map of dyn, so the checker cannot see that recordId is
+# a string; `_>_` fails to dispatch at run time (no matching overload).
+# Contrast type-tool-id-compare-int.
+schemaVersion: 0.1.0
+id: cel.type-dyn-mismatch-runtime
+requirements:
+- HOOK-112
+- HOOK-113
+point: beforeToolCall
+expression: call.arguments.recordId > 3
+variables:
+  principal:
+    subject: user-1
+    tenant: t1
+    roles:
+    - clinician
+    - reviewer
+    attributes:
+      department: SYN-cardiology
+      site: SYN-site-7
+      manager: null
+    assurance: multi_factor
+  session:
+    persona: assistant@1
+    tainted: false
+    turn: 3
+    step: 2
+  content:
+  - type: text
+    text: Look up record SYN-1001 please
+    provenance: principal
+    labels:
+    - pii
+  tool:
+    id: update_record
+    effect: mutating
+    egress: false
+    idempotent: false
+    sensitivity:
+    - pii
+  call:
+    arguments:
+      recordId: SYN-1001
+      status: closed
+expect:
+  failure: runtime

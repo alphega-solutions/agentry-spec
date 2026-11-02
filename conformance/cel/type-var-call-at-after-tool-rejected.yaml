@@ -1,0 +1,39 @@
+# `call` is available only at beforeToolCall (§9.1): undeclared at afterToolCall.
+# (`result` is omitted from variables; see point-after-tool-call.)
+schemaVersion: 0.1.0
+id: cel.type-var-call-at-after-tool-rejected
+requirements:
+- HOOK-112
+point: afterToolCall
+expression: call.arguments.recordId == 'SYN-1001'
+variables:
+  principal:
+    subject: user-1
+    tenant: t1
+    roles:
+    - clinician
+    - reviewer
+    attributes:
+      department: SYN-cardiology
+      site: SYN-site-7
+      manager: null
+    assurance: multi_factor
+  session:
+    persona: assistant@1
+    tainted: false
+    turn: 3
+    step: 2
+  content:
+  - type: text
+    text: Look up record SYN-1001 please
+    provenance: principal
+    labels:
+    - pii
+  tool:
+    id: lookup
+    effect: read
+    egress: false
+    idempotent: true
+    sensitivity: []
+expect:
+  failure: type_check

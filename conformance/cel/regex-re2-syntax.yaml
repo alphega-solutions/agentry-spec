@@ -1,0 +1,41 @@
+# RE2 syntax that some host regex engines lack: the inline flag group (?i), the
+# Unicode class \p{Lu} (the CEL escape \\ yields one backslash) and the ASCII
+# class [[:digit:]]. Each has a non-matching control.
+schemaVersion: 0.1.0
+id: cel.regex-re2-syntax
+requirements:
+- HOOK-114
+point: beforeModelCall
+expression: '[''syn-7''.matches(''(?i)^SYN-[0-9]$''), ''syn-7''.matches(''^SYN-[0-9]$''), ''SYN-ÄB''.matches(''^SYN-\\p{Lu}+$''),
+  ''SYN-äb''.matches(''^SYN-\\p{Lu}+$''), ''SYN-42''.matches(''^SYN-[[:digit:]]+$''), ''SYN-4a''.matches(''^SYN-[[:digit:]]+$'')]'
+variables:
+  principal:
+    subject: user-1
+    tenant: t1
+    roles:
+    - clinician
+    - reviewer
+    attributes:
+      department: SYN-cardiology
+      site: SYN-site-7
+      manager: null
+    assurance: multi_factor
+  session:
+    persona: assistant@1
+    tainted: false
+    turn: 3
+    step: 2
+  content:
+  - type: text
+    text: Look up record SYN-1001 please
+    provenance: principal
+    labels:
+    - pii
+expect:
+  value:
+  - true
+  - false
+  - true
+  - false
+  - true
+  - false

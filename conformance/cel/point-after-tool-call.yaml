@@ -1,0 +1,46 @@
+# Uses `tool` and `content` only. The `result` variable cannot be given: in
+# schemas/core/v1/hook.yaml `$defs.result` is defined twice and the HookResult
+# definition replaces the tool-result one, so `variables.result` only validates
+# as a HookResult. Value cases on `result` wait for that schema fix.
+schemaVersion: 0.1.0
+id: cel.point-after-tool-call
+requirements:
+- HOOK-110
+point: afterToolCall
+expression: tool.id == 'lookup' && tool.effect == 'read' && !tool.egress && content.exists(p, p.provenance
+  == 'tool:lookup')
+variables:
+  principal:
+    subject: user-1
+    tenant: t1
+    roles:
+    - clinician
+    - reviewer
+    attributes:
+      department: SYN-cardiology
+      site: SYN-site-7
+      manager: null
+    assurance: multi_factor
+  session:
+    persona: assistant@1
+    tainted: false
+    turn: 3
+    step: 2
+  content:
+  - type: tool_result
+    callId: SYN-call-1
+    tool: lookup
+    result:
+      ok:
+        output:
+          status: closed
+    provenance: tool:lookup
+    labels: []
+  tool:
+    id: lookup
+    effect: read
+    egress: false
+    idempotent: true
+    sensitivity: []
+expect:
+  value: true

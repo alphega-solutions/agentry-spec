@@ -1,0 +1,46 @@
+# `tool.id` is declared string (§9.1); `_>_` has no (string, int) overload.
+# Reading: the §9.1 variables are declared with the field types of
+# core/v1/hook.yaml; open fields (`principal.attributes`, `call.arguments`,
+# `result.output`) are maps of dyn. Contrast type-dyn-mismatch-runtime.
+schemaVersion: 0.1.0
+id: cel.type-tool-id-compare-int
+requirements:
+- HOOK-112
+point: beforeToolCall
+expression: tool.id > 3
+variables:
+  principal:
+    subject: user-1
+    tenant: t1
+    roles:
+    - clinician
+    - reviewer
+    attributes:
+      department: SYN-cardiology
+      site: SYN-site-7
+      manager: null
+    assurance: multi_factor
+  session:
+    persona: assistant@1
+    tainted: false
+    turn: 3
+    step: 2
+  content:
+  - type: text
+    text: Look up record SYN-1001 please
+    provenance: principal
+    labels:
+    - pii
+  tool:
+    id: update_record
+    effect: mutating
+    egress: false
+    idempotent: false
+    sensitivity:
+    - pii
+  call:
+    arguments:
+      recordId: SYN-1001
+      status: closed
+expect:
+  failure: type_check

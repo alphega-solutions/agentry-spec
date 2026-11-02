@@ -1,0 +1,135 @@
+schemaVersion: "0.1.0"
+id: hook.fail-on-error-session-end
+title: A failing `onError` or `sessionEnd` hook is treated as `continue` and never triggers further `onError` hooks
+description: >-
+  tele, a telemetry beforeModelCall hook, errors: that failure emits an
+  `error` event, which triggers the onError hook on-err (failClosed). on-err
+  errors too: the run still responds, and on-err is not invoked again for
+  its own failure (exactly one invocation; its stub holds one behaviour).
+  On close, the sessionEnd hook on-end (failClosed) errors: the session
+  still closes `completed`, and on-err is not invoked for that failure
+  either. Whether the onError or sessionEnd failure emits an `error` event
+  of its own is not asserted (HOOK-051 says every failure does; HOOK-052
+  only forbids it triggering onError hooks).
+requirements: [HOOK-052]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        remoteHooks:
+          - { id: tele, endpoint: "memory://hook-tele", region: test-region }
+          - { id: on-err, endpoint: "memory://hook-on-err", region: test-region }
+          - { id: on-end, endpoint: "memory://hook-on-end", region: test-region }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: Hook
+        id: tele
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeModelCall]
+        results: [annotate]
+        purpose: telemetry
+        timeoutMs: 1000
+        source: { kind: remote, endpoint: tele }
+      - kind: Hook
+        id: on-err
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [onError]
+        results: [annotate]
+        failureMode: failClosed
+        timeoutMs: 1000
+        source: { kind: remote, endpoint: on-err }
+      - kind: Hook
+        id: on-end
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [sessionEnd]
+        results: [annotate]
+        failureMode: failClosed
+        timeoutMs: 1000
+        source: { kind: remote, endpoint: on-end }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [tele@1, on-err@1, on-end@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Answered." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    remoteHooks:
+      tele:
+        - error: { category: unavailable, code: test.hook.tele-down }
+      on-err:
+        - error: { category: unavailable, code: test.hook.on-err-down }
+      on-end:
+        - error: { category: unavailable, code: test.hook.on-end-down }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - action: close
+    session: $s
+    expect: { ok: true }
+expect:
+  sessions:
+    $s:
+      state: closed
+      closeReason: completed
+      events:
+        mode: subsequence
+        items:
+          - { type: error, payload: { error: { source: hook } } }
+          - { type: model.request }
+          - { type: run.ended, payload: { reason: responded } }
+          - { type: session.closed, payload: { reason: completed } }
+  stubCalls:
+    tele: { count: 1 }
+    on-err:
+      - arguments: { point: onError, error: { source: hook } }
+    on-end:
+      - arguments: { point: sessionEnd }
+  delivered:
+    $s: { text: "Answered.", fallback: false }

@@ -1,0 +1,46 @@
+# Int comparison; strings order lexicographically by code point ('B' < 'a',
+# 'SYN-2' > 'SYN-10'); list equality is element-wise and ordered.
+schemaVersion: 0.1.0
+id: cel.op-compare
+requirements:
+- HOOK-110
+point: beforeModelCall
+expression: '[1 < 2, 2 <= 2, 3 > 4, 3 >= 3, session.turn == 3, session.step != 2, ''abc'' < ''abd'', ''B''
+  < ''a'', ''SYN-2'' > ''SYN-10'', principal.roles == [''clinician'', ''reviewer''], principal.roles ==
+  [''reviewer'', ''clinician'']]'
+variables:
+  principal:
+    subject: user-1
+    tenant: t1
+    roles:
+    - clinician
+    - reviewer
+    attributes:
+      department: SYN-cardiology
+      site: SYN-site-7
+      manager: null
+    assurance: multi_factor
+  session:
+    persona: assistant@1
+    tainted: false
+    turn: 3
+    step: 2
+  content:
+  - type: text
+    text: Look up record SYN-1001 please
+    provenance: principal
+    labels:
+    - pii
+expect:
+  value:
+  - true
+  - true
+  - false
+  - true
+  - true
+  - false
+  - true
+  - true
+  - true
+  - true
+  - false

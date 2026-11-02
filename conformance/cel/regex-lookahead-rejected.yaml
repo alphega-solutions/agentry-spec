@@ -1,0 +1,35 @@
+# RE2 has no lookahead, so `SYN-(?=[0-9])` is invalid and `matches` errors (a
+# backtracking engine would return true). Pattern from a variable, so run time;
+# see regex-backreference-rejected for the literal-pattern gap.
+schemaVersion: 0.1.0
+id: cel.regex-lookahead-rejected
+requirements:
+- HOOK-113
+- HOOK-114
+point: beforeModelCall
+expression: content[0].text.matches(principal.attributes.allowPattern)
+variables:
+  principal:
+    subject: user-1
+    tenant: t1
+    roles:
+    - clinician
+    - reviewer
+    attributes:
+      department: SYN-cardiology
+      site: SYN-site-7
+      manager: null
+      allowPattern: SYN-(?=[0-9])
+    assurance: multi_factor
+  session:
+    persona: assistant@1
+    tainted: false
+    turn: 3
+    step: 2
+  content:
+  - type: text
+    text: SYN-42
+    provenance: principal
+    labels: []
+expect:
+  failure: runtime

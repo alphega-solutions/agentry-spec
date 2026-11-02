@@ -1,0 +1,37 @@
+# RE2 has no backreferences, so the pattern `(a)\1` is invalid and `matches`
+# errors (a backtracking engine would instead return true). The pattern comes from
+# a variable, so it cannot be checked at load: the failure is at run time
+# (HOOK-113). An invalid *literal* pattern is deliberately not covered: the spec
+# does not say whether it must be rejected at load (HOOK-112) or fail at run time.
+schemaVersion: 0.1.0
+id: cel.regex-backreference-rejected
+requirements:
+- HOOK-113
+- HOOK-114
+point: beforeModelCall
+expression: content[0].text.matches(principal.attributes.allowPattern)
+variables:
+  principal:
+    subject: user-1
+    tenant: t1
+    roles:
+    - clinician
+    - reviewer
+    attributes:
+      department: SYN-cardiology
+      site: SYN-site-7
+      manager: null
+      allowPattern: (a)\1
+    assurance: multi_factor
+  session:
+    persona: assistant@1
+    tainted: false
+    turn: 3
+    step: 2
+  content:
+  - type: text
+    text: SYN-aa
+    provenance: principal
+    labels: []
+expect:
+  failure: runtime

@@ -1,0 +1,37 @@
+# Stage: `compile` is parsing plus the syntactic subset check (needs no
+# declarations); `type_check` is checking against the point's declarations.
+# Both are load-time configuration errors (HOOK-112).
+# `timestamp()` is not declared in the subset environment, so the call is an
+# undeclared overload: `type_check`.
+schemaVersion: 0.1.0
+id: cel.subset-timestamp-rejected
+requirements:
+- HOOK-111
+- HOOK-112
+point: beforeModelCall
+expression: timestamp('2026-01-01T00:00:00Z') < timestamp('2026-06-01T00:00:00Z')
+variables:
+  principal:
+    subject: user-1
+    tenant: t1
+    roles:
+    - clinician
+    - reviewer
+    attributes:
+      department: SYN-cardiology
+      site: SYN-site-7
+      manager: null
+    assurance: multi_factor
+  session:
+    persona: assistant@1
+    tainted: false
+    turn: 3
+    step: 2
+  content:
+  - type: text
+    text: Look up record SYN-1001 please
+    provenance: principal
+    labels:
+    - pii
+expect:
+  failure: type_check

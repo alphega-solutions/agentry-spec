@@ -1,0 +1,138 @@
+schemaVersion: "0.1.0"
+id: hook.record-decision-and-audit
+title: Every non-`continue` hook result emits `hook.decision` and an audit record; `continue` emits neither
+description: >-
+  The native sessionStart hook recorder answers annotate in $sAnnotate,
+  rewrite in $sRewrite, block in $sBlock and continue in $sContinue. Each
+  non-continue result emits one hook.decision carrying the hook's id@version,
+  the point, the result, the reason code (for block) and the snapshot hash,
+  and one audit record of type hook_decision for that session, with the
+  same snapshot hash, linked to the event by ID. $sContinue has no
+  hook.decision event and no hook_decision audit record. The shape of a
+  hook_decision audit record's `details` is not specified, so only the
+  envelope fields and the event link are checked.
+requirements: [HOOK-060, HOOK-061]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Hook
+        id: recorder
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [sessionStart]
+        results: [annotate, rewrite, block]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.recorder }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [recorder@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "One." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Two." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Three." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    nativeHooks:
+      recorder:
+        - result: annotate
+          labels: [{ part: 0, labels: [pii] }]
+        - result: rewrite
+          parts: [{ type: text, text: "Rewritten input" }]
+        - result: block
+          reasonCode: test.guard.recorded
+        - result: continue
+script:
+  - action: run
+    bind: $sAnnotate
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sRewrite
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sBlock
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: blocked }
+  - action: run
+    bind: $sContinue
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sAnnotate:
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, eventId: $eAnn, snapshotHash: $snap, payload: { hook: recorder@1, point: sessionStart, result: annotate, labelsAdded: [pii] } }
+      absentEvents:
+        - { type: hook.decision, payload: { result: { $not: annotate } } }
+    $sRewrite:
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, eventId: $eRw, snapshotHash: $snap, payload: { hook: recorder@1, point: sessionStart, result: rewrite } }
+      absentEvents:
+        - { type: hook.decision, payload: { result: { $not: rewrite } } }
+    $sBlock:
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, eventId: $eBlk, snapshotHash: $snap, payload: { hook: recorder@1, point: sessionStart, result: block, reasonCode: test.guard.recorded } }
+          - { type: run.ended, payload: { reason: blocked } }
+    $sContinue:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request }
+      absentEvents:
+        - { type: hook.decision }
+  ports:
+    auditLog:
+      t1:
+        $all:
+          - $contains:
+              - { type: hook_decision, tenant: t1, sessionId: $sAnnotate, snapshotHash: $snap, eventIds: { $contains: [$eAnn] } }
+              - { type: hook_decision, tenant: t1, sessionId: $sRewrite, snapshotHash: $snap, eventIds: { $contains: [$eRw] } }
+              - { type: hook_decision, tenant: t1, sessionId: $sBlock, snapshotHash: $snap, eventIds: { $contains: [$eBlk] } }
+          - $count: { of: { type: hook_decision, sessionId: $sAnnotate }, equals: 1 }
+          - $count: { of: { type: hook_decision, sessionId: $sRewrite }, equals: 1 }
+          - $count: { of: { type: hook_decision, sessionId: $sBlock }, equals: 1 }
+          - $count: { of: { type: hook_decision, sessionId: $sContinue }, equals: 0 }

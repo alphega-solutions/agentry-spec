@@ -1,0 +1,165 @@
+schemaVersion: "0.1.0"
+id: hook.fail-default-modes
+title: With no `failureMode`, a failing guardrail fails closed (block) and a failing telemetry hook fails open (continue)
+description: >-
+  Three remote beforeModelCall hooks, each matched by its own marker so
+  exactly one runs per session, and each erroring:
+  - $sGuard: guard-default, a guardrail (purpose omitted) declaring block
+    with no failureMode → failClosed → block: no model call, run blocked.
+  - $sOpen (control): guard-open, identical but with failureMode: failOpen
+    → continue; shows the $sGuard block comes from the default.
+  - $sTele: tele-default, purpose telemetry with no failureMode → failOpen
+    → continue. (A telemetry hook can declare only continue and annotate,
+    HOOK-002, so HOOK-053 would also make it continue.)
+  Every failure emits an `error` event with source hook (HOOK-051).
+requirements: [HOOK-001, HOOK-051]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        remoteHooks:
+          - { id: guard-default, endpoint: "memory://hook-guard-default", region: test-region }
+          - { id: guard-open, endpoint: "memory://hook-guard-open", region: test-region }
+          - { id: tele-default, endpoint: "memory://hook-tele-default", region: test-region }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: Hook
+        id: guard-default
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeModelCall]
+        results: [block]
+        timeoutMs: 1000
+        match: "content.exists(p, p.type == 'text' && p.text.contains('SYN-CASE-A'))"
+        source: { kind: remote, endpoint: guard-default }
+      - kind: Hook
+        id: guard-open
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeModelCall]
+        results: [block]
+        failureMode: failOpen
+        timeoutMs: 1000
+        match: "content.exists(p, p.type == 'text' && p.text.contains('SYN-CASE-B'))"
+        source: { kind: remote, endpoint: guard-open }
+      - kind: Hook
+        id: tele-default
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeModelCall]
+        results: [annotate]
+        purpose: telemetry
+        timeoutMs: 1000
+        match: "content.exists(p, p.type == 'text' && p.text.contains('SYN-CASE-C'))"
+        source: { kind: remote, endpoint: tele-default }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [guard-default@1, guard-open@1, tele-default@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Open answer." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Telemetry answer." }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    remoteHooks:
+      guard-default:
+        - error: { category: unavailable, code: test.hook.down }
+      guard-open:
+        - error: { category: unavailable, code: test.hook.down }
+      tele-default:
+        - error: { category: unavailable, code: test.hook.down }
+script:
+  - action: run
+    bind: $sGuard
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYN-CASE-A" }]
+    expect: { ok: true, endReason: blocked }
+  - action: run
+    bind: $sOpen
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYN-CASE-B" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sTele
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYN-CASE-C" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sGuard:
+      events:
+        mode: subsequence
+        items:
+          - { type: error, payload: { error: { source: hook } } }
+          - { type: run.ended, payload: { reason: blocked } }
+      absentEvents:
+        - { type: model.request }
+    $sOpen:
+      events:
+        mode: subsequence
+        items:
+          - { type: error, payload: { error: { source: hook } } }
+          - { type: model.request }
+          - { type: run.ended, payload: { reason: responded } }
+    $sTele:
+      events:
+        mode: subsequence
+        items:
+          - { type: error, payload: { error: { source: hook } } }
+          - { type: model.request }
+          - { type: run.ended, payload: { reason: responded } }
+  stubCalls:
+    guard-default: { count: 1 }
+    guard-open: { count: 1 }
+    tele-default: { count: 1 }
+  providerRequests:
+    scripted-a: { count: 2 }
+  delivered:
+    $sGuard: { text: "This request was blocked.", fallback: true }
+    $sOpen: { text: "Open answer.", fallback: false }
+    $sTele: { text: "Telemetry answer.", fallback: false }

@@ -1,0 +1,29 @@
+schemaVersion: 0.1.0
+id: cel.point-on-error
+requirements:
+- HOOK-110
+point: onError
+expression: error.category == 'unavailable' && error.source == 'tool' && error.code.startsWith('test.')
+variables:
+  principal:
+    subject: user-1
+    tenant: t1
+    roles:
+    - clinician
+    - reviewer
+    attributes:
+      department: SYN-cardiology
+      site: SYN-site-7
+      manager: null
+    assurance: multi_factor
+  session:
+    persona: assistant@1
+    tainted: false
+    turn: 3
+    step: 2
+  error:
+    code: test.tool.unavailable
+    category: unavailable
+    source: tool
+expect:
+  value: true
