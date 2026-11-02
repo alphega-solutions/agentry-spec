@@ -1,0 +1,210 @@
+schemaVersion: "0.1.0"
+id: hitl.reviewer-required-approvals-highest
+title: The highest `requiredApprovals` among the applicable reviewer rules applies
+description: >-
+  update_record has `approval: always`. Two reviewer rules apply to its
+  `approval` action: the bundle's (default `requiredApprovals`, 1) and the
+  persona's (`requiredApprovals: 2`). A bundle rule for source `hook` with
+  `requiredApprovals: 3` does not apply. The action's reviewer
+  requirements therefore say 2, and list the two rules in layer order,
+  the bundle's then the persona's (Area 6 amendment 2026-11-01). After
+  r1's approval (decide(), no events) the reviewer view
+  (no events) shows the action undecided and resume() fails with `conflict`
+  (`agentry.hitl.pending`) without dispatching; r2's approval decides it
+  and the call is dispatched once.
+
+  Control: the persona is reloaded without its rule. A new session's
+  action then requires 1 approval, and r1's approval alone lets the turn
+  complete.
+requirements: [HITL-024]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        reviewerRules:
+          approval: [{ rule: "'approver' in reviewer.roles" }]
+          hook: [{ rule: "'approver' in reviewer.roles", requiredApprovals: 3 }]
+        sensitivityPolicies:
+          pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+          phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        reviewerRules:
+          approval: [{ rule: "reviewer.subject != principal.subject", requiredApprovals: 2 }]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.update_record }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [approver] }
+        - { id: r2, subject: reviewer-2, assurance: multi_factor, roles: [approver] }
+  providers:
+    scripted-a:
+      responses:
+        # $s
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sControl
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k2, value: v2 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+        - ok: { output: { updated: true } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $esc, payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  - action: decide
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000251", pendingActionId: $act, type: approve }
+    expect: { ok: true, newEvents: 0 }
+  - action: getReviewerView
+    session: $s
+    tenant: t1
+    reviewer: r2
+    expect:
+      ok: true
+      newEvents: 0
+      view:
+        actions:
+          - pendingActionId: $act
+            decided: false
+            decisions: [{ id: "01900000-0000-7000-8000-000000000251", type: approve }]
+  - action: resume
+    session: $s
+    reviewer: r1
+    expect: { ok: false, error: { category: conflict, code: agentry.hitl.pending }, newEvents: 0 }
+  - action: resume
+    session: $s
+    reviewer: r2
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000252", pendingActionId: $act, type: approve }
+    expect: { ok: true, endReason: responded }
+  # Control: without the persona's rule, one approval suffices.
+  - load:
+      artifacts:
+        - kind: Persona
+          id: assistant
+          version: 1
+          schemaVersion: "0.1.0"
+          displayName: Test assistant
+          instructions: "You are a test assistant."
+          tools: [lookup@1, update_record@1]
+          fallbackMessage: "This request was blocked."
+          defaultProfile: default@1
+          allowedProfiles: [default@1, streamed@1]
+          model:
+            provider: scripted-a
+            name: model-a
+            fallbacks:
+              - { provider: scripted-b, name: model-b }
+    expect: { ok: true }
+  - action: run
+    bind: $sControl
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k2 to v2" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $actControl }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $sControl
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000253", pendingActionId: $actControl, type: approve }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            payload:
+              escalation:
+                id: $esc
+                pendingActions:
+                  - id: $act
+                    source: approval
+                    reviewerRequirements:
+                      requiredApprovals: 2
+                      rules: ["'approver' in reviewer.roles", "reviewer.subject != principal.subject"]
+          - { type: run.ended, payload: { reason: escalated } }
+          - type: escalation.resolved
+            payload: { escalationId: $esc, decisions: ["01900000-0000-7000-8000-000000000251", "01900000-0000-7000-8000-000000000252"] }
+          - { type: tool.call, payload: { callId: c1, arguments: { key: k1, value: v1 } } }
+          - { type: run.ended, payload: { reason: responded } }
+    $sControl:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            payload:
+              escalation:
+                pendingActions:
+                  - { id: $actControl, reviewerRequirements: { requiredApprovals: 1, rules: ["'approver' in reviewer.roles"] } }
+          - { type: escalation.resolved, payload: { decisions: ["01900000-0000-7000-8000-000000000253"] } }
+          - { type: tool.call, payload: { callId: c1, arguments: { key: k2, value: v2 } } }
+          - { type: run.ended, payload: { reason: responded } }
+  stubCalls:
+    update_record: [{ arguments: { key: k1, value: v1 } }, { arguments: { key: k2, value: v2 } }]
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $count: { of: { type: run.started, payload: { kind: resume } }, equals: 1 }

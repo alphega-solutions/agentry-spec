@@ -1,0 +1,146 @@
+schemaVersion: "0.1.0"
+id: hitl.edit-arguments-taint-skipped
+title: Edited arguments in a tainted session skip the taint rule, pass validation and the hooks, and are dispatched
+description: >-
+  The baseline trusts no tools, so the lookup result (c1) taints the
+  session. The model then requests update_record (c2), mutating, whose
+  default `onTainted` outcome is `escalate`: the taint rule (stage 5)
+  escalates it with source `taint`.
+
+
+  The reviewer edits the arguments to {k1, v2}. The edited call re-enters
+  at stage 2 and skips stage 5: the session is still tainted, but no taint
+  `policy.decision` is emitted in the resume run and no second escalation
+  is raised (evaluating the taint rule again would escalate again). Stage 6
+  runs: the native hook observer (scoped to update_record, so it never saw
+  the taint-escalated call in the first run) is invoked once, in the
+  resume run, on the replacement, which has provenance `reviewer`. The
+  call is dispatched with the replacement and the turn responds.
+
+
+  The rule hook model-tagger (afterModelCall, annotates pii on every part
+  of each model response) labels both model-proposed tool calls pii. The
+  `tool.call` events carry the provenances and labels of their arguments
+  (CORE-151; HITL-061 as amended 2026-11-01): c1, proposed by the model,
+  has `provenances: [model]`; c2 after the edit has `provenances:
+  [reviewer]` and keeps pii, the label of the arguments it replaced (no
+  hook at beforeToolCall adds labels).
+requirements: [HITL-061]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Hook
+        id: observer
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [continue]
+        timeoutMs: 1000
+        match: "tool.id == 'update_record'"
+        source: { kind: native, handler: test.hook.observer }
+      - kind: Hook
+        id: model-tagger
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [afterModelCall]
+        results: [annotate]
+        timeoutMs: 1000
+        source: { kind: rule, when: "true", then: { result: annotate, labels: [pii] } }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [model-tagger@1, observer@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated as edited." }]
+          usage: { inputTokens: 40, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "synthetic untrusted value" } }
+      update_record:
+        - ok: { output: { updated: true } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1, then update it" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - decisionId: "01900000-0000-7000-8000-000000000632"
+        pendingActionId: $act
+        type: edit
+        replacement: { key: k1, value: v2 }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      checkpoint:
+        taint: { tainted: true }
+      events:
+        mode: subsequence
+        items:
+          - type: tool.call
+            runId: $r1
+            provenances: [model]
+            labels: { $contains: [pii] }
+            payload: { callId: c1, tool: lookup }
+          - { type: policy.decision, runId: $r1, payload: { kind: taint, outcome: escalate, callId: c2 } }
+          - type: escalation.raised
+            runId: $r1
+            payload:
+              escalation:
+                sources: [taint]
+                pendingActions: [{ id: $act, kind: tool_call, source: taint, callId: c2, arguments: { key: k1, value: v1 }, labels: { $contains: [pii] } }]
+          - { type: run.ended, runId: $r1, payload: { reason: escalated } }
+          - type: tool.call
+            runId: $r2
+            provenances: [reviewer]
+            labels: { $contains: [pii] }
+            payload: { callId: c2, arguments: { key: k1, value: v2 } }
+          - { type: run.ended, runId: $r2, payload: { reason: responded } }
+      absentEvents:
+        - { type: policy.decision, runId: $r2 }
+        - { type: escalation.raised, runId: $r2 }
+  stubCalls:
+    observer:
+      - arguments:
+          runId: $r2
+          content: [{ type: tool_call, callId: c2, arguments: { key: k1, value: v2 }, provenance: reviewer, labels: { $contains: [pii] } }]
+    update_record: [{ arguments: { key: k1, value: v2 } }]

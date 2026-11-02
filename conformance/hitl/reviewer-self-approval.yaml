@@ -1,0 +1,279 @@
+schemaVersion: "0.1.0"
+id: hitl.reviewer-self-approval
+title: Self-approval is refused by default, allowed for `approval` only when a bundle allows it, and never allowed for `taint` or `recovery`
+description: >-
+  read_ledger (read, `approval: always`) escalates with source `approval`;
+  update_record (mutating, not idempotent) escalates with source `taint`
+  after an untrusted lookup result (the baseline trusts no tools), and with
+  source `recovery` after a crash between its started record and dispatch.
+
+  - $sDefault, under the baseline bundle (no `allowSelfApproval`): the
+    action's `selfApprovalAllowed` is false; a decision by the session
+    principal p1 is refused with `unauthorized`
+    (`agentry.hitl.reviewer_refused`) and recorded nowhere; the control,
+    reviewer r1, is accepted.
+  - The bundle is then reloaded with `allowSelfApproval: { approval: true,
+    hook: true }` (keys `taint` and `recovery` cannot be set at all, see
+    cfg.self-approval-taint-recovery-rejected). Sessions created afterwards
+    pin this snapshot.
+  - $sSelf: the `approval` action has `selfApprovalAllowed: true`; p1
+    approves its own escalation with resume(), which is accepted, and the
+    call is dispatched.
+  - $sTaint: the `taint` action has `selfApprovalAllowed: false` although
+    the bundle allows self-approval for other sources; p1 is refused with
+    `unauthorized` (`agentry.hitl.reviewer_refused`); r1 is accepted.
+  - $sRec: a crash at `after_started_record`, a restart and a clock advance
+    past the run lease; a resume() by r1 with no decisions performs
+    recovery (HITL-092), which raises the `recovery` escalation, and then
+    fails with `conflict` because its action is undecided. The `recovery`
+    action has `selfApprovalAllowed: false`; p1's `confirm` is refused with
+    `unauthorized` (`agentry.hitl.reviewer_refused`); r1's is accepted.
+
+  Neither refused nor accepted decide() calls emit events. Exactly one
+  decision is audited per session, and only in $sSelf is the session
+  principal the reviewer.
+requirements: [HITL-023]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: read_ledger
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Read a ledger entry.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        approval: always
+        binding: { kind: native, handler: test.read_ledger }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, read_ledger@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        # $sDefault
+        - parts: [{ type: tool_call, callId: c1, tool: read_ledger, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sSelf
+        - parts: [{ type: tool_call, callId: c1, tool: read_ledger, arguments: { key: k2 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Ledger read." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sTaint
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k3 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: k3, value: v3 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sRec: first run
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sRec: crashed run
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k4, value: v4 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      read_ledger:
+        - ok: { output: { entry: "synthetic entry" } }
+      lookup:
+        - ok: { output: { value: "synthetic untrusted value" } }
+      update_record: []
+script:
+  # $sDefault: no allowSelfApproval.
+  - action: run
+    bind: $sDefault
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Read ledger k1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $actDefault }
+    expect: { ok: true, endReason: escalated }
+  - action: decide
+    session: $sDefault
+    reviewer: p1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000231", pendingActionId: $actDefault, type: approve }
+    expect: { ok: false, error: { category: unauthorized, code: agentry.hitl.reviewer_refused, details: { decisionId: "01900000-0000-7000-8000-000000000231" } }, newEvents: 0 }
+  - action: decide
+    session: $sDefault
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000232", pendingActionId: $actDefault, type: approve }
+    expect: { ok: true, newEvents: 0 }
+  # Allow self-approval for `approval` (and `hook`).
+  - load:
+      artifacts:
+        - kind: PolicyBundle
+          id: org
+          version: 1
+          schemaVersion: "0.1.0"
+          policyInstructions: "Follow organisational policy."
+          defaultFallbackMessage: "I can't help with that request."
+          allowSelfApproval: { approval: true, hook: true }
+          sensitivityPolicies:
+            pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+            phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+    expect: { ok: true }
+  # $sSelf: p1 approves its own `approval` escalation.
+  - action: run
+    bind: $sSelf
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Read ledger k2" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $actSelf }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $sSelf
+    reviewer: p1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000233", pendingActionId: $actSelf, type: approve }
+    expect: { ok: true, endReason: responded }
+  # $sTaint: self-approval never applies to taint.
+  - action: run
+    bind: $sTaint
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k3 then set it to v3" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $actTaint }
+    expect: { ok: true, endReason: escalated }
+  - action: decide
+    session: $sTaint
+    reviewer: p1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000234", pendingActionId: $actTaint, type: approve }
+    expect: { ok: false, error: { category: unauthorized, code: agentry.hitl.reviewer_refused, details: { decisionId: "01900000-0000-7000-8000-000000000234" } }, newEvents: 0 }
+  - action: decide
+    session: $sTaint
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000235", pendingActionId: $actTaint, type: reject }
+    expect: { ok: true, newEvents: 0 }
+  # $sRec: self-approval never applies to recovery.
+  - action: run
+    bind: $sRec
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - crash: { at: after_started_record, session: $sRec }
+  - action: run
+    session: $sRec
+    principal: p1
+    input: [{ type: text, text: "Set k4 to v4" }]
+  - restart: {}
+  - clock: { advance: PT1H }
+  - action: resume
+    session: $sRec
+    reviewer: r1
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $actRec }
+    expect: { ok: false, error: { category: conflict, code: agentry.hitl.pending } }
+  - action: decide
+    session: $sRec
+    reviewer: p1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000236", pendingActionId: $actRec, type: confirm, outcome: failed }
+    expect: { ok: false, error: { category: unauthorized, code: agentry.hitl.reviewer_refused, details: { decisionId: "01900000-0000-7000-8000-000000000236" } }, newEvents: 0 }
+  - action: decide
+    session: $sRec
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000237", pendingActionId: $actRec, type: confirm, outcome: failed }
+    expect: { ok: true, newEvents: 0 }
+expect:
+  sessions:
+    $sDefault:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            payload:
+              escalation:
+                pendingActions:
+                  - { id: $actDefault, source: approval, reviewerRequirements: { selfApprovalAllowed: false } }
+    $sSelf:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            payload:
+              escalation:
+                id: $escSelf
+                pendingActions:
+                  - { id: $actSelf, source: approval, reviewerRequirements: { selfApprovalAllowed: true } }
+          - { type: escalation.resolved, payload: { escalationId: $escSelf, decisions: ["01900000-0000-7000-8000-000000000233"] } }
+          - { type: tool.call, payload: { callId: c1, tool: read_ledger, arguments: { key: k2 } } }
+          - { type: run.ended, payload: { reason: responded } }
+    $sTaint:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            payload:
+              escalation:
+                sources: [taint]
+                pendingActions:
+                  - { id: $actTaint, source: taint, callId: c2, reviewerRequirements: { selfApprovalAllowed: false } }
+    $sRec:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            payload:
+              escalation:
+                sources: [recovery]
+                pendingActions:
+                  - { id: $actRec, kind: recovery, source: recovery, reviewerRequirements: { selfApprovalAllowed: false } }
+  stubCalls:
+    read_ledger: [{ arguments: { key: k2 } }]
+    update_record: { count: 0 }
+  ports:
+    auditLog:
+      t1:
+        $all:
+          - $contains:
+              - { type: decision, sessionId: $sDefault, reviewer: { subject: reviewer-1, tenant: t1 }, details: { id: "01900000-0000-7000-8000-000000000232" } }
+              - { type: decision, sessionId: $sSelf, principalRef: { subject: user-1, tenant: t1 }, reviewer: { subject: user-1, tenant: t1 }, details: { id: "01900000-0000-7000-8000-000000000233", type: approve } }
+              - { type: decision, sessionId: $sTaint, reviewer: { subject: reviewer-1, tenant: t1 }, details: { id: "01900000-0000-7000-8000-000000000235" } }
+              - { type: decision, sessionId: $sRec, reviewer: { subject: reviewer-1, tenant: t1 }, details: { id: "01900000-0000-7000-8000-000000000237" } }
+          - $count: { of: { type: decision }, equals: 4 }
+          - $count: { of: { type: decision, reviewer: { subject: user-1 } }, equals: 1 }

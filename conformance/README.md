@@ -13,6 +13,7 @@ Data-only test cases every agentry implementation must pass (Area 11). An implem
 | `config/` | Area 2–3 fixtures |
 | `tools/` | Area 4 fixtures |
 | `hooks/` | Area 5 fixtures |
+| `hitl/` | Area 6 fixtures |
 | `cel/` | CEL rule fixtures (EVAL-005, HOOK-110–115) |
 | `coverage.yaml` | Which areas have complete fixtures, and therefore enforced coverage |
 
@@ -21,7 +22,7 @@ Data-only test cases every agentry implementation must pass (Area 11). An implem
 A fixture has three parts:
 
 1. **`setup`** — virtual clock and ID seed, configuration (`base` plus overrides), tenants and principals, registered native handlers, scripted provider responses, stubs (native tools, MCP servers, HTTP endpoints, remote hooks), initial port contents, implementation limits.
-2. **`script`** — ordered steps: host actions (`run`, `resume`, `decide`, `close`, `cancel`), configuration loads, clock advances, crashes, restarts, abandoned streams, concurrent actions.
+2. **`script`** — ordered steps: host actions (`run`, `resume`, `decide`, `close`, `cancel`, `getReviewerView`, `listPendingEscalations`), configuration loads, clock advances, crashes, restarts, abandoned streams, concurrent actions.
 3. **`expect`** — event patterns per session, session states, step outcomes, captured provider requests and stub calls, port contents, and content that must never be persisted.
 
 Placeholders (`$session`, `$run1`) bind on first match in `expect`, or through a step's `capture`, and must match consistently: a placeholder binds the whole value at its first match (scalar, object or array), and every later occurrence must equal that value exactly — deep equality, not the partial matching used for objects written out in an expectation. A placeholder used in a step must be captured by an earlier step. Placeholders may be map keys (e.g. an idempotency key under `ports.idempotencyStore`). `expect` is evaluated in document order, depth-first; a placeholder key must be bound (earlier in document order, or by a capture) before a matcher such as `$absent` is applied to the value under it.
@@ -51,10 +52,11 @@ Matchers: `{"$any": true}`, `{"$absent": true}`, `{"$regex": "..."}`, `{"$len": 
   - `after_dispatch` — the stub ran (its behaviour is consumed, its side effect happened) but the result never reached the implementation; the stub-call record has `completed: false`;
   - `after_outcome_recorded` — outcome in the idempotency store, before `tool.result` is appended;
   - `after_event_append` — immediately after the event-log append that contains the next `tool.call` event; checkpoint not saved.
+  - `after_model_request` — immediately after the next `model.request` is appended, before the provider answers; no response consumed, no tool call in flight.
 
   The crashed action must be followed, later in the script, by a `restart` step before the next action step.
 - **Recovery** (HITL-091 as amended 2026-11-01): an orphaned run that continues keeps its `runId` and emits no new `run.started`. The host call that triggered recovery then runs its own run and receives its own outcome, which its step's `expect` matches.
-- **Decisions** in `resume`/`decide`: `{ decisionId, pendingActionId, type: approve|reject|edit|confirm, replacement?, outcome?: succeeded|failed, output? }`. `edit` needs `replacement`; `confirm` needs `outcome`, with `output` the stated output of a successful call. The escalation is the session's open one; the reviewer is the step's `reviewer`.
+- **Decisions** in `resume`/`decide`: `{ decisionId, pendingActionId, type: approve|reject|edit|confirm, replacement?, outcome?: succeeded|failed, output? }`. `edit` needs `replacement`; `confirm` needs `outcome`, with `output` the stated output of a successful call. The escalation is the session's open one; the reviewer is the step's `reviewer`. `getReviewerView` (step `session`, `tenant`, `reviewer`) and `listPendingEscalations` (step `tenant`) return their result to the step's `expect.view` and `expect.escalations`.
 
 ### Record shapes
 

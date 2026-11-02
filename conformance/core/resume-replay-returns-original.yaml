@@ -5,7 +5,7 @@ description: >-
   D1 is replayed twice: on the idle session, and after close(). Both replays
   return the original resume's outcome (script step 1), persist no event
   (newEvents: 0), and call no model or tool.
-requirements: [CORE-053, CORE-022]
+requirements: [CORE-053, CORE-022, HITL-071]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:

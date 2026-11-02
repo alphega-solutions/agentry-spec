@@ -1,0 +1,113 @@
+schemaVersion: "0.1.0"
+id: hitl.record-retrievable-after-restart
+title: A suspended session's escalation stays retrievable from the tenant-scoped checkpoint store across a restart; another tenant gets `not_found`
+description: >-
+  update_record has `approval: always`; the session escalates in tenant
+  t1. The implementation then restarts (in-process state lost, ports
+  kept) and the clock advances 48 hours, still within the PT72H
+  `suspendedTtl`. The escalation is still retrievable (HITL-012):
+
+  - getReviewerView as t1 for reviewer r1 returns the same escalation
+    (its action without `arguments`, which the view's escalation never
+    carries) and its one action, undecided, with the call as its one
+    `tool_call` part (Area 6 amendment 2026-11-01), and persists no event;
+  - listPendingEscalations for t1 returns it;
+  - the checkpoint store holds it under t1.
+
+  Calling getReviewerView on the same session as tenant t2, with a human
+  reviewer of t2, is refused with `not_found`, as for any tenant-scoped
+  object (ADR-0014), and listPendingEscalations for t2 is empty. The
+  session stays `suspended`.
+requirements: [HITL-012]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.update_record }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+    - id: t2
+      principals:
+        - { id: q1, subject: user-2, assurance: multi_factor }
+        - { id: q2, subject: reviewer-2, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record: []
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $esc, payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  - restart: {}
+  - clock: { advance: PT48H }
+  - action: getReviewerView
+    session: $s
+    tenant: t1
+    reviewer: r1
+    expect:
+      ok: true
+      newEvents: 0
+      view:
+        escalation: { id: $esc, sessionId: $s, tenant: t1, pendingActions: [{ id: $act, kind: tool_call, arguments: { $absent: true } }] }
+        actions:
+          - pendingActionId: $act
+            decided: false
+            decisions: []
+            content: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+  - action: listPendingEscalations
+    tenant: t1
+    expect: { ok: true, newEvents: 0, escalations: [{ id: $esc, sessionId: $s, tenant: t1 }] }
+  - action: getReviewerView
+    session: $s
+    tenant: t2
+    reviewer: q2
+    expect: { ok: false, newEvents: 0, error: { category: not_found } }
+  - action: listPendingEscalations
+    tenant: t2
+    expect: { ok: true, newEvents: 0, escalations: [] }
+expect:
+  sessions:
+    $s:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - { type: escalation.raised, payload: { escalation: { id: $esc, pendingActions: [{ id: $act }] } } }
+          - { type: run.ended, payload: { reason: escalated } }
+  ports:
+    checkpointStore:
+      t1:
+        $s: { state: suspended, escalation: { id: $esc } }
+  stubCalls:
+    update_record: { count: 0 }

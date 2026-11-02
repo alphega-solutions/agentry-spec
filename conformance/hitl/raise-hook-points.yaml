@@ -1,0 +1,317 @@
+schemaVersion: "0.1.0"
+id: hitl.raise-hook-points
+title: A hook escalation at beforeToolCall is a `tool_call` action allowing approve, reject and edit; at any other point it is a `content` action, allowing edit only at beforeResponse
+description: >-
+  Four native hooks are required, each able to escalate: `tool-gate`
+  (beforeToolCall), `model-gate` (beforeModelCall), `after-gate`
+  (afterToolCall) and `resp-gate` (beforeResponse). Native hook behaviours are consumed in invocation
+  order across sessions.
+
+  - $sTool: model-gate continues, the model requests update_record (first
+    step, untainted, `approval: never`), tool-gate escalates with
+    `test.gate.tool` → one `tool_call` action from source `hook` naming
+    `tool-gate@1`, with the call's ID, tool and arguments, allowing exactly
+    approve, reject and edit.
+  - $sModel: model-gate escalates with `test.gate.model` before any model
+    call → one `content` action at `beforeModelCall`, holding the content
+    under review by reference, with no call fields, allowing exactly
+    approve and reject.
+  - $sResp: model-gate continues, the model answers, resp-gate escalates
+    with `test.gate.response` → one `content` action at `beforeResponse`,
+    allowing exactly approve, reject and edit.
+  - $sAfter: model-gate and tool-gate continue, lookup is dispatched,
+    after-gate escalates its result with `test.gate.result` → one
+    `content` action at `afterToolCall` (not a `tool_call` action: only
+    beforeToolCall raises those), allowing exactly approve and reject. While
+    the action is undecided no `tool.result` is appended for c1 (stage 11
+    follows stage 10).
+
+  Each content action's `contentRef` is a blob of media type
+  `application/json` (Area 6 amendment 2026-11-01). `allowedDecisions` is
+  matched as an exact array, in the order approve, reject, edit.
+
+  The allowed sets are then exercised with decide(), which records
+  without resuming and emits no events (HITL-040): a `confirm` on the
+  tool_call action and an `edit` on the beforeModelCall action are
+  refused with `invalid_input` (`agentry.hitl.decision_not_allowed`,
+  HITL-043), naming the refused decision; an `edit` on the tool_call
+  action and on the beforeResponse action is accepted. Only the two
+  accepted decisions are audited. The persona allows only the buffered
+  profile, since a beforeResponse hook able to escalate rules out
+  `streamed` (HOOK-040, CFG-042).
+requirements: [HITL-001, HITL-011]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Hook
+        id: tool-gate
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [escalate]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.tool-gate }
+      - kind: Hook
+        id: model-gate
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeModelCall]
+        results: [escalate]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.model-gate }
+      - kind: Hook
+        id: after-gate
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [afterToolCall]
+        results: [escalate]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.after-gate }
+      - kind: Hook
+        id: resp-gate
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeResponse]
+        results: [escalate]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.resp-gate }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        requiredHooks: [tool-gate@1, model-gate@1, after-gate@1, resp-gate@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        # $sTool
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sResp
+        - parts: [{ type: text, text: "Draft reply SYN-0001." }]
+          usage: { inputTokens: 20, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sAfter
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k4 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record: []
+      lookup:
+        - ok: { output: { value: "SYN-RESULT-0001" } }
+    nativeHooks:
+      model-gate:
+        - { result: continue }
+        - { result: escalate, reasonCode: test.gate.model }
+        - { result: continue }
+        - { result: continue }
+      tool-gate:
+        - { result: escalate, reasonCode: test.gate.tool }
+        - { result: continue }
+      after-gate:
+        - { result: escalate, reasonCode: test.gate.result }
+      resp-gate:
+        - { result: escalate, reasonCode: test.gate.response }
+script:
+  - action: run
+    bind: $sTool
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $actTool }
+    expect: { ok: true, endReason: escalated }
+  - action: run
+    bind: $sModel
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Tell me about k2" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $actModel }
+    expect: { ok: true, endReason: escalated }
+  - action: run
+    bind: $sResp
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Draft a reply" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $actResp }
+    expect: { ok: true, endReason: escalated }
+  - action: run
+    bind: $sAfter
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k4" }]
+    expect: { ok: true, endReason: escalated }
+  - action: decide
+    session: $sTool
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-0000000000a1", pendingActionId: $actTool, type: confirm, outcome: succeeded }
+    expect: { ok: false, error: { category: invalid_input, code: agentry.hitl.decision_not_allowed, details: { decisionId: "01900000-0000-7000-8000-0000000000a1" } } }
+  - action: decide
+    session: $sTool
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-0000000000a2", pendingActionId: $actTool, type: edit, replacement: { key: k1, value: v2 } }
+    expect: { ok: true, newEvents: 0 }
+  - action: decide
+    session: $sModel
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-0000000000b1", pendingActionId: $actModel, type: edit, replacement: [{ type: text, text: "Tell me about k3" }] }
+    expect: { ok: false, error: { category: invalid_input, code: agentry.hitl.decision_not_allowed, details: { decisionId: "01900000-0000-7000-8000-0000000000b1" } } }
+  - action: decide
+    session: $sResp
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-0000000000c1", pendingActionId: $actResp, type: edit, replacement: [{ type: text, text: "Edited reply SYN-0002." }] }
+    expect: { ok: true, newEvents: 0 }
+expect:
+  sessions:
+    $sTool:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - { type: model.response, step: 1 }
+          - { type: hook.decision, payload: { hook: tool-gate@1, point: beforeToolCall, result: escalate, reasonCode: test.gate.tool } }
+          - type: escalation.raised
+            payload:
+              escalation:
+                sources: [hook]
+                reasonCodes: [test.gate.tool]
+                pendingActions:
+                  - id: $actTool
+                    kind: tool_call
+                    source: hook
+                    hook: tool-gate@1
+                    reasonCode: test.gate.tool
+                    callId: c1
+                    tool: update_record
+                    arguments: { key: k1, value: v1 }
+                    point: { $absent: true }
+                    contentRef: { $absent: true }
+                    allowedDecisions: [approve, reject, edit]
+                    reviewerRequirements: { requiredApprovals: 1, selfApprovalAllowed: false, rules: [] }
+          - { type: run.ended, payload: { reason: escalated } }
+      absentEvents:
+        - { type: tool.call }
+    $sModel:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: model-gate@1, point: beforeModelCall, result: escalate, reasonCode: test.gate.model } }
+          - type: escalation.raised
+            payload:
+              escalation:
+                sources: [hook]
+                reasonCodes: [test.gate.model]
+                pendingActions:
+                  - id: $actModel
+                    kind: content
+                    source: hook
+                    hook: model-gate@1
+                    reasonCode: test.gate.model
+                    point: beforeModelCall
+                    contentRef: { mediaType: application/json }
+                    callId: { $absent: true }
+                    arguments: { $absent: true }
+                    allowedDecisions: [approve, reject]
+                    reviewerRequirements: { requiredApprovals: 1, selfApprovalAllowed: false, rules: [] }
+          - { type: run.ended, payload: { reason: escalated } }
+      absentEvents:
+        - { type: model.request }
+    $sResp:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - { type: model.response, step: 1 }
+          - { type: hook.decision, payload: { hook: resp-gate@1, point: beforeResponse, result: escalate, reasonCode: test.gate.response } }
+          - type: escalation.raised
+            payload:
+              escalation:
+                sources: [hook]
+                reasonCodes: [test.gate.response]
+                pendingActions:
+                  - id: $actResp
+                    kind: content
+                    source: hook
+                    hook: resp-gate@1
+                    reasonCode: test.gate.response
+                    point: beforeResponse
+                    contentRef: { mediaType: application/json }
+                    callId: { $absent: true }
+                    allowedDecisions: [approve, reject, edit]
+                    reviewerRequirements: { requiredApprovals: 1, selfApprovalAllowed: false, rules: [] }
+          - { type: run.ended, payload: { reason: escalated } }
+    $sAfter:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: lookup } }
+          - { type: hook.decision, payload: { hook: after-gate@1, point: afterToolCall, result: escalate, reasonCode: test.gate.result } }
+          - type: escalation.raised
+            payload:
+              escalation:
+                sources: [hook]
+                reasonCodes: [test.gate.result]
+                pendingActions:
+                  - kind: content
+                    source: hook
+                    hook: after-gate@1
+                    reasonCode: test.gate.result
+                    point: afterToolCall
+                    contentRef: { mediaType: application/json }
+                    callId: { $absent: true }
+                    allowedDecisions: [approve, reject]
+          - { type: run.ended, payload: { reason: escalated } }
+      absentEvents:
+        - { type: model.request, step: 2 }
+        - { type: tool.result, payload: { callId: c1 } }
+  stubCalls:
+    model-gate: { count: 4 }
+    tool-gate: { count: 2 }
+    after-gate: { count: 1 }
+    resp-gate: { count: 1 }
+    update_record: { count: 0 }
+    lookup: [{ arguments: { key: k4 } }]
+  providerRequests:
+    scripted-a: { count: 3 }
+  ports:
+    auditLog:
+      t1:
+        $all:
+          - $count: { of: { type: decision }, equals: 2 }
+          - $contains:
+              - { type: decision, sessionId: $sTool, reviewer: { $any: true }, details: { id: "01900000-0000-7000-8000-0000000000a2", pendingActionId: $actTool, type: edit, decidedBy: reviewer } }
+              - { type: decision, sessionId: $sResp, reviewer: { $any: true }, details: { id: "01900000-0000-7000-8000-0000000000c1", pendingActionId: $actResp, type: edit, decidedBy: reviewer } }

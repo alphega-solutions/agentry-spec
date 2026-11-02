@@ -15,7 +15,7 @@ description: >-
   its own run (its own `run.started`, turn 3) and responds. The stub is
   called exactly twice, both times with the same key and arguments, and
   the second call completes.
-requirements: [TOOL-041, TOOL-062, HITL-091]
+requirements: [TOOL-041, TOOL-062, HITL-091, HITL-092]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:

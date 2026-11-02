@@ -1,0 +1,123 @@
+schemaVersion: "0.1.0"
+id: hitl.effect-approve-stage7-continues
+title: Approving a call escalated at the approval stage continues at dispatch, with the original arguments
+description: >-
+  update_record has `approval: always`; the native beforeToolCall hook
+  check (stage 6) continues. The call escalates at stage 7 with source
+  `approval`. On approval, processing continues at stage 8: the hook is
+  not invoked again (one invocation in all, in the first run), no second
+  escalation is raised by stage 7, and the call is dispatched once, in the
+  resume run, with exactly the pending action's arguments — the original
+  arguments the model requested.
+requirements: [HITL-060]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.update_record }
+      - kind: Hook
+        id: check
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [block]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.check }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [check@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+    nativeHooks:
+      check:
+        - result: continue
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000601", pendingActionId: $act, type: approve }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            runId: $r1
+            payload:
+              escalation:
+                sources: [approval]
+                pendingActions:
+                  - { id: $act, kind: tool_call, source: approval, reasonCode: agentry.approval.always, arguments: { $all: [$args, { key: k1, value: v1 }] } }
+          - { type: run.ended, runId: $r1, payload: { reason: escalated } }
+          - { type: escalation.resolved, runId: $r2 }
+          - { type: tool.call, runId: $r2, payload: { callId: c1, arguments: $args } }
+          - { type: tool.result, runId: $r2, payload: { callId: c1, result: { ok: { output: { updated: true } } } } }
+          - { type: run.ended, runId: $r2, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call, runId: $r1 }
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $count: { of: { type: escalation.raised }, equals: 1 }
+  stubCalls:
+    check: [{ arguments: { runId: $r1, point: beforeToolCall } }]
+    update_record: [{ arguments: $args, context: { runId: $r2 } }]

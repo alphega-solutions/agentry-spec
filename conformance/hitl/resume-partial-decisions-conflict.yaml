@@ -1,0 +1,189 @@
+schemaVersion: "0.1.0"
+id: hitl.resume-partial-decisions-conflict
+title: A resume() that leaves a pending action undecided fails with `conflict` (agentry.hitl.pending), keeps its decisions, and leaves the session suspended
+description: >-
+  One model response requests c1 update_record and c2 set_status, both
+  `approval: always`, so one escalation holds two pending actions ($a1, $a2).
+  At 00:01 a resume() carries only D1 (approve $a1): it fails with
+  `conflict`, code `agentry.hitl.pending`, starts no run and dispatches
+  nothing, but D1 is recorded (HITL-070, HITL-040). The reviewer view then
+  shows $a1 decided by D1 and $a2 undecided, and a resume() with no
+  decisions still fails the same way, so the session is still `suspended`
+  with its escalation open. At 00:02 a resume() carrying only D2 (approve
+  $a2) is accepted, without D1 being resubmitted: both calls are
+  dispatched once, and `escalation.resolved` lists D1 then D2. D1's audit
+  record is timestamped 00:01, when the failed resume recorded it, and each
+  decision is audited exactly once. Only two runs ever start: the
+  escalating run and the accepted resume.
+requirements: [HITL-070]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.update_record }
+      - kind: Tool
+        id: set_status
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Set a record's status.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.set_status }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, set_status@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      capabilities: { parallelToolCalls: true }
+      responses:
+        - parts:
+            - { type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }
+            - { type: tool_call, callId: c2, tool: set_status, arguments: { key: k2 } }
+          usage: { inputTokens: 20, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Both done." }]
+          usage: { inputTokens: 40, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+      set_status:
+        - ok: { output: { status: set } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Update k1 and set the status of k2" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind:
+          payload.escalation.id: $esc
+          payload.escalation.pendingActions.0.id: $a1
+          payload.escalation.pendingActions.1.id: $a2
+    expect: { ok: true, endReason: escalated }
+  - clock: { advance: PT1M }
+  # Partial: only $a1 decided.
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-0000000000c1", pendingActionId: $a1, type: approve }
+    expect: { ok: false, error: { category: conflict, code: agentry.hitl.pending } }
+  # D1 was kept; $a2 is still undecided.
+  - action: getReviewerView
+    session: $s
+    tenant: t1
+    reviewer: r1
+    expect:
+      ok: true
+      view:
+        escalation: { id: $esc }
+        actions:
+          - pendingActionId: $a1
+            decided: true
+            decisions:
+              - { id: "01900000-0000-7000-8000-0000000000c1", escalationId: $esc, pendingActionId: $a1, type: approve, decidedBy: reviewer }
+          - { pendingActionId: $a2, decided: false, decisions: [] }
+  # Still suspended, still pending.
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions: []
+    expect: { ok: false, error: { category: conflict, code: agentry.hitl.pending } }
+  - clock: { advance: PT1M }
+  # The remaining decision alone completes the escalation.
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-0000000000c2", pendingActionId: $a2, type: approve }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: run.started, runId: $r1, payload: { kind: run } }
+          - { type: escalation.raised, runId: $r1, payload: { escalation: { id: $esc, pendingActions: [{ id: $a1, callId: c1 }, { id: $a2, callId: c2 }] } } }
+          - { type: run.ended, runId: $r1, payload: { reason: escalated } }
+          - { type: run.started, runId: $r2, timestamp: { $regex: "^2026-01-01T00:02:00" }, payload: { kind: resume } }
+          - type: escalation.resolved
+            runId: $r2
+            payload:
+              escalationId: $esc
+              decisions: ["01900000-0000-7000-8000-0000000000c1", "01900000-0000-7000-8000-0000000000c2"]
+          - { type: run.ended, runId: $r2, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call, runId: $r1 }
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $all:
+            - $count: { of: { type: run.started }, equals: 2 }
+            - $count: { of: { type: escalation.resolved }, equals: 1 }
+            - $count: { of: { type: tool.call, payload: { callId: c1 } }, equals: 1 }
+            - $count: { of: { type: tool.call, payload: { callId: c2 } }, equals: 1 }
+    auditLog:
+      t1:
+        $all:
+          - $count: { of: { type: decision }, equals: 2 }
+          - $contains:
+              - type: decision
+                sessionId: $s
+                reviewer: { subject: reviewer-1, tenant: t1 }
+                timestamp: { $regex: "^2026-01-01T00:01:00" }
+                details: { id: "01900000-0000-7000-8000-0000000000c1", escalationId: $esc, pendingActionId: $a1, type: approve, decidedBy: reviewer }
+              - type: decision
+                sessionId: $s
+                reviewer: { subject: reviewer-1, tenant: t1 }
+                timestamp: { $regex: "^2026-01-01T00:02:00" }
+                details: { id: "01900000-0000-7000-8000-0000000000c2", escalationId: $esc, pendingActionId: $a2, type: approve, decidedBy: reviewer }
+  stubCalls:
+    update_record: [{ arguments: { key: k1, value: v1 } }]
+    set_status: [{ arguments: { key: k2 } }]
+  providerRequests:
+    scripted-a: { count: 2 }

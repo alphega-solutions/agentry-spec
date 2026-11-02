@@ -1,0 +1,159 @@
+schemaVersion: "0.1.0"
+id: hitl.decide-record-contents-audited
+title: Each recorded decision carries its IDs, type, reviewer and virtual-clock timestamp, and is audited with the snapshot hash; an edit records original and replacement
+description: >-
+  One model response requests two update_record calls (`approval: always`),
+  grouped into one escalation at 2026-01-01T00:00Z with actions $a1 (c1)
+  and $a2 (c2). At 01:00 reviewer r1 submits, with decide(), an `approve`
+  of $a1 and an `edit` of $a2 that replaces value v2 with v2-edited.
+
+
+  Each decision is written to the audit log as a `decision` record
+  (PORT-071; Area 6 amendment 2026-11-01, HITL-044): the record's
+  `timestamp`, `tenant`, `sessionId`, `principalRef` (the session
+  principal, user-1), `snapshotHash` (the snapshot the escalation was raised
+  under) and `reviewer` (reviewer-1); its `details` are the `decision`
+  record — the submitted decision ID as `id`, `escalationId`,
+  `pendingActionId`, `type`, `decidedBy: reviewer`, `reviewer`, and
+  `timestamp` from the virtual clock (01:00, not the escalation's 00:00).
+  The approve carries no `replacement` or `original`; the edit carries both
+  `replacement` (the submitted arguments) and `original` (the pending
+  action's arguments). The session then resumes and both calls are
+  dispatched, c2 with the replacement.
+requirements: [HITL-041, HITL-044]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.update_record }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      capabilities: { parallelToolCalls: true }
+      responses:
+        - parts:
+            - { type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }
+            - { type: tool_call, callId: c2, tool: update_record, arguments: { key: k2, value: v2 } }
+          usage: { inputTokens: 20, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Both updated." }]
+          usage: { inputTokens: 40, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+        - ok: { output: { updated: true } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1 and k2 to v2" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind:
+          payload.escalation.id: $esc
+          payload.escalation.snapshotHash: $snap
+          payload.escalation.pendingActions.0.id: $a1
+          payload.escalation.pendingActions.1.id: $a2
+    expect: { ok: true, endReason: escalated }
+  - clock: { advance: PT1H }
+  - action: decide
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000041", pendingActionId: $a1, type: approve }
+      - decisionId: "01900000-0000-7000-8000-000000000042"
+        pendingActionId: $a2
+        type: edit
+        replacement: { key: k2, value: v2-edited }
+    expect: { ok: true, newEvents: 0 }
+  - clock: { advance: PT1H }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions: []
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            snapshotHash: $snap
+            payload:
+              escalation:
+                id: $esc
+                pendingActions:
+                  - { id: $a1, callId: c1, arguments: { key: k1, value: v1 } }
+                  - { id: $a2, callId: c2, arguments: { key: k2, value: v2 } }
+  stubCalls:
+    update_record:
+      $all:
+        - { $len: 2 }
+        - $contains:
+            - { arguments: { key: k1, value: v1 } }
+            - { arguments: { key: k2, value: v2-edited } }
+  ports:
+    auditLog:
+      t1:
+        $all:
+          - $count: { of: { type: decision, sessionId: $s }, equals: 2 }
+          - $contains:
+              - type: decision
+                timestamp: { $regex: "^2026-01-01T01:00:00" }
+                tenant: t1
+                sessionId: $s
+                principalRef: { subject: user-1, tenant: t1 }
+                snapshotHash: $snap
+                reviewer: { subject: reviewer-1, tenant: t1 }
+                details:
+                  id: "01900000-0000-7000-8000-000000000041"
+                  escalationId: $esc
+                  pendingActionId: $a1
+                  type: approve
+                  decidedBy: reviewer
+                  reviewer: { subject: reviewer-1, tenant: t1 }
+                  timestamp: { $regex: "^2026-01-01T01:00:00" }
+                  replacement: { $absent: true }
+                  original: { $absent: true }
+              - type: decision
+                timestamp: { $regex: "^2026-01-01T01:00:00" }
+                tenant: t1
+                sessionId: $s
+                principalRef: { subject: user-1, tenant: t1 }
+                snapshotHash: $snap
+                reviewer: { subject: reviewer-1, tenant: t1 }
+                details:
+                  id: "01900000-0000-7000-8000-000000000042"
+                  escalationId: $esc
+                  pendingActionId: $a2
+                  type: edit
+                  decidedBy: reviewer
+                  reviewer: { subject: reviewer-1, tenant: t1 }
+                  timestamp: { $regex: "^2026-01-01T01:00:00" }
+                  replacement: { key: k2, value: v2-edited }
+                  original: { key: k2, value: v2 }

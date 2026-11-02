@@ -1,0 +1,141 @@
+schemaVersion: "0.1.0"
+id: hitl.view-access-refused
+title: getReviewerView refuses a non-human or other-tenant reviewer with `unauthorized`, and another tenant's call is `not_found`; reviewer-rule failure does not refuse the view
+description: >-
+  update_record has `approval: always`, and the bundle's approval reviewer
+  rule is `'approver' in reviewer.roles`. For the open escalation of
+  tenant t1's session:
+
+  - called as t1 for r-svc (`human: false`) → `unauthorized`
+    (`agentry.hitl.reviewer_refused`);
+  - called as t1 for r-other (a principal of t2) → `unauthorized`
+    (`agentry.hitl.reviewer_refused`);
+  - called as t2 for r-t2 (a human principal of t2) → `not_found`, as for
+    any object of another tenant (ADR-0014);
+  - called as t1 for r-norole, a human of t1 who fails the reviewer rule
+    → the view is returned (clearance is per part, HITL-031), although a
+    decision by r-norole is refused with `unauthorized`
+    (`agentry.hitl.reviewer_refused`);
+  - control: called as t1 for r1 → the view is returned; its escalation
+    carries no action `arguments` (the call appears only as the action's
+    `tool_call` part).
+
+  No call changes state or emits events.
+requirements: [HITL-030, HITL-022]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        reviewerRules:
+          approval: [{ rule: "'approver' in reviewer.roles" }]
+        sensitivityPolicies:
+          pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+          phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.update_record }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [approver] }
+        - { id: r-norole, subject: reviewer-norole, assurance: multi_factor, roles: [] }
+        - { id: r-svc, subject: review-bot, assurance: multi_factor, roles: [approver], human: false, service: true }
+    - id: t2
+      principals:
+        - { id: r-other, subject: reviewer-other, assurance: multi_factor, roles: [approver] }
+        - { id: r-t2, subject: reviewer-t2, assurance: multi_factor, roles: [approver] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record: []
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $esc, payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  - action: getReviewerView
+    session: $s
+    tenant: t1
+    reviewer: r-svc
+    expect: { ok: false, error: { category: unauthorized, code: agentry.hitl.reviewer_refused }, newEvents: 0 }
+  - action: getReviewerView
+    session: $s
+    tenant: t1
+    reviewer: r-other
+    expect: { ok: false, error: { category: unauthorized, code: agentry.hitl.reviewer_refused }, newEvents: 0 }
+  - action: getReviewerView
+    session: $s
+    tenant: t2
+    reviewer: r-t2
+    expect: { ok: false, error: { category: not_found }, newEvents: 0 }
+  - action: getReviewerView
+    session: $s
+    tenant: t1
+    reviewer: r-norole
+    expect:
+      ok: true
+      newEvents: 0
+      view:
+        escalation: { id: $esc }
+        actions: [{ pendingActionId: $act, decided: false, content: [{ type: tool_call, callId: c1, arguments: { key: k1, value: v1 } }] }]
+  - action: decide
+    session: $s
+    reviewer: r-norole
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000261", pendingActionId: $act, type: approve }
+    expect: { ok: false, error: { category: unauthorized, code: agentry.hitl.reviewer_refused }, newEvents: 0 }
+  # Control.
+  - action: getReviewerView
+    session: $s
+    tenant: t1
+    reviewer: r1
+    expect:
+      ok: true
+      newEvents: 0
+      view:
+        escalation: { id: $esc, pendingActions: [{ id: $act, arguments: { $absent: true } }] }
+        actions: [{ pendingActionId: $act, decided: false, decisions: [], content: [{ type: tool_call, callId: c1, arguments: { key: k1, value: v1 } }] }]
+expect:
+  sessions:
+    $s:
+      state: suspended
+      checkpoint:
+        escalation: { id: $esc }
+  stubCalls:
+    update_record: { count: 0 }
+  ports:
+    auditLog:
+      t1:
+        $count: { of: { type: decision }, equals: 0 }

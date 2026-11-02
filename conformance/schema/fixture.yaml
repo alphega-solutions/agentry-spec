@@ -431,7 +431,14 @@ $defs:
     additionalProperties: false
     required: [action]
     properties:
-      action: { enum: [run, resume, decide, close, cancel] }
+      action:
+        description: >-
+          Host operation. `getReviewerView` (HITL-030) returns the reviewer
+          view of the session's open escalation for the step's `reviewer`,
+          called as `tenant`; `listPendingEscalations` (HITL-100) returns the
+          open escalations of `tenant`. Neither changes state or emits
+          events.
+        enum: [run, resume, decide, close, cancel, getReviewerView, listPendingEscalations]
       bind:
         description: Placeholder bound to the session the action creates or targets.
         $ref: "#/$defs/placeholder"
@@ -594,6 +601,9 @@ $defs:
       store; its `tool.result` is not appended.
       `after_event_append` — immediately after the event-log append that
       contains the next `tool.call` event; the checkpoint is not saved.
+      `after_model_request` — immediately after the next `model.request`
+      event is appended, before the provider answers: no scripted
+      response is consumed and no tool call is in flight.
 
 
       Recovery after a restart follows HITL-091 as amended 2026-11-01. An
@@ -613,7 +623,7 @@ $defs:
         properties:
           at:
             description: Named crash points (EVAL-035).
-            enum: [after_started_record, after_dispatch, after_outcome_recorded, after_event_append]
+            enum: [after_started_record, after_dispatch, after_outcome_recorded, after_event_append, after_model_request]
           session: { $ref: "#/$defs/placeholder" }
 
   restartStep:
@@ -702,6 +712,16 @@ $defs:
         description: Number of events persisted as a result of this step (0 = none).
         type: integer
         minimum: 0
+      view:
+        description: >-
+          For `getReviewerView`: a pattern matched against the returned
+          `ReviewerView` (schemas/core/v1/hitl.yaml), objects partially,
+          arrays exactly unless wrapped in `$contains`.
+        type: object
+      escalations:
+        description: >-
+          For `listPendingEscalations`: a pattern matched against the
+          returned array of escalation records.
 
   eventPattern:
     type: object

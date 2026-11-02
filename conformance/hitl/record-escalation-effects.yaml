@@ -1,0 +1,127 @@
+schemaVersion: "0.1.0"
+id: hitl.record-escalation-effects
+title: Raising an escalation checkpoints the session with the escalation, emits `escalation.raised` with the record, audits it, ends the run `escalated` and suspends the session
+description: >-
+  update_record has `approval: always`. Its call escalates (HITL-001), and
+  the implementation must (HITL-003):
+
+  - emit `escalation.raised` carrying the record (its schema validity is
+    implied by `schemaValid`);
+  - save a checkpoint holding the open escalation, and the checkpoint
+    store holds the session as `suspended` with that escalation;
+  - write an audit record of type `escalation`, linked to that event, with
+    the session's tenant, principal and snapshot hash (PORT-071), whose
+    `details` equal the escalation carried by `escalation.raised` (deep
+    equality with the bound record);
+  - end the run `escalated`, without completing the turn (CORE-080: a turn
+    does not end while the session is `suspended`), and leave the session
+    `suspended`.
+
+  The events are, in order, `escalation.raised`, `checkpoint.saved`,
+  `run.ended` (`escalated`) (Area 6 amendment 2026-11-01; the checkpoint
+  never runs ahead of the event log, PORT-035), asserted in one
+  subsequence; the event log holds exactly one `run.ended`. Nothing is
+  dispatched.
+requirements: [HITL-003]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.update_record }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record: []
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    expect: { ok: true, endReason: escalated }
+expect:
+  sessions:
+    $s:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - { type: run.started, runId: $r1, payload: { kind: run } }
+          - { type: turn.started, runId: $r1, turn: 1 }
+          - type: escalation.raised
+            eventId: $evRaised
+            runId: $r1
+            tenantId: t1
+            principalRef: $pRef
+            snapshotHash: $h
+            payload:
+              escalation:
+                $all:
+                  - $escRecord
+                  - id: $esc
+                    sessionId: $s
+                    runId: $r1
+                    tenant: t1
+                    snapshotHash: $h
+                    sources: [approval]
+                    pendingActions: [{ id: $act, kind: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          - { type: checkpoint.saved, runId: $r1 }
+          - { type: run.ended, runId: $r1, payload: { reason: escalated } }
+      absentEvents:
+        - { type: turn.completed }
+        - { type: tool.call }
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $all:
+            - $count: { of: { type: escalation.raised }, equals: 1 }
+            - $count: { of: { type: run.ended }, equals: 1 }
+    checkpointStore:
+      t1:
+        $s:
+          state: suspended
+          tenant: t1
+          principalRef: $pRef
+          snapshotHash: $h
+          escalation: { id: $esc, pendingActions: [{ id: $act, callId: c1 }] }
+    auditLog:
+      t1:
+        $all:
+          - $count: { of: { type: escalation }, equals: 1 }
+          - $contains:
+              - type: escalation
+                tenant: t1
+                sessionId: $s
+                principalRef: $pRef
+                snapshotHash: $h
+                eventIds: { $contains: [$evRaised] }
+                details: $escRecord
+  stubCalls:
+    update_record: { count: 0 }

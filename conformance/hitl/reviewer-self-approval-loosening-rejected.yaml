@@ -1,0 +1,176 @@
+schemaVersion: "0.1.0"
+id: hitl.reviewer-self-approval-loosening-rejected
+title: A lower bundle cannot enable self-approval that a higher bundle set to `false`
+description: >-
+  The bundle stack is org@1 then dept@1. org sets `allowSelfApproval: {
+  approval: false }`. A dept that sets `approval: true` loosens a
+  `stricter` value (order `false` → `true`) and the load fails with
+  category configuration naming dept@1, the field and the layer (CFG-032);
+  the previous snapshot stays in force, so a session created afterwards
+  still refuses self-approval (`unauthorized`,
+  `agentry.hitl.reviewer_refused`, no events). A dept restating `approval: false` loads.
+
+  Control: with org reloaded without the key, the same dept `approval:
+  true` loads (a lower layer may add a key that no higher layer set, CFG-030
+  as amended), and a session created under it lets p1 approve its own
+  `approval` escalation, so the earlier rejection is due to org's `false`
+  alone.
+requirements: [HITL-023]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1, dept@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        allowSelfApproval: { approval: false }
+        sensitivityPolicies:
+          pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+          phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+      - kind: PolicyBundle
+        id: dept
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow department policy."
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.update_record }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+  providers:
+    scripted-a:
+      responses:
+        # $sStrict
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sControl
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k2, value: v2 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+script:
+  # Loosening org's false is rejected.
+  - load:
+      artifacts:
+        - { kind: PolicyBundle, id: dept, version: 1, schemaVersion: "0.1.0", policyInstructions: "Follow department policy.", allowSelfApproval: { approval: true } }
+    expect: { ok: false, error: { category: configuration, details: { artifact: dept@1, field: /allowSelfApproval/approval, layer: policyBundle } } }
+  # The previous snapshot is in force: self-approval is still refused.
+  - action: run
+    bind: $sStrict
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $actStrict }
+    expect: { ok: true, endReason: escalated }
+  - action: decide
+    session: $sStrict
+    reviewer: p1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000241", pendingActionId: $actStrict, type: approve }
+    expect: { ok: false, error: { category: unauthorized, code: agentry.hitl.reviewer_refused }, newEvents: 0 }
+  # Restating false is accepted.
+  - load:
+      artifacts:
+        - { kind: PolicyBundle, id: dept, version: 1, schemaVersion: "0.1.0", policyInstructions: "Follow department policy.", allowSelfApproval: { approval: false } }
+    expect: { ok: true }
+  # Control: with org silent, dept may enable it.
+  - load:
+      artifacts:
+        - kind: PolicyBundle
+          id: org
+          version: 1
+          schemaVersion: "0.1.0"
+          policyInstructions: "Follow organisational policy."
+          defaultFallbackMessage: "I can't help with that request."
+          sensitivityPolicies:
+            pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+            phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+        - { kind: PolicyBundle, id: dept, version: 1, schemaVersion: "0.1.0", policyInstructions: "Follow department policy.", allowSelfApproval: { approval: true } }
+    expect: { ok: true }
+  - action: run
+    bind: $sControl
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k2 to v2" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $actControl }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $sControl
+    reviewer: p1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000242", pendingActionId: $actControl, type: approve }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sStrict:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - { type: escalation.raised, payload: { escalation: { pendingActions: [{ id: $actStrict, source: approval, reviewerRequirements: { selfApprovalAllowed: false } }] } } }
+    $sControl:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: escalation.raised, payload: { escalation: { pendingActions: [{ id: $actControl, source: approval, reviewerRequirements: { selfApprovalAllowed: true } }] } } }
+          - { type: tool.call, payload: { callId: c1, arguments: { key: k2, value: v2 } } }
+          - { type: run.ended, payload: { reason: responded } }
+  stubCalls:
+    update_record: [{ arguments: { key: k2, value: v2 } }]
+  ports:
+    auditLog:
+      t1:
+        $all:
+          - $count: { of: { type: decision }, equals: 1 }
+          - $contains:
+              - { type: decision, sessionId: $sControl, reviewer: { subject: user-1, tenant: t1 } }

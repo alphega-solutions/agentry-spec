@@ -1,0 +1,168 @@
+schemaVersion: "0.1.0"
+id: hitl.recovery-lease-lapse-orphan-escalates
+title: A run whose lease lapses after a crash mid non-idempotent call is detected as orphaned on next access and ends `escalated` with a recovery action; the lease is recorded in the checkpoint
+description: >-
+  The runner's run lease is PT2M (`limits.leaseTtl`, not the PT5M
+  default). update_record is mutating and not idempotent (baseline).
+
+  $s: turn 1 responds. The implementation is crashed at `after_dispatch`
+  during turn 2 (run $r2): the stub ran, its result never reached the
+  implementation, and no outcome is recorded. After a restart, at +1m the
+  lease has not lapsed, so the run is not orphaned: run() on $s fails with
+  `conflict` (the session is still `active`) and persists nothing. At
+  exactly +2m the lease has lapsed (a lease has elapsed when the current
+  time equals its expiry, Area 6 amendment 2026-11-01, so eager and lazy
+  detection agree on the time); run() on $s first performs recovery (HITL-090,
+  HITL-091 step 4, HITL-092): the call has a started record and no
+  outcome, so it is not re-dispatched; a `recovery` escalation is raised in
+  the orphaned run $r2 (reason `agentry.recovery.unknown_outcome`, the
+  call's idempotency key, only `confirm` allowed, self-approval not
+  allowed), checkpointed and audited, and $r2 ends `escalated` with no new
+  `run.started`. The triggering run() then proceeds with its own request
+  on the now `suspended` session and is refused with `conflict` (CORE-051).
+  The PT2M lease is what is honoured: with the PT5M default the +2m access
+  would also be refused without recovery.
+
+  $t shows the lease recorded with the checkpoint (HITL-090, PORT-030):
+  turn 1 responds at +2m; the implementation is crashed at
+  `after_started_record` during turn 2, also at +2m, and restarted. With
+  no later access and no clock movement, $t's checkpoint is `active` and
+  holds a lease that expires at +2m + PT2M = 00:04:00.
+requirements: [HITL-090, HITL-091]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Hello again." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k2, value: v2 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true, attempt: "first" } }
+        - ok: { output: { updated: true, attempt: "second" } }
+  limits:
+    leaseTtl: PT2M
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - crash: { at: after_dispatch, session: $s }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Set k1 to v1" }]
+  - restart: {}
+  # Lease still current: not orphaned.
+  - clock: { advance: PT1M }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Anyone there?" }]
+    expect: { ok: false, error: { category: conflict }, newEvents: 0 }
+  # Exactly the lease expiry (00:00 + PT2M): lapsed; recovery on access.
+  - clock: { advance: PT1M }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Is it done?" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $esc, payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: false, error: { category: conflict } }
+  # Lease recorded with the checkpoint.
+  - action: run
+    bind: $t
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - crash: { at: after_started_record, session: $t }
+  - action: run
+    session: $t
+    principal: p1
+    input: [{ type: text, text: "Set k2 to v2" }]
+  - restart: {}
+expect:
+  sessions:
+    $s:
+      state: suspended
+      checkpoint: { state: suspended, escalation: { id: $esc } }
+      events:
+        mode: subsequence
+        items:
+          - { type: run.started, runId: $r1, payload: { kind: run } }
+          - { type: run.ended, runId: $r1, payload: { reason: responded } }
+          - { type: run.started, runId: $r2, payload: { kind: run } }
+          - { type: tool.call, runId: $r2, turn: 2, step: 1, payload: { callId: c1, tool: update_record } }
+          - type: escalation.raised
+            runId: $r2
+            turn: 2
+            timestamp: { $regex: "^2026-01-01T00:02:00" }
+            payload:
+              escalation:
+                id: $esc
+                runId: $r2
+                turn: 2
+                sources: [recovery]
+                reasonCodes: [agentry.recovery.unknown_outcome]
+                createdAt: { $regex: "^2026-01-01T00:02:00" }
+                pendingActions:
+                  - id: $act
+                    kind: recovery
+                    source: recovery
+                    reasonCode: agentry.recovery.unknown_outcome
+                    callId: c1
+                    tool: update_record
+                    arguments: { key: k1, value: v1 }
+                    idempotencyKey: $k
+                    allowedDecisions: [confirm]
+                    reviewerRequirements: { selfApprovalAllowed: false }
+          - { type: run.ended, runId: $r2, payload: { reason: escalated } }
+      absentEvents:
+        - { type: tool.result }
+        - { type: turn.started, turn: 3 }
+        - { type: escalation.raised, timestamp: { $regex: "^2026-01-01T00:01:00" } }
+    $t:
+      checkpoint:
+        state: active
+        lease: { expiresAt: { $regex: "^2026-01-01T00:04:00" } }
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $all:
+            - $count: { of: { type: run.started }, equals: 2 }
+            - $count: { of: { type: escalation.raised }, equals: 1 }
+    auditLog:
+      t1:
+        $contains:
+          - { type: escalation, sessionId: $s }
+    idempotencyStore:
+      t1:
+        $k: { state: started, outcome: { $absent: true } }
+  stubCalls:
+    update_record:
+      - { arguments: { key: k1, value: v1 }, completed: false, context: { sessionId: $s, runId: $r2, idempotencyKey: $k } }
+  providerRequests:
+    scripted-a: { count: 4 }

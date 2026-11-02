@@ -1,0 +1,103 @@
+schemaVersion: "0.1.0"
+id: hitl.recovery-read-call-redispatched
+title: A read call in flight when its run is orphaned is re-dispatched on recovery and the orphaned run continues; the triggering run() then gets its own run
+description: >-
+  lookup is a read tool (baseline), so it has no started record and no
+  idempotency outcome. Turn 1 responds. The implementation is crashed at
+  `after_dispatch` during turn 2 (run $r2) while lookup c1 is in flight:
+  the stub ran (its first behaviour is consumed) but its result never
+  reached the implementation. After a restart the clock is advanced
+  exactly to the run lease's expiry (default PT5M; a lease has elapsed
+  when the current time equals its expiry, Area 6 amendment 2026-11-01).
+
+
+  run() on the session, which is `active` with an orphaned run, does not
+  fail with `conflict` (HITL-092). It first performs recovery (HITL-091 as
+  amended 2026-11-01, step 2: a read call with no recorded outcome is
+  re-dispatched): c1 is dispatched a second time, its result (the second
+  behaviour) is the call's one `tool.result`, the model receives it, and
+  the orphaned run continues in $r2 (no new `run.started`) to turn 2's
+  response; no recovery escalation is raised. Only then does the
+  triggering run() proceed with its own run $r3 (turn 3), which responds;
+  that is the outcome the host receives.
+requirements: [HITL-091, HITL-092]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "k1 is found-second." }]
+          usage: { inputTokens: 40, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Yes, done." }]
+          usage: { inputTokens: 50, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "found-first" } }
+        - ok: { output: { value: "found-second" } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - crash: { at: after_dispatch, session: $s }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Look up k1" }]
+  - restart: {}
+  # Exactly the lease expiry (00:00 + PT5M).
+  - clock: { advance: PT5M }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Is it done?" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: run.ended, runId: $r1, payload: { reason: responded } }
+          - { type: run.started, runId: { $all: [$r2, { $not: $r1 }] }, payload: { kind: run } }
+          - { type: turn.started, runId: $r2, turn: 2 }
+          - { type: tool.call, runId: $r2, turn: 2, step: 1, payload: { callId: c1, tool: lookup } }
+          - { type: tool.result, runId: $r2, turn: 2, step: 1, payload: { callId: c1, result: { ok: { output: { value: "found-second" } } } } }
+          - { type: model.request, runId: $r2, turn: 2, step: 2 }
+          - { type: run.ended, runId: $r2, payload: { reason: responded } }
+          - { type: run.started, runId: { $all: [$r3, { $not: $r2 }] }, timestamp: { $regex: "^2026-01-01T00:05:00" }, payload: { kind: run } }
+          - { type: turn.started, runId: $r3, turn: 3 }
+          - { type: run.ended, runId: $r3, payload: { reason: responded } }
+      absentEvents:
+        - { type: escalation.raised }
+        - { type: run.ended, payload: { reason: failed } }
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $all:
+            - $count: { of: { type: run.started }, equals: 3 }
+            - $count: { of: { type: tool.result, payload: { callId: c1 } }, equals: 1 }
+  stubCalls:
+    lookup:
+      - { arguments: { key: k1 }, completed: false, context: { sessionId: $s, runId: $r2 } }
+      - { arguments: { key: k1 }, completed: true, context: { sessionId: $s, runId: $r2 } }
+  providerRequests:
+    scripted-a: { count: 4 }

@@ -4,3 +4,4 @@ enforced:
   - CFG
   - TOOL
   - HOOK
+  - HITL

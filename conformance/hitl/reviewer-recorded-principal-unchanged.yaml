@@ -1,0 +1,131 @@
+schemaVersion: "0.1.0"
+id: hitl.reviewer-recorded-principal-unchanged
+title: The reviewer is recorded with the decision and never replaces the session principal
+description: >-
+  update_record has `approval: always`, so the call escalates (source
+  `approval`). Reviewer r1 approves with decide(); a different reviewer, r2,
+  then calls resume() with no decisions. The decision's audit record names
+  r1 as `reviewer` (not r2, who only resumed) and keeps the session
+  principal p1 as `principalRef`; its `details` are the decision record,
+  with `decidedBy: reviewer` and r1 as reviewer. `escalation.resolved`
+  lists exactly that decision. Every event of the resume run, the tool
+  context of the dispatched call, the checkpoint, and a later run by p1
+  all carry p1: no event carries either reviewer as its principal.
+requirements: [HITL-020]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.update_record }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+        - { id: r2, subject: reviewer-2, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Still here." }]
+          usage: { inputTokens: 40, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $esc, payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  - action: decide
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000201", pendingActionId: $act, type: approve }
+    expect: { ok: true, newEvents: 0 }
+  - action: resume
+    session: $s
+    reviewer: r2
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Anything else?" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      checkpoint:
+        principalRef: { subject: user-1, tenant: t1 }
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, principalRef: { subject: user-1, tenant: t1 }, snapshotHash: $h }
+          - { type: escalation.raised, payload: { escalation: { id: $esc, sources: [approval], pendingActions: [{ id: $act, kind: tool_call, source: approval }] } } }
+          - { type: run.ended, runId: $r1, payload: { reason: escalated } }
+          - { type: run.started, runId: $r2, principalRef: { subject: user-1, tenant: t1 }, payload: { kind: resume } }
+          - type: escalation.resolved
+            runId: $r2
+            principalRef: { subject: user-1, tenant: t1 }
+            payload: { escalationId: $esc, decisions: ["01900000-0000-7000-8000-000000000201"] }
+          - { type: tool.call, runId: $r2, principalRef: { subject: user-1, tenant: t1 }, payload: { callId: c1 } }
+          - { type: tool.result, runId: $r2, principalRef: { subject: user-1, tenant: t1 }, payload: { callId: c1 } }
+          - { type: run.ended, runId: $r2, principalRef: { subject: user-1, tenant: t1 }, payload: { reason: responded } }
+          - { type: run.started, runId: $r3, principalRef: { subject: user-1, tenant: t1 }, payload: { kind: run } }
+          - { type: run.ended, runId: $r3, principalRef: { subject: user-1, tenant: t1 }, payload: { reason: responded } }
+      absentEvents:
+        - { principalRef: { subject: reviewer-1 } }
+        - { principalRef: { subject: reviewer-2 } }
+  stubCalls:
+    update_record:
+      - arguments: { key: k1, value: v1 }
+        context: { sessionId: $s, runId: $r2, principal: { subject: user-1 } }
+  ports:
+    auditLog:
+      t1:
+        $all:
+          - $contains:
+              - type: decision
+                tenant: t1
+                sessionId: $s
+                snapshotHash: $h
+                principalRef: { subject: user-1, tenant: t1 }
+                reviewer: { subject: reviewer-1, tenant: t1 }
+                details:
+                  id: "01900000-0000-7000-8000-000000000201"
+                  escalationId: $esc
+                  pendingActionId: $act
+                  type: approve
+                  decidedBy: reviewer
+                  reviewer: { subject: reviewer-1, tenant: t1 }
+          - $count: { of: { type: decision }, equals: 1 }
+          - $count: { of: { reviewer: { subject: reviewer-2 } }, equals: 0 }
+          - $count: { of: { principalRef: { subject: { $not: user-1 } } }, equals: 0 }
