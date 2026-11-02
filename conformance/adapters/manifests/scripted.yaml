@@ -1,0 +1,19 @@
+# The scripted adapter's declaration (EVAL-031). Fixtures may restrict these
+# capabilities per provider with `setup.providers.<id>.capabilities`, which
+# acts as the scripted model's declaration for that fixture.
+schemaVersion: "0.1.0"
+adapter: scripted
+kind: scripted
+models:
+  "*":
+    capabilities:
+      contextLimit: 1000000
+      maxOutputTokens: 4096
+      toolUse: true
+      parallelToolCalls: true
+      structuredOutput: true
+      vision: true
+      documents: true
+      reasoning: true
+      streaming: true
+    params: [maxOutputTokens, temperature, topP, stopSequences, seed]

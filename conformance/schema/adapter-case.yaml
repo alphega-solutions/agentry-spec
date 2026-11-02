@@ -13,7 +13,8 @@ description: >-
   wrapping adapters run the same cases against the transcripts of the
   vendor endpoint they reach (PROV-009). The scripted adapter (EVAL-031)
   passes each case by construction: `condition` and `expect` are its
-  script.
+  script. A reasoning part whose `provider` is `$self` was produced by
+  the adapter's own provider (each transcript set substitutes its ID).
 type: object
 additionalProperties: false
 required: [schemaVersion, id, title, requirements, condition, request, expect]
@@ -56,7 +57,10 @@ properties:
     additionalProperties: false
     required: [model, messages]
     properties:
-      model: { type: string, minLength: 1 }
+      model:
+        description: A model name; each transcript set maps it to the model it recorded.
+        type: string
+        minLength: 1
       messages:
         type: array
         minItems: 1
@@ -88,8 +92,13 @@ properties:
           expectations (partial objects, exact arrays, matchers allowed).
         type: array
       usage:
-        description: Normalized usage (PROV-006, PROV-070).
-        $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/usage"
+        description: >-
+          Normalized usage (PROV-006, PROV-070). `null` means the provider
+          reported none, so the adapter reports none. Transcript sets
+          normalize recorded counts to the case's numbers.
+        oneOf:
+          - $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/usage"
+          - type: "null"
       error:
         description: The mapped error (PROV-007, PROV-080); `details` may hold redacted provider detail (PROV-083).
         type: object
@@ -100,6 +109,9 @@ properties:
           retryable: { type: boolean }
           code: { type: string }
           source: { const: provider }
+          details:
+            description: Provider detail, if kept, redacted per CORE-194 (PROV-083). An empty object asserts only that it may be present.
+            type: object
       wire:
         description: >-
           Properties of the wire request every transcript's matchers must
@@ -116,6 +128,11 @@ properties:
           paramsSent: { type: object }
           noReasoningFromOtherProviders: { const: true }
           atMostOneToolCall: { const: true }
+          toolsSent:
+            description: Names of the tool definitions sent, in order (PROV-002).
+            type: array
+            items: { type: string }
+          outputSchemaSent: { const: true }
     oneOf:
       - required: [parts]
         not: { required: [error] }

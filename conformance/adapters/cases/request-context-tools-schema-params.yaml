@@ -1,0 +1,70 @@
+schemaVersion: "0.1.0"
+id: adapter.request-context-tools-schema-params
+title: The adapter accepts context, tools, an output schema and generation parameters, and sends them
+description: >-
+  The request carries assembled context (system and principal messages), two
+  visible tool definitions, an output schema and declared generation
+  parameters. The adapter sends all of them in its one provider call: the
+  transcript's matchers confirm both tool definitions, the output schema (as
+  native structured output where the model supports it, otherwise in the
+  instructions; PROV-041) and every parameter in `paramsSent` (with the
+  vendor's names for them). The provider answers with structured output,
+  returned as a `structured` part whose value satisfies the schema.
+  `paramsSent` uses the agentry parameter names; an adapter that does not
+  declare one of these parameters (PROV-008) is configured with the subset it
+  declares, and its transcript records that subset.
+requirements: [PROV-002, PROV-004]
+condition: ok_structured
+request:
+  model: model-a
+  messages:
+    - role: system
+      parts:
+        - { type: text, text: "You are a records assistant. Answer with the record status.", provenance: system, labels: [] }
+    - role: principal
+      parts:
+        - { type: text, text: "What is the status of record A-100?", provenance: principal, labels: [] }
+  tools:
+    - name: lookup
+      description: Look up a record by key.
+      input:
+        type: object
+        additionalProperties: false
+        required: [key]
+        properties:
+          key: { type: string }
+    - name: update_record
+      description: Set the status of a record.
+      input:
+        type: object
+        additionalProperties: false
+        required: [key, status]
+        properties:
+          key: { type: string }
+          status: { enum: [active, closed] }
+  outputSchema:
+    type: object
+    additionalProperties: false
+    required: [key, status]
+    properties:
+      key: { type: string }
+      status: { enum: [active, closed] }
+  params:
+    temperature: 0.2
+    topP: 0.9
+    maxOutputTokens: 512
+    stopSequences: ["<END>"]
+    seed: 42
+expect:
+  parts:
+    - type: structured
+      value:
+        key: "A-100"
+        status: { "$regex": "^(active|closed)$" }
+  wire:
+    paramsSent:
+      temperature: 0.2
+      topP: 0.9
+      maxOutputTokens: 512
+      stopSequences: ["<END>"]
+      seed: 42

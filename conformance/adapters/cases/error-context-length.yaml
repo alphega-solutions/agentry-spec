@@ -1,0 +1,22 @@
+schemaVersion: "0.1.0"
+id: adapter.error-context-length
+title: A context-length error maps to limit with the context overflow code
+description: >-
+  The provider rejects the request as exceeding the model's context length;
+  the transcript records that response for this request (the request is not
+  itself long, since the condition is the provider's). The adapter returns
+  the mapped error (PROV-080 row 4), which the harness ends as context_limit
+  (PROV-082, verified by harness fixtures).
+requirements: [PROV-007, PROV-080]
+condition: context_length
+request:
+  model: model-a
+  messages:
+    - role: system
+      parts:
+        - { type: text, text: "You are a records assistant.", provenance: system, labels: [] }
+    - role: principal
+      parts:
+        - { type: text, text: "What is the status of record A-100?", provenance: principal, labels: [] }
+expect:
+  error: { category: limit, retryable: false, code: agentry.context.overflow, source: provider }

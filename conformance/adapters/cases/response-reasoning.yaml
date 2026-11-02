@@ -1,0 +1,24 @@
+schemaVersion: "0.1.0"
+id: adapter.response-reasoning
+title: Provider reasoning is returned as a reasoning part naming the producing provider
+description: >-
+  The provider returns reasoning before its answer. The adapter returns a
+  `reasoning` part, then a `text` part. The reasoning part's `provider` is the
+  provider ID the adapter is declared as (PROV-009), so the harness can keep
+  it from other providers (PROV-005); `data` holds the reasoning (opaque or
+  encrypted reasoning sets `opaque: true`). Vendor-specific reasoning
+  metadata goes in `extensions`. Reasoning tokens are counted within output
+  tokens.
+requirements: [PROV-004, PROV-070]
+condition: ok_reasoning
+request:
+  model: model-a
+  messages:
+    - role: principal
+      parts:
+        - { type: text, text: "Which is larger, 17 squared or 2 to the 8th?", provenance: principal, labels: [] }
+expect:
+  parts:
+    - { type: reasoning, provider: { "$regex": "^.+$" }, data: { "$any": true } }
+    - { type: text, text: { "$regex": "\\S" } }
+  usage: { inputTokens: 20, outputTokens: 150, cachedInputTokens: 0, reasoningTokens: 120 }

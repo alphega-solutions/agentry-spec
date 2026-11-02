@@ -1,0 +1,24 @@
+schemaVersion: "0.1.0"
+id: adapter.response-text
+title: A plain answer is returned as one text part with normalized usage
+description: >-
+  The provider answers with text only. The adapter returns a single `text`
+  part; any provider-specific data (response IDs, finish reasons) may appear
+  only in the part's `extensions`, never as other fields. Usage is
+  normalized; the provider reports no cached or reasoning tokens for this
+  call, so both are 0.
+requirements: [PROV-004, PROV-006]
+condition: ok_text
+request:
+  model: model-a
+  messages:
+    - role: system
+      parts:
+        - { type: text, text: "You are a records assistant.", provenance: system, labels: [] }
+    - role: principal
+      parts:
+        - { type: text, text: "What can you help me with?", provenance: principal, labels: [] }
+expect:
+  parts:
+    - { type: text, text: { "$regex": "\\S" } }
+  usage: { inputTokens: 24, outputTokens: 18, cachedInputTokens: 0, reasoningTokens: 0 }

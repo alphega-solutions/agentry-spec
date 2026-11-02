@@ -1,0 +1,22 @@
+schemaVersion: "0.1.0"
+id: adapter.error-rate-limit
+title: Rate limit maps to unavailable, retryable
+description: >-
+  The provider rejects the call for exceeding a rate limit. The adapter
+  returns the mapped error (PROV-080 row 1) and no parts; it does not retry
+  or wait itself (PROV-001: one provider call), leaving retry to the harness
+  (retry.unavailable). Any retry-after hint may be kept in redacted
+  `details` (PROV-083); `details` is not asserted.
+requirements: [PROV-007, PROV-080]
+condition: rate_limit
+request:
+  model: model-a
+  messages:
+    - role: system
+      parts:
+        - { type: text, text: "You are a records assistant.", provenance: system, labels: [] }
+    - role: principal
+      parts:
+        - { type: text, text: "What is the status of record A-100?", provenance: principal, labels: [] }
+expect:
+  error: { category: unavailable, retryable: true, code: agentry.provider.unavailable, source: provider }

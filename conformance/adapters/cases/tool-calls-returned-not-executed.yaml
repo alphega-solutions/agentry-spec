@@ -1,0 +1,39 @@
+schemaVersion: "0.1.0"
+id: adapter.tool-calls-returned-not-executed
+title: Tool calls are returned to the harness as tool_call parts and never executed
+description: >-
+  The provider answers with one call to `lookup`. The adapter returns it as a
+  single `tool_call` part with the tool name and arguments the provider gave
+  and a call ID, and does nothing else: it makes exactly one provider call,
+  does not run the tool, and leaves any built-in tool execution of the SDK or
+  framework it wraps disabled (`noBuiltinToolExecution`). The transcript's
+  matchers confirm a single wire request with no tool-execution settings
+  enabled.
+requirements: [PROV-001, PROV-004]
+condition: ok_tool_calls
+request:
+  model: model-a
+  messages:
+    - role: system
+      parts:
+        - { type: text, text: "You are a records assistant. Use tools to answer.", provenance: system, labels: [] }
+    - role: principal
+      parts:
+        - { type: text, text: "Look up record A-100.", provenance: principal, labels: [] }
+  tools:
+    - name: lookup
+      description: Look up a record by key.
+      input:
+        type: object
+        additionalProperties: false
+        required: [key]
+        properties:
+          key: { type: string }
+expect:
+  parts:
+    - type: tool_call
+      callId: { "$regex": "^.+$" }
+      tool: lookup
+      arguments: { key: "A-100" }
+  wire:
+    noBuiltinToolExecution: true

@@ -850,6 +850,11 @@ def main() -> int:
             errors += [f"{fx.relative_to(ROOT)}: {e}" for e in check_crashes(doc)]
             errors += [f"{fx.relative_to(ROOT)}: {e}" for e in check_stub_call_keys(doc)]
 
+    # 3b. Adapter manifests validate against their format.
+    for mf in sorted((ROOT / "conformance" / "adapters" / "manifests").glob("*.yaml")):
+        for err in validator("https://alphega.io/agentry/schemas/conformance/adapter-manifest/v1.json").iter_errors(load_yaml(mf)):
+            errors.append(f"{mf.relative_to(ROOT)}: {describe(err)}")
+
     # 4. Shared configuration artifacts validate against their kind's schema.
     errors += check_shared_config(schemas, reg)
 

@@ -1,0 +1,20 @@
+schemaVersion: "0.1.0"
+id: adapter.usage-partial-zero-filled
+title: Usage fields the provider does not report are 0
+description: >-
+  The provider reports input and output tokens only, with no cached or
+  reasoning counts. The adapter still returns all four normalized fields,
+  with `cachedInputTokens` and `reasoningTokens` set to 0 rather than
+  omitted.
+requirements: [PROV-006, PROV-070]
+condition: ok_usage_partial
+request:
+  model: model-a
+  messages:
+    - role: principal
+      parts:
+        - { type: text, text: "Say hello.", provenance: principal, labels: [] }
+expect:
+  parts:
+    - { type: text, text: { "$regex": "\\S" } }
+  usage: { inputTokens: 40, outputTokens: 12, cachedInputTokens: 0, reasoningTokens: 0 }

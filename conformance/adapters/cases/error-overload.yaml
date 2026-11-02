@@ -1,0 +1,19 @@
+schemaVersion: "0.1.0"
+id: adapter.error-overload
+title: Provider overload maps to unavailable, retryable
+description: >-
+  The provider reports it is overloaded. The adapter returns the mapped
+  error (PROV-080 row 1) and makes no further call.
+requirements: [PROV-007, PROV-080]
+condition: overload
+request:
+  model: model-a
+  messages:
+    - role: system
+      parts:
+        - { type: text, text: "You are a records assistant.", provenance: system, labels: [] }
+    - role: principal
+      parts:
+        - { type: text, text: "What is the status of record A-100?", provenance: principal, labels: [] }
+expect:
+  error: { category: unavailable, retryable: true, code: agentry.provider.unavailable, source: provider }

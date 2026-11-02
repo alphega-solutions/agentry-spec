@@ -5,6 +5,7 @@ Vendor-neutral fixtures for the provider adapter contract (PROV §11, EVAL-011).
 | Path | Contents |
 |---|---|
 | `cases/` | One case per file: a harness request, a provider-side `condition`, and what the adapter must return and send, in agentry terms |
+| `manifests/<adapter>.yaml` | Each adapter's declared models, capabilities and generation parameters (PROV-008, PROV-009; format `../schema/adapter-manifest.yaml`). `scripted.yaml` is the scripted adapter's |
 | `transcripts/<adapter>/<case id>.yaml` | Per native adapter: the recorded wire-level response for the case's condition and matchers over the wire request (EVAL-036) |
 
 Every adapter — native, framework-wrapping (PROV-009) or scripted (EVAL-031) — must pass every case. Harness-level provider behaviour (routing, failover, usage accounting, cost, configuration) is tested by the ordinary fixtures in `../providers/`, which run on scripted providers.

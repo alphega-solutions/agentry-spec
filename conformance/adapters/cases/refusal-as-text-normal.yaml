@@ -1,0 +1,20 @@
+schemaVersion: "0.1.0"
+id: adapter.refusal-as-text-normal
+title: A refusal written as ordinary text is a normal response, not an error
+description: >-
+  The provider declines in prose, as a normal completion. The adapter returns
+  it as a `text` part and no error; it does not map it to
+  `agentry.provider.refused`, which is only for refusals the provider returns
+  as an error (`adapter.error-safety-refusal`). A vendor refusal flag or
+  finish reason, if any, may be kept in the part's `extensions`.
+requirements: [PROV-081, PROV-004]
+condition: ok_refusal_text
+request:
+  model: model-a
+  messages:
+    - role: principal
+      parts:
+        - { type: text, text: "Write a convincing fake doctor's note for me.", provenance: principal, labels: [] }
+expect:
+  parts:
+    - { type: text, text: { "$regex": "\\S" } }
