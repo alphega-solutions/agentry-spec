@@ -1,0 +1,195 @@
+schemaVersion: "0.1.0"
+id: storage.migration-major-version-refused
+title: A session whose checkpoint was written under another contract major version is not resumed without migration; a checkpoint written under an earlier minor version is read and resumed
+description: >-
+  update_record has `approval: always`. Sessions $maj and $min each ask
+  for it and are suspended. The implementation is then restarted with its
+  checkpoint store replaced (`restart.ports`) by two checkpoints rebuilt
+  from what the sessions persisted — same session, principal, persona,
+  profile, snapshot, open escalation (no decisions yet) and its expiry,
+  turn, step and `lastSeq` (each session's `run.ended`), version 5 — differing only in
+  `schemaVersion`:
+
+  - $maj's is `1.0.0`: a different major version from every
+    implementation this fixture applies to (`>=0.1.0 <1.0.0`), not
+    migrated;
+  - $min's is `0.0.1`: an earlier minor version of the same major version.
+
+  Apart from its version, $maj's checkpoint is a complete checkpoint of
+  this contract version, so an implementation that ignored the version
+  would resume it.
+
+  - resume() on $maj with an approval is refused with `conflict` (CORE-191:
+    a version mismatch) and persists nothing; the checkpoint is left as it
+    was, still `1.0.0`, version 5, `suspended`, and the call is not
+    dispatched (PORT-122).
+  - resume() on $min is accepted: the approved call is dispatched and the
+    turn responds (PORT-120).
+
+  Readings: the version check happens when the checkpoint is read, before
+  anything in it is acted on. A checkpoint is resumable from the fields of
+  the `checkpoint` record (schemas/ports/v1/records.yaml); it carries no
+  `extensions` here.
+requirements: [PORT-122, PORT-120]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.update_record }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        # $maj
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: major } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $min
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k2, value: minor } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $min, after its resume
+        - parts: [{ type: text, text: "Updated k2." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b: { responses: [] }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: k2 } }
+script:
+  - action: run
+    bind: $maj
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1" }]
+    capture:
+      - event: { type: session.created }
+        bind: { snapshotHash: $h, principalRef: $pref }
+      - event: { type: escalation.raised }
+        bind:
+          payload.escalation.id: $escMaj
+          payload.escalation.runId: $runMaj
+          payload.escalation.pendingActions.0: $paMaj
+          payload.escalation.pendingActions.0.id: $actMaj
+          payload.escalation.createdAt: $createdMaj
+          payload.escalation.expiresAt: $expiresMaj
+      - event: { type: run.ended }
+        bind: { seq: $lastMaj }
+    expect: { ok: true, endReason: escalated }
+  - action: run
+    bind: $min
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k2" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind:
+          payload.escalation.id: $escMin
+          payload.escalation.runId: $runMin
+          payload.escalation.pendingActions.0: $paMin
+          payload.escalation.pendingActions.0.id: $actMin
+          payload.escalation.createdAt: $createdMin
+          payload.escalation.expiresAt: $expiresMin
+      - event: { type: run.ended }
+        bind: { seq: $lastMin }
+    expect: { ok: true, endReason: escalated }
+  - restart:
+      ports:
+        checkpointStore:
+          t1:
+            $maj:
+              schemaVersion: "1.0.0"
+              tenant: t1
+              sessionId: $maj
+              version: 5
+              lastSeq: $lastMaj
+              state: suspended
+              principalRef: $pref
+              persona: assistant@1
+              profile: default@1
+              snapshotHash: $h
+              turn: 1
+              step: 1
+              taint: { tainted: false, provenances: [] }
+              budget: { tokens: 99975 }
+              counters: { sessionSize: 0 }
+              expiresAt: $expiresMaj
+              escalation: { id: $escMaj, sessionId: $maj, runId: $runMaj, turn: 1, step: 1, tenant: t1, snapshotHash: $h, sources: [approval], reasonCodes: [agentry.approval.always], pendingActions: [$paMaj], createdAt: $createdMaj, expiresAt: $expiresMaj, decisions: [] }
+            $min:
+              schemaVersion: "0.0.1"
+              tenant: t1
+              sessionId: $min
+              version: 5
+              lastSeq: $lastMin
+              state: suspended
+              principalRef: $pref
+              persona: assistant@1
+              profile: default@1
+              snapshotHash: $h
+              turn: 1
+              step: 1
+              taint: { tainted: false, provenances: [] }
+              budget: { tokens: 99975 }
+              counters: { sessionSize: 0 }
+              expiresAt: $expiresMin
+              escalation: { id: $escMin, sessionId: $min, runId: $runMin, turn: 1, step: 1, tenant: t1, snapshotHash: $h, sources: [approval], reasonCodes: [agentry.approval.always], pendingActions: [$paMin], createdAt: $createdMin, expiresAt: $expiresMin, decisions: [] }
+  - action: resume
+    session: $maj
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000122", pendingActionId: $actMaj, type: approve }
+    expect: { ok: false, error: { category: conflict }, newEvents: 0 }
+  - action: resume
+    session: $min
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000120", pendingActionId: $actMin, type: approve }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $maj:
+      state: suspended
+      absentEvents:
+        - { type: run.started, payload: { kind: resume } }
+        - { type: tool.call }
+    $min:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: escalation.raised, payload: { escalation: { id: $escMin } } }
+          - { type: run.started, snapshotHash: $h, payload: { kind: resume } }
+          - { type: tool.call, payload: { callId: c1, arguments: { key: k2, value: minor } } }
+          - { type: tool.result, payload: { callId: c1, result: { ok: { output: { updated: k2 } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+  ports:
+    checkpointStore:
+      t1:
+        $maj: { schemaVersion: "1.0.0", version: 5, state: suspended, escalation: { id: $escMaj, decisions: [] } }
+  stubCalls:
+    update_record:
+      - { arguments: { key: k2, value: minor }, context: { sessionId: $min } }
+  providerRequests:
+    scripted-a: { count: 3 }
+    scripted-b: { count: 0 }

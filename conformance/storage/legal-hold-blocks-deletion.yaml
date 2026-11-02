@@ -1,0 +1,171 @@
+schemaVersion: "0.1.0"
+id: storage.legal-hold-blocks-deletion
+title: While a legal hold applies to a tenant or a session, retention deletes none of the held data; unheld data of the same age is deleted
+description: >-
+  Every retention period is P1D. The deployment declares two legal holds
+  (PORT-114, `legalHolds`): one on tenant t2, and one on session
+  01900000-0000-7000-8000-000000000a01 of tenant t1.
+
+  `setup.ports` seeds two closed t1 sessions, closed on 2025-12-01, each
+  with six events, a closed checkpoint, a completed idempotency record and
+  a `tool_call` audit record: …a01 (held) and …a02 (not held). Live, a t1
+  session $t1s and a t2 session $t2s each update a record and are closed
+  at 2026-01-01T00:00Z; the clock moves on P2D and retention runs.
+
+  - Held data is untouched: all of …a01 (its six events, checkpoint,
+    idempotency record and audit record) and all of $t2s.
+  - Unheld data of the same tenant and age is deleted: all of …a02 and
+    all of $t1s (control: retention ran and the periods had passed).
+
+  The seeded records use a snapshot hash with no stored snapshot; nothing
+  here reads it.
+requirements: [PORT-114]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P1D, checkpoints: P1D, idempotency: P1D, blobs: P1D, snapshots: P1D, audit: P1D }
+        legalHolds:
+          - { tenant: t2, reason: "Synthetic tenant hold for conformance" }
+          - { tenant: t1, session: "01900000-0000-7000-8000-000000000a01", reason: "Synthetic session hold for conformance" }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+    - id: t2
+      principals: [{ id: q1, subject: user-21, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # $t1s
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated in t1." }]
+          usage: { inputTokens: 30, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $t2s
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v2 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Updated in t2." }]
+          usage: { inputTokens: 30, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b: { responses: [] }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+        - ok: { output: { updated: true } }
+  ports:
+    eventLog:
+      t1:
+        "01900000-0000-7000-8000-000000000a01":
+          - { schemaVersion: "0.1.0", eventId: "01900000-0000-7000-8000-0000000e0101", sessionId: "01900000-0000-7000-8000-000000000a01", seq: 1, type: "session.created", timestamp: "2025-12-01T00:00:00Z", tenantId: t1, principalRef: { subject: "user-1", tenant: t1 }, snapshotHash: "sha256:5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed", traceContext: { traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" }, payload: { persona: "assistant@1", profile: "default@1" } }
+          - { schemaVersion: "0.1.0", eventId: "01900000-0000-7000-8000-0000000e0102", sessionId: "01900000-0000-7000-8000-000000000a01", seq: 2, type: "run.started", timestamp: "2025-12-01T00:00:01Z", tenantId: t1, principalRef: { subject: "user-1", tenant: t1 }, snapshotHash: "sha256:5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed", traceContext: { traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" }, runId: "01900000-0000-7000-8000-000000000c01", payload: { kind: run } }
+          - { schemaVersion: "0.1.0", eventId: "01900000-0000-7000-8000-0000000e0103", sessionId: "01900000-0000-7000-8000-000000000a01", seq: 3, type: "tool.call", timestamp: "2025-12-01T00:00:02Z", tenantId: t1, principalRef: { subject: "user-1", tenant: t1 }, snapshotHash: "sha256:5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed", traceContext: { traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" }, runId: "01900000-0000-7000-8000-000000000c01", turn: 1, step: 1, provenances: [model], labels: [], payload: { callId: c1, tool: update_record, arguments: { key: k1, value: v1 } } }
+          - { schemaVersion: "0.1.0", eventId: "01900000-0000-7000-8000-0000000e0104", sessionId: "01900000-0000-7000-8000-000000000a01", seq: 4, type: "tool.result", timestamp: "2025-12-01T00:00:03Z", tenantId: t1, principalRef: { subject: "user-1", tenant: t1 }, snapshotHash: "sha256:5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed", traceContext: { traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" }, runId: "01900000-0000-7000-8000-000000000c01", turn: 1, step: 1, provenances: ["tool:update_record"], labels: [], payload: { callId: c1, tool: update_record, result: { ok: { output: { updated: true } } } } }
+          - { schemaVersion: "0.1.0", eventId: "01900000-0000-7000-8000-0000000e0105", sessionId: "01900000-0000-7000-8000-000000000a01", seq: 5, type: "run.ended", timestamp: "2025-12-01T00:00:04Z", tenantId: t1, principalRef: { subject: "user-1", tenant: t1 }, snapshotHash: "sha256:5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed", traceContext: { traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" }, runId: "01900000-0000-7000-8000-000000000c01", payload: { reason: responded } }
+          - { schemaVersion: "0.1.0", eventId: "01900000-0000-7000-8000-0000000e0106", sessionId: "01900000-0000-7000-8000-000000000a01", seq: 6, type: "session.closed", timestamp: "2025-12-01T00:00:05Z", tenantId: t1, principalRef: { subject: "user-1", tenant: t1 }, snapshotHash: "sha256:5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed", traceContext: { traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" }, payload: { reason: completed } }
+        "01900000-0000-7000-8000-000000000a02":
+          - { schemaVersion: "0.1.0", eventId: "01900000-0000-7000-8000-0000000e0201", sessionId: "01900000-0000-7000-8000-000000000a02", seq: 1, type: "session.created", timestamp: "2025-12-01T00:00:00Z", tenantId: t1, principalRef: { subject: "user-1", tenant: t1 }, snapshotHash: "sha256:5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed", traceContext: { traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" }, payload: { persona: "assistant@1", profile: "default@1" } }
+          - { schemaVersion: "0.1.0", eventId: "01900000-0000-7000-8000-0000000e0202", sessionId: "01900000-0000-7000-8000-000000000a02", seq: 2, type: "run.started", timestamp: "2025-12-01T00:00:01Z", tenantId: t1, principalRef: { subject: "user-1", tenant: t1 }, snapshotHash: "sha256:5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed", traceContext: { traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" }, runId: "01900000-0000-7000-8000-000000000c02", payload: { kind: run } }
+          - { schemaVersion: "0.1.0", eventId: "01900000-0000-7000-8000-0000000e0203", sessionId: "01900000-0000-7000-8000-000000000a02", seq: 3, type: "tool.call", timestamp: "2025-12-01T00:00:02Z", tenantId: t1, principalRef: { subject: "user-1", tenant: t1 }, snapshotHash: "sha256:5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed", traceContext: { traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" }, runId: "01900000-0000-7000-8000-000000000c02", turn: 1, step: 1, provenances: [model], labels: [], payload: { callId: c1, tool: update_record, arguments: { key: k1, value: v1 } } }
+          - { schemaVersion: "0.1.0", eventId: "01900000-0000-7000-8000-0000000e0204", sessionId: "01900000-0000-7000-8000-000000000a02", seq: 4, type: "tool.result", timestamp: "2025-12-01T00:00:03Z", tenantId: t1, principalRef: { subject: "user-1", tenant: t1 }, snapshotHash: "sha256:5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed", traceContext: { traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" }, runId: "01900000-0000-7000-8000-000000000c02", turn: 1, step: 1, provenances: ["tool:update_record"], labels: [], payload: { callId: c1, tool: update_record, result: { ok: { output: { updated: true } } } } }
+          - { schemaVersion: "0.1.0", eventId: "01900000-0000-7000-8000-0000000e0205", sessionId: "01900000-0000-7000-8000-000000000a02", seq: 5, type: "run.ended", timestamp: "2025-12-01T00:00:04Z", tenantId: t1, principalRef: { subject: "user-1", tenant: t1 }, snapshotHash: "sha256:5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed", traceContext: { traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" }, runId: "01900000-0000-7000-8000-000000000c02", payload: { reason: responded } }
+          - { schemaVersion: "0.1.0", eventId: "01900000-0000-7000-8000-0000000e0206", sessionId: "01900000-0000-7000-8000-000000000a02", seq: 6, type: "session.closed", timestamp: "2025-12-01T00:00:05Z", tenantId: t1, principalRef: { subject: "user-1", tenant: t1 }, snapshotHash: "sha256:5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed", traceContext: { traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" }, payload: { reason: completed } }
+    checkpointStore:
+      t1:
+        "01900000-0000-7000-8000-000000000a01": { schemaVersion: "0.1.0", tenant: t1, sessionId: "01900000-0000-7000-8000-000000000a01", version: 3, lastSeq: 6, state: closed, closeReason: completed, principalRef: { subject: "user-1", tenant: t1 }, persona: "assistant@1", profile: "default@1", snapshotHash: "sha256:5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed", turn: 1, step: 1, taint: { tainted: false, provenances: [] }, budget: { tokens: 99950 }, counters: { sessionSize: 64 } }
+        "01900000-0000-7000-8000-000000000a02": { schemaVersion: "0.1.0", tenant: t1, sessionId: "01900000-0000-7000-8000-000000000a02", version: 3, lastSeq: 6, state: closed, closeReason: completed, principalRef: { subject: "user-1", tenant: t1 }, persona: "assistant@1", profile: "default@1", snapshotHash: "sha256:5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed", turn: 1, step: 1, taint: { tainted: false, provenances: [] }, budget: { tokens: 99950 }, counters: { sessionSize: 64 } }
+    idempotencyStore:
+      t1:
+        "01900000-0000-7000-8000-000000000a01/c1": { schemaVersion: "0.1.0", tenant: t1, key: "01900000-0000-7000-8000-000000000a01/c1", sessionId: "01900000-0000-7000-8000-000000000a01", callId: c1, tool: update_record, state: completed, outcome: { ok: { output: { updated: true } } }, createdAt: "2025-12-01T00:00:02Z", completedAt: "2025-12-01T00:00:03Z" }
+        "01900000-0000-7000-8000-000000000a02/c1": { schemaVersion: "0.1.0", tenant: t1, key: "01900000-0000-7000-8000-000000000a02/c1", sessionId: "01900000-0000-7000-8000-000000000a02", callId: c1, tool: update_record, state: completed, outcome: { ok: { output: { updated: true } } }, createdAt: "2025-12-01T00:00:02Z", completedAt: "2025-12-01T00:00:03Z" }
+    auditLog:
+      t1:
+        - { schemaVersion: "0.1.0", id: "01900000-0000-7000-8000-0000000f0101", timestamp: "2025-12-01T00:00:03Z", tenant: t1, sessionId: "01900000-0000-7000-8000-000000000a01", principalRef: { subject: "user-1", tenant: t1 }, snapshotHash: "sha256:5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed", type: tool_call, eventIds: ["01900000-0000-7000-8000-0000000e0103", "01900000-0000-7000-8000-0000000e0104"], details: { callId: c1, tool: update_record, arguments: { key: k1, value: v1 }, outcome: { ok: { output: { updated: true } } } } }
+        - { schemaVersion: "0.1.0", id: "01900000-0000-7000-8000-0000000f0201", timestamp: "2025-12-01T00:00:03Z", tenant: t1, sessionId: "01900000-0000-7000-8000-000000000a02", principalRef: { subject: "user-1", tenant: t1 }, snapshotHash: "sha256:5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed", type: tool_call, eventIds: ["01900000-0000-7000-8000-0000000e0203", "01900000-0000-7000-8000-0000000e0204"], details: { callId: c1, tool: update_record, arguments: { key: k1, value: v1 }, outcome: { ok: { output: { updated: true } } } } }
+script:
+  - action: run
+    bind: $t1s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    expect: { ok: true, endReason: responded }
+  - action: close
+    session: $t1s
+    expect: { ok: true }
+  - action: run
+    bind: $t2s
+    tenant: t2
+    principal: q1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v2" }]
+    expect: { ok: true, endReason: responded }
+  - action: close
+    session: $t2s
+    expect: { ok: true }
+  - clock: { advance: P2D }
+  - retention: {}
+expect:
+  stubCalls:
+    update_record:
+      - { context: { sessionId: $t1s, idempotencyKey: $k1 } }
+      - { context: { sessionId: $t2s, idempotencyKey: $k2 } }
+  ports:
+    eventLog:
+      t1:
+        "01900000-0000-7000-8000-000000000a01":
+          $all:
+            - { $len: 6 }
+            - $contains: [{ seq: 1, type: session.created }, { seq: 6, type: session.closed }]
+        "01900000-0000-7000-8000-000000000a02": { $absent: true }
+        $t1s: { $absent: true }
+      t2:
+        $t2s:
+          $contains:
+            - { seq: 1, type: session.created }
+            - { type: session.closed }
+    checkpointStore:
+      t1:
+        "01900000-0000-7000-8000-000000000a01": { state: closed, lastSeq: 6 }
+        "01900000-0000-7000-8000-000000000a02": { $absent: true }
+        $t1s: { $absent: true }
+      t2:
+        $t2s: { state: closed }
+    idempotencyStore:
+      t1:
+        "01900000-0000-7000-8000-000000000a01/c1": { state: completed }
+        "01900000-0000-7000-8000-000000000a02/c1": { $absent: true }
+        $k1: { $absent: true }
+      t2:
+        $k2: { state: completed }
+    auditLog:
+      t1:
+        $all:
+          - $count: { of: { sessionId: "01900000-0000-7000-8000-000000000a01", type: tool_call }, equals: 1 }
+          - $count: { of: { sessionId: "01900000-0000-7000-8000-000000000a02" }, equals: 0 }
+          - $count: { of: { sessionId: $t1s }, equals: 0 }
+      t2:
+        $count: { of: { sessionId: $t2s, type: tool_call }, equals: 1 }
+  providerRequests:
+    scripted-a: { count: 4 }

@@ -1,0 +1,67 @@
+schemaVersion: "0.1.0"
+id: storage.retention-periods-required
+title: A deployment that leaves out a retention period, or retention altogether, is a configuration error; there are no defaults
+description: >-
+  Each failing load restates the baseline deployment with retention
+  incomplete (PORT-110: a period for events, checkpoints of closed
+  sessions, idempotency records, blobs, snapshots and audit records, with
+  no spec defaults):
+
+  1. no `retention` at all;
+  2. no `audit` period;
+  3. no `checkpoints` period;
+  4. no `blobs` period.
+
+  Each is rejected with `configuration`. Control: the same deployment with
+  all six periods loads and a session runs on it.
+requirements: [PORT-110]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Retained." }]
+          usage: { inputTokens: 20, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b: { responses: [] }
+script:
+  - load:
+      artifacts:
+        - { kind: Deployment, id: test, version: 1, schemaVersion: "0.1.0", environment: test, policyBundles: [org@1], attachmentSources: [upload, email], providers: [{ id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }, { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }], ports: { eventLog: { adapter: memory, region: test-region }, checkpointStore: { adapter: memory, region: test-region }, idempotencyStore: { adapter: memory, region: test-region }, snapshotStore: { adapter: memory, region: test-region }, blobStore: { adapter: memory, region: test-region }, auditLog: { adapter: memory, region: test-region }, secrets: { adapter: memory, region: test-region } } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Deployment, id: test, version: 1, schemaVersion: "0.1.0", environment: test, policyBundles: [org@1], attachmentSources: [upload, email], providers: [{ id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }, { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }], ports: { eventLog: { adapter: memory, region: test-region }, checkpointStore: { adapter: memory, region: test-region }, idempotencyStore: { adapter: memory, region: test-region }, snapshotStore: { adapter: memory, region: test-region }, blobStore: { adapter: memory, region: test-region }, auditLog: { adapter: memory, region: test-region }, secrets: { adapter: memory, region: test-region } }, retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Deployment, id: test, version: 1, schemaVersion: "0.1.0", environment: test, policyBundles: [org@1], attachmentSources: [upload, email], providers: [{ id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }, { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }], ports: { eventLog: { adapter: memory, region: test-region }, checkpointStore: { adapter: memory, region: test-region }, idempotencyStore: { adapter: memory, region: test-region }, snapshotStore: { adapter: memory, region: test-region }, blobStore: { adapter: memory, region: test-region }, auditLog: { adapter: memory, region: test-region }, secrets: { adapter: memory, region: test-region } }, retention: { events: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D } }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - { kind: Deployment, id: test, version: 1, schemaVersion: "0.1.0", environment: test, policyBundles: [org@1], attachmentSources: [upload, email], providers: [{ id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }, { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }], ports: { eventLog: { adapter: memory, region: test-region }, checkpointStore: { adapter: memory, region: test-region }, idempotencyStore: { adapter: memory, region: test-region }, snapshotStore: { adapter: memory, region: test-region }, blobStore: { adapter: memory, region: test-region }, auditLog: { adapter: memory, region: test-region }, secrets: { adapter: memory, region: test-region } }, retention: { events: P30D, checkpoints: P30D, idempotency: P30D, snapshots: P30D, audit: P365D } }
+    expect: { ok: false, error: { category: configuration } }
+  # Control: all six periods.
+  - load:
+      artifacts:
+        - { kind: Deployment, id: test, version: 1, schemaVersion: "0.1.0", environment: test, policyBundles: [org@1], attachmentSources: [upload, email], providers: [{ id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }, { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }], ports: { eventLog: { adapter: memory, region: test-region }, checkpointStore: { adapter: memory, region: test-region }, idempotencyStore: { adapter: memory, region: test-region }, snapshotStore: { adapter: memory, region: test-region }, blobStore: { adapter: memory, region: test-region }, auditLog: { adapter: memory, region: test-region }, secrets: { adapter: memory, region: test-region } }, retention: { events: P10D, checkpoints: P10D, idempotency: P10D, blobs: P10D, snapshots: P10D, audit: P100D } }
+    expect: { ok: true }
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+  providerRequests:
+    scripted-a: { count: 1 }

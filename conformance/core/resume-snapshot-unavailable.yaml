@@ -7,7 +7,7 @@ description: >-
   is empty. resume() must fail with `not_found`
   (agentry.config.snapshot_unavailable) and must not run the turn on the
   current configuration: no resume run starts and no model or tool is called.
-requirements: [CORE-055]
+requirements: [CORE-055, PORT-051]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:
