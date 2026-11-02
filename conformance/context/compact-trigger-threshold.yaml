@@ -1,0 +1,179 @@
+schemaVersion: "0.1.0"
+id: context.compact-trigger-threshold
+title: Compaction runs only when assembled context exceeds the configured fill level of the smallest candidate's space
+description: >-
+  The profile sets `compaction.mode: truncate` and `triggerPercent: 80`.
+  The primary scripted-a declares contextLimit 1000 and the fallback
+  scripted-b contextLimit 120, both maxOutputTokens 20, so the default
+  reserveOutputTokens is 20. Available space is the smallest contextLimit
+  among the candidates (PROV-044) minus the reserve: 120 − 20 = 100, and
+  compaction triggers when context exceeds 80% of it, 80 tokens. Measured
+  against the primary alone (1000 − 20 = 980, trigger 784) nothing here
+  would ever compact.
+
+
+  Token count (one per word of a text part): system content is
+  "Follow organisational policy." (3) + "You are a test assistant." (5) = 8.
+  Turn 1 in every session: principal text 30 words, response text 20
+  words; its request is 8 + 30 = 38 (no compaction). Turn 2's request is
+  8 + 30 + 20 + P2, where P2 is the turn-2 principal text:
+
+  - $sOver: P2 = 23 → 81 > 80 → compacts. The only droppable unit is
+    turn 1; without it the context is 8 + 23 = 31. `context.compacted`
+    lists `{turn: 1}` and the request holds only system content and the
+    turn-2 principal message.
+  - $sAt: P2 = 22 → 80, not above 80 → no compaction; the request holds
+    turn 1 in full.
+  - $sBelow: P2 = 21 → 79 → no compaction.
+
+  Every call goes to scripted-a; scripted-b is never called. Reading
+  chosen: how system content is split into messages is not specified, so
+  requests are matched on their non-system messages (exact count plus
+  each message's exact parts).
+requirements: [CTX-050, PROV-044]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+        context: { compaction: { mode: truncate, triggerPercent: 80 } }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { contextLimit: 1000, maxOutputTokens: 20 }
+      responses:
+        # $sOver
+        - parts: [{ type: text, text: "SYN-OR-01 SYN-OR-02 SYN-OR-03 SYN-OR-04 SYN-OR-05 SYN-OR-06 SYN-OR-07 SYN-OR-08 SYN-OR-09 SYN-OR-10 SYN-OR-11 SYN-OR-12 SYN-OR-13 SYN-OR-14 SYN-OR-15 SYN-OR-16 SYN-OR-17 SYN-OR-18 SYN-OR-19 SYN-OR-20" }]
+          usage: { inputTokens: 38, outputTokens: 20, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Done." }]
+          usage: { inputTokens: 31, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sAt
+        - parts: [{ type: text, text: "SYN-AR-01 SYN-AR-02 SYN-AR-03 SYN-AR-04 SYN-AR-05 SYN-AR-06 SYN-AR-07 SYN-AR-08 SYN-AR-09 SYN-AR-10 SYN-AR-11 SYN-AR-12 SYN-AR-13 SYN-AR-14 SYN-AR-15 SYN-AR-16 SYN-AR-17 SYN-AR-18 SYN-AR-19 SYN-AR-20" }]
+          usage: { inputTokens: 38, outputTokens: 20, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Done." }]
+          usage: { inputTokens: 80, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sBelow
+        - parts: [{ type: text, text: "SYN-BR-01 SYN-BR-02 SYN-BR-03 SYN-BR-04 SYN-BR-05 SYN-BR-06 SYN-BR-07 SYN-BR-08 SYN-BR-09 SYN-BR-10 SYN-BR-11 SYN-BR-12 SYN-BR-13 SYN-BR-14 SYN-BR-15 SYN-BR-16 SYN-BR-17 SYN-BR-18 SYN-BR-19 SYN-BR-20" }]
+          usage: { inputTokens: 38, outputTokens: 20, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Done." }]
+          usage: { inputTokens: 79, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      capabilities: { contextLimit: 120, maxOutputTokens: 20 }
+      responses: []
+script:
+  - action: run
+    bind: $sOver
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYN-OP-01 SYN-OP-02 SYN-OP-03 SYN-OP-04 SYN-OP-05 SYN-OP-06 SYN-OP-07 SYN-OP-08 SYN-OP-09 SYN-OP-10 SYN-OP-11 SYN-OP-12 SYN-OP-13 SYN-OP-14 SYN-OP-15 SYN-OP-16 SYN-OP-17 SYN-OP-18 SYN-OP-19 SYN-OP-20 SYN-OP-21 SYN-OP-22 SYN-OP-23 SYN-OP-24 SYN-OP-25 SYN-OP-26 SYN-OP-27 SYN-OP-28 SYN-OP-29 SYN-OP-30" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $sOver
+    principal: p1
+    input: [{ type: text, text: "SYN-OQ-01 SYN-OQ-02 SYN-OQ-03 SYN-OQ-04 SYN-OQ-05 SYN-OQ-06 SYN-OQ-07 SYN-OQ-08 SYN-OQ-09 SYN-OQ-10 SYN-OQ-11 SYN-OQ-12 SYN-OQ-13 SYN-OQ-14 SYN-OQ-15 SYN-OQ-16 SYN-OQ-17 SYN-OQ-18 SYN-OQ-19 SYN-OQ-20 SYN-OQ-21 SYN-OQ-22 SYN-OQ-23" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sAt
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYN-AP-01 SYN-AP-02 SYN-AP-03 SYN-AP-04 SYN-AP-05 SYN-AP-06 SYN-AP-07 SYN-AP-08 SYN-AP-09 SYN-AP-10 SYN-AP-11 SYN-AP-12 SYN-AP-13 SYN-AP-14 SYN-AP-15 SYN-AP-16 SYN-AP-17 SYN-AP-18 SYN-AP-19 SYN-AP-20 SYN-AP-21 SYN-AP-22 SYN-AP-23 SYN-AP-24 SYN-AP-25 SYN-AP-26 SYN-AP-27 SYN-AP-28 SYN-AP-29 SYN-AP-30" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $sAt
+    principal: p1
+    input: [{ type: text, text: "SYN-AQ-01 SYN-AQ-02 SYN-AQ-03 SYN-AQ-04 SYN-AQ-05 SYN-AQ-06 SYN-AQ-07 SYN-AQ-08 SYN-AQ-09 SYN-AQ-10 SYN-AQ-11 SYN-AQ-12 SYN-AQ-13 SYN-AQ-14 SYN-AQ-15 SYN-AQ-16 SYN-AQ-17 SYN-AQ-18 SYN-AQ-19 SYN-AQ-20 SYN-AQ-21 SYN-AQ-22" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sBelow
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYN-BP-01 SYN-BP-02 SYN-BP-03 SYN-BP-04 SYN-BP-05 SYN-BP-06 SYN-BP-07 SYN-BP-08 SYN-BP-09 SYN-BP-10 SYN-BP-11 SYN-BP-12 SYN-BP-13 SYN-BP-14 SYN-BP-15 SYN-BP-16 SYN-BP-17 SYN-BP-18 SYN-BP-19 SYN-BP-20 SYN-BP-21 SYN-BP-22 SYN-BP-23 SYN-BP-24 SYN-BP-25 SYN-BP-26 SYN-BP-27 SYN-BP-28 SYN-BP-29 SYN-BP-30" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $sBelow
+    principal: p1
+    input: [{ type: text, text: "SYN-BQ-01 SYN-BQ-02 SYN-BQ-03 SYN-BQ-04 SYN-BQ-05 SYN-BQ-06 SYN-BQ-07 SYN-BQ-08 SYN-BQ-09 SYN-BQ-10 SYN-BQ-11 SYN-BQ-12 SYN-BQ-13 SYN-BQ-14 SYN-BQ-15 SYN-BQ-16 SYN-BQ-17 SYN-BQ-18 SYN-BQ-19 SYN-BQ-20 SYN-BQ-21" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sOver:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.response, turn: 1, step: 1 }
+          - { type: context.compacted, payload: { mode: truncate, units: [{ turn: 1 }] } }
+          - { type: model.request, turn: 2, step: 1, payload: { provider: scripted-a } }
+          - { type: run.ended, payload: { reason: responded } }
+    $sAt:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, turn: 2, step: 1, payload: { provider: scripted-a } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: context.compacted }
+    $sBelow:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, turn: 2, step: 1, payload: { provider: scripted-a } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: context.compacted }
+  providerRequests:
+    scripted-a:
+      # $sOver turn 1, turn 2
+      - {}
+      - messages:
+          $all:
+            - $count: { of: { role: { $not: system } }, equals: 1 }
+            - $contains:
+                - role: principal
+                  parts: [{ type: text, text: "SYN-OQ-01 SYN-OQ-02 SYN-OQ-03 SYN-OQ-04 SYN-OQ-05 SYN-OQ-06 SYN-OQ-07 SYN-OQ-08 SYN-OQ-09 SYN-OQ-10 SYN-OQ-11 SYN-OQ-12 SYN-OQ-13 SYN-OQ-14 SYN-OQ-15 SYN-OQ-16 SYN-OQ-17 SYN-OQ-18 SYN-OQ-19 SYN-OQ-20 SYN-OQ-21 SYN-OQ-22 SYN-OQ-23", provenance: principal, labels: [] }]
+      # $sAt turn 1, turn 2
+      - {}
+      - messages:
+          $all:
+            - $count: { of: { role: { $not: system } }, equals: 3 }
+            - $contains:
+                - role: principal
+                  parts: [{ type: text, text: "SYN-AP-01 SYN-AP-02 SYN-AP-03 SYN-AP-04 SYN-AP-05 SYN-AP-06 SYN-AP-07 SYN-AP-08 SYN-AP-09 SYN-AP-10 SYN-AP-11 SYN-AP-12 SYN-AP-13 SYN-AP-14 SYN-AP-15 SYN-AP-16 SYN-AP-17 SYN-AP-18 SYN-AP-19 SYN-AP-20 SYN-AP-21 SYN-AP-22 SYN-AP-23 SYN-AP-24 SYN-AP-25 SYN-AP-26 SYN-AP-27 SYN-AP-28 SYN-AP-29 SYN-AP-30", provenance: principal, labels: [] }]
+                - role: assistant
+                  parts: [{ type: text, text: "SYN-AR-01 SYN-AR-02 SYN-AR-03 SYN-AR-04 SYN-AR-05 SYN-AR-06 SYN-AR-07 SYN-AR-08 SYN-AR-09 SYN-AR-10 SYN-AR-11 SYN-AR-12 SYN-AR-13 SYN-AR-14 SYN-AR-15 SYN-AR-16 SYN-AR-17 SYN-AR-18 SYN-AR-19 SYN-AR-20", provenance: model }]
+                - role: principal
+                  parts: [{ type: text, text: "SYN-AQ-01 SYN-AQ-02 SYN-AQ-03 SYN-AQ-04 SYN-AQ-05 SYN-AQ-06 SYN-AQ-07 SYN-AQ-08 SYN-AQ-09 SYN-AQ-10 SYN-AQ-11 SYN-AQ-12 SYN-AQ-13 SYN-AQ-14 SYN-AQ-15 SYN-AQ-16 SYN-AQ-17 SYN-AQ-18 SYN-AQ-19 SYN-AQ-20 SYN-AQ-21 SYN-AQ-22", provenance: principal, labels: [] }]
+      # $sBelow turn 1, turn 2
+      - {}
+      - messages:
+          $all:
+            - $count: { of: { role: { $not: system } }, equals: 3 }
+            - $contains:
+                - role: principal
+                  parts: [{ type: text, text: "SYN-BP-01 SYN-BP-02 SYN-BP-03 SYN-BP-04 SYN-BP-05 SYN-BP-06 SYN-BP-07 SYN-BP-08 SYN-BP-09 SYN-BP-10 SYN-BP-11 SYN-BP-12 SYN-BP-13 SYN-BP-14 SYN-BP-15 SYN-BP-16 SYN-BP-17 SYN-BP-18 SYN-BP-19 SYN-BP-20 SYN-BP-21 SYN-BP-22 SYN-BP-23 SYN-BP-24 SYN-BP-25 SYN-BP-26 SYN-BP-27 SYN-BP-28 SYN-BP-29 SYN-BP-30", provenance: principal, labels: [] }]
+                - role: assistant
+                  parts: [{ type: text, text: "SYN-BR-01 SYN-BR-02 SYN-BR-03 SYN-BR-04 SYN-BR-05 SYN-BR-06 SYN-BR-07 SYN-BR-08 SYN-BR-09 SYN-BR-10 SYN-BR-11 SYN-BR-12 SYN-BR-13 SYN-BR-14 SYN-BR-15 SYN-BR-16 SYN-BR-17 SYN-BR-18 SYN-BR-19 SYN-BR-20", provenance: model }]
+                - role: principal
+                  parts: [{ type: text, text: "SYN-BQ-01 SYN-BQ-02 SYN-BQ-03 SYN-BQ-04 SYN-BQ-05 SYN-BQ-06 SYN-BQ-07 SYN-BQ-08 SYN-BQ-09 SYN-BQ-10 SYN-BQ-11 SYN-BQ-12 SYN-BQ-13 SYN-BQ-14 SYN-BQ-15 SYN-BQ-16 SYN-BQ-17 SYN-BQ-18 SYN-BQ-19 SYN-BQ-20 SYN-BQ-21", provenance: principal, labels: [] }]
+    scripted-b: { count: 0 }

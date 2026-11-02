@@ -25,7 +25,10 @@ description: >-
   repeated during recovery: the vector store is queried exactly six times
   (three turns per session) and its behaviour list has no spare entry, so a
   re-query would fail the test; the session has exactly one
-  `context.retrieved` per turn.
+  `context.retrieved` per turn. Equality is asserted on each request's
+  `messages` and `tools` through placeholders (the fixture format requires
+  each provider-request expectation to be an object, so a whole record
+  cannot be bound).
 requirements: [CTX-001]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -171,33 +174,35 @@ expect:
   providerRequests:
     scripted-a:
       # $ctl
-      - $q1
-      - $q2
-      - $all:
-          - $q3
-          - messages:
-              $contains:
+      - { messages: $m1, tools: $tools }
+      - { messages: $m2, tools: $tools }
+      - tools: $tools
+        messages:
+          $all:
+            - $m3
+            - $contains:
                 - role: principal
                   parts:
                     - { type: text, text: "Look up k1", provenance: principal }
                     - { type: text, text: "SYN-KB-0002 record k1 is archived", provenance: "retrieval:kb" }
                 - role: tool
                   parts: [{ type: tool_result, callId: c1, result: { ok: { output: { value: "SYN-VALUE-0001" } } } }]
-      - $all:
-          - $q4
-          - messages:
-              $contains:
+      - tools: $tools
+        messages:
+          $all:
+            - $m4
+            - $contains:
                 - role: principal
                   parts:
                     - { type: text, text: "Hello", provenance: principal }
                     - { type: text, text: "SYN-KB-0001 greetings are answered politely", provenance: "retrieval:kb" }
                 - role: assistant
                   parts: [{ type: text, text: "k1 is archived." }]
-      # $s: identical, including the request rebuilt after the restart
-      - $q1
-      - $q2
-      - $q3
-      - $q4
+      # $s: identical, including the requests rebuilt after the restart
+      - { messages: $m1, tools: $tools }
+      - { messages: $m2, tools: $tools }
+      - { messages: $m3, tools: $tools }
+      - { messages: $m4, tools: $tools }
     scripted-b: { count: 0 }
   stubCalls:
     vectorStore/kb: { count: 6 }

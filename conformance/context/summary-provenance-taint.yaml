@@ -1,0 +1,213 @@
+schemaVersion: "0.1.0"
+id: context.summary-provenance-taint
+title: A summary records every provenance it replaces, takes the least-trusted one and the union of labels, and taint outlives the summarized content
+description: >-
+  Both session models declare contextLimit 120 and maxOutputTokens 20:
+  available space 100, compaction above 90 (default triggerPercent). The
+  profile summarizes with scripted-sum/sum-1 and labels attachments `pii`.
+  `lookup` declares sensitivity `example.test:internal`. The bundle allows
+  scripted-sum for `pii` and `example.test:internal`, and trusts no tool
+  and no attachment source.
+
+
+  Turn 1: the principal sends a 10-word text and an uploaded image
+  (attachment:upload, `pii`); step 1 calls lookup (result tool:lookup,
+  `example.test:internal`); step 2 answers with a 10-word text. Content
+  enters context in the order principal, attachment:upload, model (the
+  tool call), tool:lookup. The image and the lookup result both taint the
+  session (HOOK-120), in that order.
+
+
+  System content is 8 tokens ("Follow organisational policy." 3 + "You
+  are a test assistant." 5); turn 1 is 10 + 10 (image) + 10 (tool call) +
+  10 (tool result) + 10 = 50. Turn 2's principal text is 40 words → 98 >
+  90; turn 1 is replaced by a 4-word summary → 52.
+
+  - `context.compacted` lists provenances [principal, attachment:upload,
+    model, tool:lookup] in order of first entry, and labels exactly pii and
+    example.test:internal.
+  - The summary part in turn 2's request has provenance attachment:upload:
+    the trust order ranks the two untrusted provenances equal, and the tie
+    goes to the one that entered context first. It carries both labels.
+  - Turn 2's model asks to update_record. Turn 1's untrusted content is no
+    longer in context, but taint is sticky (HOOK-121): the mutating call
+    escalates at stage 5, and the taint decision and the checkpoint list
+    both tainting provenances, attachment:upload then tool:lookup
+    (HOOK-126).
+requirements: [CTX-081, HOOK-121, HOOK-126]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          - { id: scripted-sum, adapter: scripted, endpoint: "memory://scripted-sum", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: [pii]
+        context: { compaction: { mode: summarize, model: { provider: scripted-sum, name: sum-1 } } }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b, scripted-sum]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+          "example.test:internal":
+            allowedProviders: [scripted-a, scripted-b, scripted-sum]
+            redaction: [{ mode: mask }]
+      - kind: Tool
+        id: lookup
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Look up a record by key.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        sensitivity: ["example.test:internal"]
+        binding: { kind: native, handler: test.lookup }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { contextLimit: 120, maxOutputTokens: 20 }
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 28, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "SYN-AR-01 SYN-AR-02 SYN-AR-03 SYN-AR-04 SYN-AR-05 SYN-AR-06 SYN-AR-07 SYN-AR-08 SYN-AR-09 SYN-AR-10" }]
+          usage: { inputTokens: 48, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 52, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      capabilities: { contextLimit: 120, maxOutputTokens: 20 }
+      responses: []
+    scripted-sum:
+      responses:
+        - parts: [{ type: text, text: "SYN-SUMMARY-0001 SYN-SUMMARY-0002 SYN-SUMMARY-0003 SYN-SUMMARY-0004" }]
+          usage: { inputTokens: 40, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+  ports:
+    blobStore:
+      t1:
+        - id: blob-img-1
+          hash: "sha256:82e0d9513a9797c3e32e35d6fff5c8648db4b0a8c74ffea2be6d5b827d3c7aa7"
+          mediaType: image/png
+          size: 20
+          data: "U1lOVEhFVElDLUlNQUdFLTAwMDE="
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "SYN-LOOKUP-0001" } }
+      update_record: []
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input:
+      - { type: text, text: "SYN-AP-01 SYN-AP-02 SYN-AP-03 SYN-AP-04 SYN-AP-05 SYN-AP-06 SYN-AP-07 SYN-AP-08 SYN-AP-09 SYN-AP-10" }
+      - type: image
+        mediaType: image/png
+        source: upload
+        blob: { id: blob-img-1, hash: "sha256:82e0d9513a9797c3e32e35d6fff5c8648db4b0a8c74ffea2be6d5b827d3c7aa7", mediaType: image/png, size: 20 }
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "SYN-BP-01 SYN-BP-02 SYN-BP-03 SYN-BP-04 SYN-BP-05 SYN-BP-06 SYN-BP-07 SYN-BP-08 SYN-BP-09 SYN-BP-10 SYN-BP-11 SYN-BP-12 SYN-BP-13 SYN-BP-14 SYN-BP-15 SYN-BP-16 SYN-BP-17 SYN-BP-18 SYN-BP-19 SYN-BP-20 SYN-BP-21 SYN-BP-22 SYN-BP-23 SYN-BP-24 SYN-BP-25 SYN-BP-26 SYN-BP-27 SYN-BP-28 SYN-BP-29 SYN-BP-30 SYN-BP-31 SYN-BP-32 SYN-BP-33 SYN-BP-34 SYN-BP-35 SYN-BP-36 SYN-BP-37 SYN-BP-38 SYN-BP-39 SYN-BP-40" }]
+    expect: { ok: true, endReason: escalated }
+expect:
+  sessions:
+    $s:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, turn: 1, payload: { callId: c1, tool: lookup } }
+          - { type: run.ended, payload: { reason: responded } }
+          - type: context.compacted
+            payload:
+              mode: summarize
+              units: [{ turn: 1 }]
+              provenances: [principal, "attachment:upload", model, "tool:lookup"]
+              labels: { $all: [{ $len: 2 }, { $contains: [pii, "example.test:internal"] }] }
+          - { type: model.request, turn: 2, step: 1 }
+          - { type: policy.decision, payload: { kind: taint, outcome: escalate, callId: c2, tool: update_record, provenances: ["attachment:upload", "tool:lookup"] } }
+          - { type: escalation.raised, payload: { escalation: { sources: [taint], pendingActions: [{ callId: c2, source: taint }] } } }
+          - { type: run.ended, payload: { reason: escalated } }
+      absentEvents:
+        - { type: tool.call, payload: { callId: c2 } }
+      checkpoint:
+        taint: { tainted: true, provenances: ["attachment:upload", "tool:lookup"] }
+  providerRequests:
+    scripted-sum:
+      - tools: []
+        messages:
+          $contains:
+            - role: principal
+              parts:
+                - { type: text, text: "SYN-AP-01 SYN-AP-02 SYN-AP-03 SYN-AP-04 SYN-AP-05 SYN-AP-06 SYN-AP-07 SYN-AP-08 SYN-AP-09 SYN-AP-10", provenance: principal }
+                - { type: image, blob: { id: blob-img-1 }, provenance: "attachment:upload", labels: [pii] }
+            - role: tool
+              parts: [{ type: tool_result, callId: c1, provenance: "tool:lookup", labels: ["example.test:internal"] }]
+    scripted-a:
+      - {}
+      - {}
+      - messages:
+          $all:
+            - $count: { of: { role: { $not: system } }, equals: 2 }
+            - $contains:
+                - role: assistant
+                  parts:
+                    - type: text
+                      text: "SYN-SUMMARY-0001 SYN-SUMMARY-0002 SYN-SUMMARY-0003 SYN-SUMMARY-0004"
+                      provenance: "attachment:upload"
+                      labels: { $all: [{ $len: 2 }, { $contains: [pii, "example.test:internal"] }] }
+                - role: principal
+                  parts: [{ type: text, text: "SYN-BP-01 SYN-BP-02 SYN-BP-03 SYN-BP-04 SYN-BP-05 SYN-BP-06 SYN-BP-07 SYN-BP-08 SYN-BP-09 SYN-BP-10 SYN-BP-11 SYN-BP-12 SYN-BP-13 SYN-BP-14 SYN-BP-15 SYN-BP-16 SYN-BP-17 SYN-BP-18 SYN-BP-19 SYN-BP-20 SYN-BP-21 SYN-BP-22 SYN-BP-23 SYN-BP-24 SYN-BP-25 SYN-BP-26 SYN-BP-27 SYN-BP-28 SYN-BP-29 SYN-BP-30 SYN-BP-31 SYN-BP-32 SYN-BP-33 SYN-BP-34 SYN-BP-35 SYN-BP-36 SYN-BP-37 SYN-BP-38 SYN-BP-39 SYN-BP-40", provenance: principal, labels: [] }]
+    scripted-b: { count: 0 }
+  stubCalls:
+    lookup: { count: 1 }
+    update_record: { count: 0 }

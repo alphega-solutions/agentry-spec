@@ -1,0 +1,204 @@
+schemaVersion: "0.1.0"
+id: context.summary-summarizer-isolated
+title: The summarizer runs on an allowed provider, with no tools, outside hooks, and without model events
+description: >-
+  Both session models declare contextLimit 120 and maxOutputTokens 20:
+  available space 100, compaction above 90 (default triggerPercent). The
+  profile summarizes with scripted-sum/sum-1, a provider of its own
+  declared in the Deployment. A native telemetry hook `observer` at
+  beforeModelCall and afterModelCall (required by the persona) answers
+  `continue` and records each invocation.
+
+
+  System content is 8 tokens ("Follow organisational policy." 3 + "You
+  are a test assistant." 5). Turn 1: principal 20 words, response 20.
+  Turn 2: principal 45 words → 8 + 40 + 45 = 93 > 90; turn 1 is replaced by
+  a 4-word summary → 8 + 4 + 45 = 57.
+
+  - The summarizer request has `tools: []` (the session's requests list
+    lookup and update_record), carries turn 1, and carries neither the
+    current turn's principal text nor the persona's instructions: only the
+    content being summarized (its own instructions are
+    implementation-defined and not asserted).
+  - `observer` runs only around the two session model calls (four
+    invocations), never around the summarizer call.
+  - No `model.request` or `model.response` event is for scripted-sum or
+    sum-1; the summarizer's usage is on `context.compacted`.
+  - Loads afterwards: a policy bundle whose `allowedProviders` omits
+    scripted-sum makes the locked `compaction.model` disallowed →
+    configuration error (PROV-023 applies the CFG-042 rule to it); the
+    same bundle allowing scripted-sum loads.
+
+  Reading chosen: a request with no tools is recorded with `tools: []`, as
+  in hook.source-model-call-isolated.
+requirements: [CTX-080]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          - { id: scripted-sum, adapter: scripted, endpoint: "memory://scripted-sum", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+        context: { compaction: { mode: summarize, model: { provider: scripted-sum, name: sum-1 } } }
+      - kind: Hook
+        id: observer
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeModelCall, afterModelCall]
+        results: [annotate]
+        purpose: telemetry
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.observer }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [observer@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { contextLimit: 120, maxOutputTokens: 20 }
+      responses:
+        - parts: [{ type: text, text: "SYN-AR-01 SYN-AR-02 SYN-AR-03 SYN-AR-04 SYN-AR-05 SYN-AR-06 SYN-AR-07 SYN-AR-08 SYN-AR-09 SYN-AR-10 SYN-AR-11 SYN-AR-12 SYN-AR-13 SYN-AR-14 SYN-AR-15 SYN-AR-16 SYN-AR-17 SYN-AR-18 SYN-AR-19 SYN-AR-20" }]
+          usage: { inputTokens: 28, outputTokens: 20, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Done." }]
+          usage: { inputTokens: 57, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      capabilities: { contextLimit: 120, maxOutputTokens: 20 }
+      responses: []
+    scripted-sum:
+      responses:
+        - parts: [{ type: text, text: "SYN-SUMMARY-0001 SYN-SUMMARY-0002 SYN-SUMMARY-0003 SYN-SUMMARY-0004" }]
+          usage: { inputTokens: 40, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYN-AP-01 SYN-AP-02 SYN-AP-03 SYN-AP-04 SYN-AP-05 SYN-AP-06 SYN-AP-07 SYN-AP-08 SYN-AP-09 SYN-AP-10 SYN-AP-11 SYN-AP-12 SYN-AP-13 SYN-AP-14 SYN-AP-15 SYN-AP-16 SYN-AP-17 SYN-AP-18 SYN-AP-19 SYN-AP-20" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "SYN-BP-01 SYN-BP-02 SYN-BP-03 SYN-BP-04 SYN-BP-05 SYN-BP-06 SYN-BP-07 SYN-BP-08 SYN-BP-09 SYN-BP-10 SYN-BP-11 SYN-BP-12 SYN-BP-13 SYN-BP-14 SYN-BP-15 SYN-BP-16 SYN-BP-17 SYN-BP-18 SYN-BP-19 SYN-BP-20 SYN-BP-21 SYN-BP-22 SYN-BP-23 SYN-BP-24 SYN-BP-25 SYN-BP-26 SYN-BP-27 SYN-BP-28 SYN-BP-29 SYN-BP-30 SYN-BP-31 SYN-BP-32 SYN-BP-33 SYN-BP-34 SYN-BP-35 SYN-BP-36 SYN-BP-37 SYN-BP-38 SYN-BP-39 SYN-BP-40 SYN-BP-41 SYN-BP-42 SYN-BP-43 SYN-BP-44 SYN-BP-45" }]
+    expect: { ok: true, endReason: responded }
+  - load:
+      artifacts:
+        - kind: PolicyBundle
+          id: org
+          version: 1
+          schemaVersion: "0.1.0"
+          policyInstructions: "Follow organisational policy."
+          defaultFallbackMessage: "I can't help with that request."
+          allowedProviders: [scripted-a, scripted-b]
+          sensitivityPolicies:
+            pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+            phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+    expect: { ok: false, error: { category: configuration } }
+  - load:
+      artifacts:
+        - kind: PolicyBundle
+          id: org
+          version: 1
+          schemaVersion: "0.1.0"
+          policyInstructions: "Follow organisational policy."
+          defaultFallbackMessage: "I can't help with that request."
+          allowedProviders: [scripted-a, scripted-b, scripted-sum]
+          sensitivityPolicies:
+            pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+            phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+    expect: { ok: true }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-a } }
+          - { type: model.response, turn: 1, step: 1, payload: { provider: scripted-a } }
+          - type: context.compacted
+            payload:
+              mode: summarize
+              units: [{ turn: 1 }]
+              usage: { inputTokens: 40, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+          - { type: model.request, turn: 2, step: 1, payload: { provider: scripted-a } }
+          - { type: model.response, turn: 2, step: 1, payload: { provider: scripted-a } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: model.request, payload: { provider: scripted-sum } }
+        - { type: model.response, payload: { provider: scripted-sum } }
+        - { type: model.request, payload: { model: sum-1 } }
+        - { type: model.response, payload: { model: sum-1 } }
+  providerRequests:
+    scripted-sum:
+      - provider: scripted-sum
+        model: sum-1
+        tools: []
+        messages:
+          $all:
+            - $contains:
+                - role: principal
+                  parts: [{ type: text, text: "SYN-AP-01 SYN-AP-02 SYN-AP-03 SYN-AP-04 SYN-AP-05 SYN-AP-06 SYN-AP-07 SYN-AP-08 SYN-AP-09 SYN-AP-10 SYN-AP-11 SYN-AP-12 SYN-AP-13 SYN-AP-14 SYN-AP-15 SYN-AP-16 SYN-AP-17 SYN-AP-18 SYN-AP-19 SYN-AP-20", provenance: principal }]
+                - role: assistant
+                  parts: [{ type: text, text: "SYN-AR-01 SYN-AR-02 SYN-AR-03 SYN-AR-04 SYN-AR-05 SYN-AR-06 SYN-AR-07 SYN-AR-08 SYN-AR-09 SYN-AR-10 SYN-AR-11 SYN-AR-12 SYN-AR-13 SYN-AR-14 SYN-AR-15 SYN-AR-16 SYN-AR-17 SYN-AR-18 SYN-AR-19 SYN-AR-20", provenance: model }]
+            - $count: { of: { parts: { $contains: [{ text: "SYN-BP-01 SYN-BP-02 SYN-BP-03 SYN-BP-04 SYN-BP-05 SYN-BP-06 SYN-BP-07 SYN-BP-08 SYN-BP-09 SYN-BP-10 SYN-BP-11 SYN-BP-12 SYN-BP-13 SYN-BP-14 SYN-BP-15 SYN-BP-16 SYN-BP-17 SYN-BP-18 SYN-BP-19 SYN-BP-20 SYN-BP-21 SYN-BP-22 SYN-BP-23 SYN-BP-24 SYN-BP-25 SYN-BP-26 SYN-BP-27 SYN-BP-28 SYN-BP-29 SYN-BP-30 SYN-BP-31 SYN-BP-32 SYN-BP-33 SYN-BP-34 SYN-BP-35 SYN-BP-36 SYN-BP-37 SYN-BP-38 SYN-BP-39 SYN-BP-40 SYN-BP-41 SYN-BP-42 SYN-BP-43 SYN-BP-44 SYN-BP-45" }] } }, equals: 0 }
+            - $count: { of: { parts: { $contains: [{ text: { $regex: "You are a test assistant\\." } }] } }, equals: 0 }
+    scripted-a:
+      - tools: { $contains: [{ name: lookup }, { name: update_record }] }
+      - tools: { $contains: [{ name: lookup }, { name: update_record }] }
+    scripted-b: { count: 0 }
+  stubCalls:
+    observer:
+      - { arguments: { point: beforeModelCall, session: { turn: 1, step: 1 } } }
+      - { arguments: { point: afterModelCall, session: { turn: 1, step: 1 } } }
+      - { arguments: { point: beforeModelCall, session: { turn: 2, step: 1 } } }
+      - { arguments: { point: afterModelCall, session: { turn: 2, step: 1 } } }
