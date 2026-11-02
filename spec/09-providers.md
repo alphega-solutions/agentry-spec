@@ -234,4 +234,17 @@ Schemas: provider declarations, capability restrictions and the price table in `
 
 - PROV-051, PROV-052: a routing `policy.decision` has kind `routing`; outcome `switch` names the model chosen in `details` (`{provider, model}`), and outcome `block` is emitted when no model is allowed. A capability switch (PROV-042) records `fallbackReason: capability` on the `model.request` and no `policy.decision`.
 - PROV-060–063: "the next model in `fallbacks`" is counted from the model that failed; models skipped for routing or capability in this call are skipped for failover too. Each failover emits an `error` event (category and code of the failure) before the next `model.request`, which records `role: fallback`, `fallbackReason: failover`.
-- PROV-062: a turn's first model call is the first `model.request` after `turn.started` (or, for a resumed turn, none: a resume is mid-turn).
+- PROV-062: failover to a different provider is allowed until a model call of the turn has succeeded, so it covers the turn's first call and its retries; a resumed turn is always mid-turn. Mid-turn, fallbacks of another provider are not eligible: failover goes to the next eligible same-provider fallback in order, and without one the error is `fatal`.
+
+**Readings settled with the Area 9 fixtures**
+
+- PROV-012, CFG-070: `dataResidency` is checked at load for the provider of every candidate model — primary, fallbacks, summarizer and model hooks; one outside residency is a configuration error. A declared provider no model uses is not checked. A `providerRequirement` failure is never a load error: it only makes the provider not allowed for content with that label (routing, PROV-051).
+- PROV-040, CTX-100: the reserve check applies to a `reserveOutputTokens` a layer sets; the default reserve is never an error. A `params.maxOutputTokens` above the model's (possibly restricted) capability is a configuration error, not clamped.
+- PROV-041, CORE-132: for a model without `structuredOutput`, the adapter returns text and the harness parses it as JSON into the `structured` part before validating; the output schema is still sent.
+- PROV-042: content only a fallback supports is accepted at `run()` and sent to the first capable, allowed fallback (`fallbackReason: capability`).
+- PROV-043: if a model without `parallelToolCalls` returns several tool calls anyway, the harness processes the first; each other call gets one `tool.result` with error `invalid_input` (`agentry.provider.parallel_not_allowed`) and is never dispatched.
+- PROV-053, PROV-060: a failover whose only fallback is not allowed for the content does not happen; the failure stands (`fatal` once retries are exhausted), the run ends `failed`, not `blocked`, and no routing decision is emitted.
+- PROV-055: after a provider switch in a turn, reasoning produced before it is sent to no provider for the rest of the turn, including the provider that produced it.
+- PROV-065: every failed attempt, including each retry, emits its own `error` event.
+- PROV-071, PROV-074, CFG-091: budgets are checked before each model call; a call whose response reaches the budget completes, and the run ends `budget_exhausted` only if another model call would be needed — a final response still ends `responded`.
+- PROV-090: every later call on a failover model in the same turn records `role: fallback`, `fallbackReason: failover` (PROV-063).

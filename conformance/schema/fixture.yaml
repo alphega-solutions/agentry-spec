@@ -43,6 +43,10 @@ description: >-
   its event was persisted.
 
 
+  Numbers in expectations (for example `cost.amount`) are compared as
+  decimals with an absolute tolerance of 1e-9.
+
+
   Scripted provider `capabilities` are merged over defaults in which every
   boolean capability is true, `contextLimit` is 1,000,000 tokens and
   `maxOutputTokens` is 4,096. Record shapes
@@ -290,7 +294,13 @@ $defs:
         description: Deltas to emit before the final response, when streaming.
         type: array
         items: { type: string }
-      usage: { type: object }
+      usage:
+        description: >-
+          The usage the provider reports for this call, success or error.
+          A field left out is one the provider does not report (normalized
+          to 0, PROV-070); no `usage` at all means none is reported (on an
+          error, the `error` event then carries no usage).
+        type: object
       error:
         type: object
         required: [category]
