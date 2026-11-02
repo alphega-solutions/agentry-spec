@@ -44,7 +44,8 @@ description: >-
 
 
   Scripted provider `capabilities` are merged over defaults in which every
-  boolean capability is true and limits are 1,000,000 tokens. Record shapes
+  boolean capability is true, `contextLimit` is 1,000,000 tokens and
+  `maxOutputTokens` is 4,096. Record shapes
   (stub calls, provider requests, port records) are defined under `expect`.
 type: object
 additionalProperties: false
@@ -230,7 +231,7 @@ $defs:
               before anything else sees them (PORT-080, CTX-041), and
               apply the query's limit after filtering. Queries are recorded
               under `expect.stubCalls.vectorStore/<sourceId>` as `{ arguments:
-              { tenant, principal, text, limit } }`.
+              { tenant, principal: { subject, tenant, roles }, text, limit } }`.
             type: object
             propertyNames: { pattern: "^[A-Za-z0-9_.-]{1,128}$" }
             additionalProperties:
@@ -418,6 +419,7 @@ $defs:
         properties:
           category: { type: string }
           code: { type: string }
+          retryable: { type: boolean }
       delayMs: { type: integer, minimum: 0 }
 
   hookBehaviour:

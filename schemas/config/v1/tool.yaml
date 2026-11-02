@@ -40,12 +40,13 @@ allOf:
         input:
           description: >-
             A retrieval tool's arguments name the query: `input` declares a
-            required string `query` and may declare an integer `limit`
-            (Area 7 amendment 2026-11-01).
+            required string `query`, may declare an integer `limit`, and
+            declares nothing else (Area 7 amendment 2026-11-01).
           required: [properties, required]
           properties:
             properties:
               required: [query]
+              propertyNames: { enum: [query, limit] }
               properties:
                 query: { required: [type], properties: { type: { const: string } } }
                 limit: { required: [type], properties: { type: { const: integer } } }

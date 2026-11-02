@@ -175,6 +175,9 @@ $defs:
     properties:
       reason: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/runEndReason" }
       error: { $ref: "https://alphega.io/agentry/schemas/core/error/v1.json" }
+      unrecordedUsage:
+        description: Usage of model calls in this run that no other event records, such as a summarizer call during which the budget ran out (CTX-084 as amended).
+        $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/usage"
     if: { properties: { reason: { const: failed } } }
     then: { required: [error] }
 
@@ -244,6 +247,10 @@ $defs:
       result: { enum: [annotate, rewrite, block, escalate] }
       reasonCode: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/errorCode" }
       labelsAdded: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/labels" }
+      annotations:
+        description: For `annotate`, the labels added per part index into the content the hook saw, from which later context assembly reapplies them (CTX-001, Area 7 amendment 2026-11-01).
+        type: array
+        items: { $ref: "https://alphega.io/agentry/schemas/core/hook/v1.json#/$defs/annotation" }
       inputHash: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/sha256" }
       usage: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/usage" }
     allOf:
