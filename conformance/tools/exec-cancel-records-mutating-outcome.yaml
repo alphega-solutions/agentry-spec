@@ -59,4 +59,4 @@ expect:
   ports:
     idempotencyStore:
       t1:
-        $k: { outcome: $res }
+        $k: { state: completed, outcome: $res }

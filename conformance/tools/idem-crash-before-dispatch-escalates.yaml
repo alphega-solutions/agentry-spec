@@ -7,7 +7,7 @@ description: >-
   requests update_record (mutating, not idempotent): the started record has
   been written but the call has not been dispatched. Reaching the crash
   point shows the started record is written before dispatch (TOOL-060).
-  After a restart and a clock advance past any run lease, resume() on the
+  After a restart and a clock advance past the run lease (`limits.leaseTtl`, default PT5M), resume() on the
   session first performs recovery (HITL-092): the call has a started record
   and no outcome, so it is not dispatched; a `recovery` escalation is raised
   and the orphaned run ends `escalated`. Because the escalation's action is
@@ -67,8 +67,7 @@ script:
     reviewer: r1
     decisions:
       - decisionId: "01900000-0000-7000-8000-000000000001"
-        escalationId: $esc
-        actionId: $act
+        pendingActionId: $act
         type: confirm
         outcome: succeeded
         output: { updated: true, source: "reviewer" }
@@ -88,7 +87,7 @@ expect:
                 id: $esc
                 sources: [recovery]
                 pendingActions:
-                  - { id: $act, kind: recovery, source: recovery, tool: update_record, allowedDecisions: [confirm] }
+                  - { id: $act, kind: recovery, source: recovery, tool: update_record, arguments: { key: k1, value: v1 }, idempotencyKey: { $regex: "^.+$" }, allowedDecisions: [confirm] }
           - { type: run.ended, runId: $r2, payload: { reason: escalated } }
           - { type: escalation.resolved, payload: { escalationId: $esc } }
           - { type: tool.result, turn: 2, payload: { callId: c1, tool: update_record, result: { ok: { output: { updated: true, source: "reviewer" } } } } }

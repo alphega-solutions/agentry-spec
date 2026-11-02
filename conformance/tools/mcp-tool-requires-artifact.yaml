@@ -83,18 +83,17 @@ setup:
     mcpServers:
       crm:
         tools:
-          - name: get_contact
+          get_contact:
             description: Get a contact.
             inputSchema: { type: object, additionalProperties: false, required: [contactId], properties: { contactId: { type: string } } }
             annotations: { readOnlyHint: true }
-          - name: delete_contact
+            behaviours:
+              - ok: { output: { name: "Synthetic Contact" } }
+          delete_contact:
             description: Delete a contact.
             inputSchema: { type: object, additionalProperties: false, required: [contactId], properties: { contactId: { type: string } } }
             annotations: { destructiveHint: true }
-        calls:
-          get_contact:
-            - ok: { output: { name: "Synthetic Contact" } }
-          delete_contact: []
+            behaviours: []
     tools:
       lookup: []
       update_record: []
@@ -119,14 +118,14 @@ expect:
       absentEvents:
         - { type: tool.call, payload: { callId: c2 } }
   stubCalls:
-    get_contact:
+    crm/get_contact:
       - { arguments: { contactId: ct-1 } }
-    delete_contact: { count: 0 }
+    crm/delete_contact: { count: 0 }
   providerRequests:
     scripted-a:
       $every:
         tools:
           $all:
             - { $len: 3 }
-            - { $contains: [{ id: lookup }, { id: update_record }, { id: get_contact }] }
-            - { $not: { $contains: [{ id: delete_contact }] } }
+            - { $contains: [{ name: lookup }, { name: update_record }, { name: get_contact }] }
+            - { $count: { of: { name: delete_contact }, equals: 0 } }

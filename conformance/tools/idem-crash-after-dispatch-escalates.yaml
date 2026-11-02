@@ -5,7 +5,7 @@ description: >-
   The implementation is crashed at `after_dispatch` while update_record
   (mutating, not idempotent) is being called: the stub has received the
   call, but no outcome has been recorded. After a restart and a clock
-  advance past any run lease, run() on the session performs recovery first
+  advance past the run lease (`limits.leaseTtl`, default PT5M), run() on the session performs recovery first
   (HITL-092): the call is not re-dispatched (the stub has a second behaviour
   a re-dispatch would consume, and is called exactly once); a `recovery`
   escalation is raised and the orphaned run ends `escalated`. A reviewer
@@ -65,8 +65,7 @@ script:
     reviewer: r1
     decisions:
       - decisionId: "01900000-0000-7000-8000-000000000001"
-        escalationId: $esc
-        actionId: $act
+        pendingActionId: $act
         type: confirm
         outcome: succeeded
         output: { updated: true, confirmedBy: "reviewer" }
@@ -85,7 +84,7 @@ expect:
                 id: $esc
                 sources: [recovery]
                 pendingActions:
-                  - { id: $act, kind: recovery, source: recovery, tool: update_record, allowedDecisions: [confirm] }
+                  - { id: $act, kind: recovery, source: recovery, tool: update_record, arguments: { key: k1, value: v1 }, idempotencyKey: $k, allowedDecisions: [confirm] }
           - { type: run.ended, payload: { reason: escalated } }
           - { type: escalation.resolved, payload: { escalationId: $esc } }
           - { type: tool.result, turn: 2, payload: { callId: c1, tool: update_record, result: { ok: { output: { updated: true, confirmedBy: "reviewer" } } } } }
@@ -99,7 +98,7 @@ expect:
   ports:
     idempotencyStore:
       t1:
-        $k: { outcome: { ok: { output: { updated: true, confirmedBy: "reviewer" } } } }
+        $k: { state: completed, outcome: { ok: { output: { updated: true, confirmedBy: "reviewer" } } } }
   providerRequests:
     scripted-a:
       - {}

@@ -15,8 +15,10 @@ description: >-
   and the turn continues. The error the model receives, and the recorded
   tool result, are identical in all three, so the model cannot tell an
   unknown tool from a hidden one, and the error carries no `details`. A
-  scope `policy.decision` is recorded each time. The model's tool list never
-  includes `archive_record`.
+  scope `policy.decision` is recorded each time, with `reason: unknown` for
+  $sUnknown and `reason: out_of_scope` for the other two (TOOL-030 stage 1
+  as amended 2026-11-01). The model's tool list never includes
+  `archive_record`.
 requirements: [TOOL-023, TOOL-030]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -107,7 +109,7 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: policy.decision, payload: { kind: scope, outcome: block, callId: c1 } }
+          - { type: policy.decision, payload: { kind: scope, outcome: block, callId: c1, reason: unknown } }
           - type: tool.result
             payload:
               callId: c1
@@ -123,7 +125,7 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: policy.decision, payload: { kind: scope, outcome: block, callId: c1 } }
+          - { type: policy.decision, payload: { kind: scope, outcome: block, callId: c1, reason: out_of_scope } }
           - { type: tool.result, payload: { callId: c1, result: $res } }
           - { type: model.request, step: 2 }
           - { type: run.ended, payload: { reason: responded } }
@@ -133,7 +135,7 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: policy.decision, payload: { kind: scope, outcome: block, callId: c1 } }
+          - { type: policy.decision, payload: { kind: scope, outcome: block, callId: c1, reason: out_of_scope } }
           - { type: tool.result, payload: { callId: c1, result: $res } }
           - { type: model.request, step: 2 }
           - { type: run.ended, payload: { reason: responded } }

@@ -247,9 +247,10 @@ $defs:
         items: { $ref: "#/$defs/redactionRule" }
       approval:
         description: >-
-          Approval applied to tool calls while content with this label is in
-          context (ADR-0015); the stricter of this and the tool's own
-          `approval` applies. Order as for approval policy (CFG-031).
+          Approval applied to calls of tools that carry this label in their
+          `sensitivity` (TOOL-035, ADR-0015); it does not depend on what else
+          is in context. The strictest of this and the tool's own `approval`
+          applies. Order as for approval policy (CFG-031).
         x-agentry-merge: stricter
         x-agentry-order: [always, policy, never]
         enum: [always, policy, never]

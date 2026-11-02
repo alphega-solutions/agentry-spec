@@ -236,7 +236,7 @@ script:
     session: $sApproval
     reviewer: r1
     decisions:
-      - { decisionId: "01900000-0000-7000-8000-000000000001", escalationId: $esc, actionId: $act, type: reject }
+      - { decisionId: "01900000-0000-7000-8000-000000000001", pendingActionId: $act, type: reject }
     expect: { ok: true, endReason: responded }
 expect:
   sessions:
@@ -245,7 +245,7 @@ expect:
         mode: subsequence
         items:
           - { type: tool.result, payload: { callId: c1 } }
-          - { type: policy.decision, payload: { kind: scope, outcome: block, callId: c2 } }
+          - { type: policy.decision, payload: { kind: scope, outcome: block, callId: c2, reason: out_of_scope } }
           - { type: tool.result, payload: { callId: c2, result: { error: { category: policy, code: agentry.tool.unavailable } } } }
           - { type: model.request, step: 3 }
       absentEvents:

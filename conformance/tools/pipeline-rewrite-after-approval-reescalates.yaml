@@ -135,7 +135,7 @@ script:
     session: $sTaint
     reviewer: r1
     decisions:
-      - { decisionId: "01900000-0000-7000-8000-000000000001", escalationId: $escT1, actionId: $actT1, type: approve }
+      - { decisionId: "01900000-0000-7000-8000-000000000001", pendingActionId: $actT1, type: approve }
     capture:
       - event: { type: escalation.raised }
         bind: { payload.escalation.id: $escT2, payload.escalation.pendingActions.0.id: $actT2 }
@@ -144,7 +144,7 @@ script:
     session: $sTaint
     reviewer: r1
     decisions:
-      - { decisionId: "01900000-0000-7000-8000-000000000002", escalationId: $escT2, actionId: $actT2, type: approve }
+      - { decisionId: "01900000-0000-7000-8000-000000000002", pendingActionId: $actT2, type: approve }
     expect: { ok: true, endReason: responded }
   # $sHook
   - action: run
@@ -161,7 +161,7 @@ script:
     session: $sHook
     reviewer: r1
     decisions:
-      - { decisionId: "01900000-0000-7000-8000-000000000003", escalationId: $escH1, actionId: $actH1, type: approve }
+      - { decisionId: "01900000-0000-7000-8000-000000000003", pendingActionId: $actH1, type: approve }
     capture:
       - event: { type: escalation.raised }
         bind: { payload.escalation.id: $escH2, payload.escalation.pendingActions.0.id: $actH2 }
@@ -170,7 +170,7 @@ script:
     session: $sHook
     reviewer: r1
     decisions:
-      - { decisionId: "01900000-0000-7000-8000-000000000004", escalationId: $escH2, actionId: $actH2, type: approve }
+      - { decisionId: "01900000-0000-7000-8000-000000000004", pendingActionId: $actH2, type: approve }
     expect: { ok: true, endReason: responded }
 expect:
   sessions:

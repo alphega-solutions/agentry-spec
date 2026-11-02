@@ -9,7 +9,8 @@ description: >-
   tightens limits.partSize to 2048 bytes and lookup returns about 3 KiB:
   the result is replaced by `limit` (`agentry.tool.result_too_large`), the
   oversized content is persisted nowhere (not even as a blob), and the run
-  ends without a further model call. Session 3: lookup returns about 1 KiB
+  ends `context_limit` without a further model call, leaving the session
+  idle (TOOL-072 as amended 2026-11-01). Session 3: lookup returns about 1 KiB
   but the hook rewrites it to a short value; size is judged after hooks, so
   the short result is passed inline and no blob holds the original.
 requirements: [TOOL-072]
@@ -174,7 +175,7 @@ script:
     persona: assistant@1
     overrides: { limits: { partSize: 2048 } }
     input: [{ type: text, text: "Look up huge" }]
-    expect: { ok: true }
+    expect: { ok: true, endReason: context_limit }
   - action: run
     bind: $s3
     tenant: t1
@@ -198,6 +199,7 @@ expect:
       absentEvents:
         - { type: tool.result, payload: { result: { ok: { output: { $any: true } } } } }
     $s2:
+      state: idle
       events:
         mode: subsequence
         items:
@@ -205,7 +207,7 @@ expect:
             payload:
               callId: c1
               result: { error: { category: limit, code: agentry.tool.result_too_large } }
-          - { type: run.ended, payload: { reason: { $not: responded } } }
+          - { type: run.ended, payload: { reason: context_limit } }
       absentEvents:
         - { type: model.request, step: 2 }
         - { type: tool.result, payload: { result: { ok: { $any: true } } } }

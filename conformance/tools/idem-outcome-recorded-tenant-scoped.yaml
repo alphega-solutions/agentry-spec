@@ -60,8 +60,8 @@ expect:
   ports:
     idempotencyStore:
       t1:
-        $k1: { outcome: { ok: { output: { updated: true, by: "t1-call" } } } }
+        $k1: { state: completed, outcome: { ok: { output: { updated: true, by: "t1-call" } } } }
         $k2: { $absent: true }
       t2:
-        $k2: { outcome: { ok: { output: { updated: true, by: "t2-call" } } } }
+        $k2: { state: completed, outcome: { ok: { output: { updated: true, by: "t2-call" } } } }
         $k1: { $absent: true }

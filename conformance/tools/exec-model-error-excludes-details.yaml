@@ -71,9 +71,11 @@ expect:
                             message: "The key is not known."
                             details: { $absent: true }
                             extensions: { $absent: true }
-            - $not:
-                $contains:
-                  - role: tool
-                    parts:
-                      $contains:
-                        - { result: { error: { message: { $regex: "SYN-DETAIL|SYN-SHARD" } } } }
+            - $count:
+                of:
+                  role: tool
+                  parts:
+                    $count:
+                      of: { result: { error: { message: { $regex: "SYN-DETAIL|SYN-SHARD" } } } }
+                      gte: 1
+                equals: 0

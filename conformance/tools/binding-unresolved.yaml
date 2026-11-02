@@ -14,11 +14,8 @@ description: >-
   resolve. The final load adds one tool of each mandatory kind with a
   resolvable binding and succeeds.
 
-  Assumed runner conventions (not yet fixed by the fixture format): native
-  handlers named in the base configuration (`test.*`) are registered, and
-  `unregistered.handler` is not; an MCP server stub lists the tools it
-  advertises under `tools`, keyed by tool name, each with its `input`
-  schema.
+  `setup.handlers` registers the base configuration's handlers;
+  `unregistered.handler` is never registered.
 requirements: [TOOL-010]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -73,7 +70,7 @@ setup:
       notes-mcp:
         tools:
           get_note:
-            input:
+            inputSchema:
               type: object
               required: [key]
               properties: { key: { type: string } }

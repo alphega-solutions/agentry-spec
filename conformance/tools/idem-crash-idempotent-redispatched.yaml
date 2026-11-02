@@ -4,8 +4,7 @@ title: A crash after dispatching an idempotent mutating call leads to re-dispatc
 description: >-
   set_flag is mutating and idempotent. The implementation is crashed at
   `after_dispatch` during the second run: the stub has received the call,
-  but no outcome has been recorded. After a restart and a clock advance past
-  any run lease, run() on the session performs recovery first (HITL-092):
+  but no outcome has been recorded. After a restart and a clock advance past the run lease (`limits.leaseTtl`, default PT5M), run() on the session performs recovery first (HITL-092):
   the call is re-dispatched with the same idempotency key (TOOL-041, stable
   across resumes), its outcome reaches the model, and the orphaned run
   continues to `responded`. No escalation is raised. The new run() then

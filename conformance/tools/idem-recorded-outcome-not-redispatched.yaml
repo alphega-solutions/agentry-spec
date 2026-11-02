@@ -86,7 +86,7 @@ script:
     session: $s
     reviewer: r1
     decisions:
-      - { decisionId: "01900000-0000-7000-8000-000000000001", escalationId: $esc, actionId: $act, type: approve }
+      - { decisionId: "01900000-0000-7000-8000-000000000001", pendingActionId: $act, type: approve }
     expect: { ok: true, endReason: responded }
 expect:
   sessions:

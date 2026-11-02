@@ -45,14 +45,13 @@ setup:
     mcpServers:
       crm:
         tools:
-          - name: get_contact
+          get_contact:
             inputSchema:
               type: object
               additionalProperties: false
               required: [contact_ref]
               properties: { contact_ref: { type: integer } }
-        calls:
-          get_contact: []
+            behaviours: []
 script:
   - load:
       artifacts:

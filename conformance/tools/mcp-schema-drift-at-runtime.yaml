@@ -3,7 +3,7 @@ id: tool.mcp-schema-drift-at-runtime
 title: If an MCP server's advertised schema changes while sessions run, calls to the affected tool fail with `agentry.tool.schema_drift`
 description: >-
   `get_contact` loads with a compatible advertised schema, and its first
-  call (c1) is dispatched and succeeds. Once c1's tool.result is persisted,
+  call (c1) is dispatched and succeeds. Once the server has received c1,
   the stub server re-advertises `get_contact` with a new required property
   `region` (`changes` in the MCP stub), so the artifact's `input` is no
   longer compatible. The next call (c2) is not sent to the server; it fails
@@ -81,21 +81,21 @@ setup:
     mcpServers:
       crm:
         tools:
-          - name: get_contact
+          get_contact:
             inputSchema: { type: object, additionalProperties: false, required: [contactId], properties: { contactId: { type: string } } }
+            behaviours:
+              - ok: { output: { name: "Synthetic Contact One" } }
+              - ok: { output: { name: "Synthetic Contact Two" } }
         changes:
-          - after: { type: tool.result, payload: { callId: c1 } }
+          # once c1 has been received
+          - afterCalls: 1
             tools:
-              - name: get_contact
+              get_contact:
                 inputSchema:
                   type: object
                   additionalProperties: false
                   required: [contactId, region]
                   properties: { contactId: { type: string }, region: { type: string } }
-        calls:
-          get_contact:
-            - ok: { output: { name: "Synthetic Contact One" } }
-            - ok: { output: { name: "Synthetic Contact Two" } }
     tools:
       lookup: []
       update_record: []
@@ -125,5 +125,5 @@ expect:
       absentEvents:
         - { type: model.request, step: 3 }
   stubCalls:
-    get_contact:
+    crm/get_contact:
       - { arguments: { contactId: ct-1 } }

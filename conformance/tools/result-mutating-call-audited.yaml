@@ -52,15 +52,23 @@ expect:
     auditLog:
       t1:
         $contains:
-          - sessionId: $s
+          - tenant: t1
+            sessionId: $s
             snapshotHash: $h
             principalRef: { subject: user-1, tenant: t1 }
-            callId: c2
-            tool: update_record
-            outcome: { ok: { output: { updated: true } } }
-          - sessionId: $s
+            type: tool_call
+            details:
+              callId: c2
+              tool: update_record
+              arguments: { key: k1, value: v1 }
+              outcome: { ok: { output: { updated: true } } }
+          - tenant: t1
+            sessionId: $s
             snapshotHash: $h
             principalRef: { subject: user-1, tenant: t1 }
-            callId: c3
-            tool: update_record
-            outcome: { error: { category: invalid_input, code: test.update.unknown_key } }
+            type: tool_call
+            details:
+              callId: c3
+              tool: update_record
+              arguments: { key: k9, value: v9 }
+              outcome: { error: { category: invalid_input, code: test.update.unknown_key } }

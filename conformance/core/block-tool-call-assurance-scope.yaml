@@ -82,7 +82,7 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: policy.decision, payload: { kind: scope, outcome: block, callId: c2 } }
+          - { type: policy.decision, payload: { kind: scope, outcome: block, callId: c2, reason: out_of_scope } }
           - { type: tool.result, payload: { callId: c2, result: { error: { category: policy } } } }
           - { type: model.request, step: 2 }
           - { type: run.ended, payload: { reason: responded } }

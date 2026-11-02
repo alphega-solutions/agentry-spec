@@ -102,23 +102,22 @@ setup:
     mcpServers:
       crm:
         tools:
-          - name: get_contact
+          get_contact:
             inputSchema: { type: object, additionalProperties: false, required: [contactId], properties: { contactId: { type: string } } }
             annotations: { readOnlyHint: true, idempotentHint: true, destructiveHint: false, openWorldHint: false }
-          - name: archive_contact
+            behaviours:
+              - ok: { output: { name: "Synthetic Contact" } }
+          archive_contact:
             inputSchema: { type: object, additionalProperties: false, required: [contactId], properties: { contactId: { type: string } } }
             annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true }
-          - name: sync_contact
+            behaviours:
+              - ok: { output: { name: "Archived Contact" } }
+          sync_contact:
             inputSchema: { type: object, additionalProperties: false, required: [contactId], properties: { contactId: { type: string } } }
             annotations: { readOnlyHint: true, idempotentHint: true }
-        calls:
-          get_contact:
-            - ok: { output: { name: "Synthetic Contact" } }
-          archive_contact:
-            - ok: { output: { name: "Archived Contact" } }
-          sync_contact:
-            - error: { category: unavailable, code: test.crm.busy, retryable: true, message: "CRM busy." }
-            - ok: { output: { synced: true } }
+            behaviours:
+              - error: { category: unavailable, code: test.crm.busy, retryable: true, message: "CRM busy." }
+              - ok: { output: { synced: true } }
 script:
   - action: run
     bind: $s1
@@ -173,6 +172,6 @@ expect:
           - { type: tool.result, payload: { callId: c1, tool: sync_contact, result: { error: { $any: true } } } }
           - { type: run.ended, payload: { reason: failed } }
   stubCalls:
-    get_contact: { count: 0 }
-    archive_contact: { count: 1 }
-    sync_contact: { count: 1 }
+    crm/get_contact: { count: 0 }
+    crm/archive_contact: { count: 1 }
+    crm/sync_contact: { count: 1 }

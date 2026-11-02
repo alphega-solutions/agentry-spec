@@ -525,6 +525,152 @@ def check_inline_config(doc: dict, schemas: dict, reg) -> list[str]:
     return problems
 
 
+def _base_artifacts(base: str) -> dict | None:
+    d = ROOT / "conformance" / "shared" / base
+    if not d.is_dir():
+        return None
+    arts = {}
+    for p in sorted(d.glob("*.yaml")):
+        doc = load_yaml(p)
+        if isinstance(doc, dict) and "kind" in doc:
+            arts[(doc.get("kind"), doc.get("id"), doc.get("version"))] = doc
+    return arts
+
+
+def _apply(arts: dict, add, remove) -> dict:
+    out = dict(arts)
+    for a in add or []:
+        if isinstance(a, dict):
+            out[(a.get("kind"), a.get("id"), a.get("version"))] = a
+    for ref in remove or []:
+        rid, _, ver = str(ref).partition("@")
+        for k in [k for k in out if k[1] == rid and str(k[2]) == ver]:
+            del out[k]
+    return out
+
+
+def _native(arts: dict) -> list[tuple[str, str]]:
+    found = []
+    for a in arts.values():
+        b = a.get("binding") if a.get("kind") == "Tool" else None
+        if isinstance(b, dict) and b.get("kind") == "native" and isinstance(b.get("handler"), str):
+            found.append((str(a.get("id")), b["handler"]))
+    return sorted(found)
+
+
+def check_handlers(doc: dict) -> list[str]:
+    """Native bindings resolve to registered handlers (TOOL-010, fixture `setup.handlers`).
+
+    By default every native handler is registered except names beginning
+    `unregistered.`; `setup.handlers`, when given, restricts registration to
+    exactly those names. A handler that is not registered may appear only in a
+    load expected to fail, which is how fixtures test an unresolved binding.
+    """
+    setup = doc.get("setup") or {}
+    cfg = setup.get("config") or {}
+    arts = _base_artifacts(cfg.get("base", "")) if cfg.get("base") else None
+    if arts is None:
+        return []
+    arts = _apply(arts, cfg.get("artifacts"), cfg.get("remove"))
+    configs = [("setup.config", arts, True)]
+    current = arts
+    for i, step in enumerate(doc.get("script", []) or []):
+        if "load" not in step:
+            continue
+        load = step["load"] or {}
+        nxt = _apply(current, load.get("artifacts"), load.get("remove"))
+        ok = (step.get("expect") or {}).get("ok")
+        configs.append((f"script[{i}].load", nxt, ok is not False))
+        if ok is True:
+            current = nxt
+    explicit = set(setup["handlers"]) if "handlers" in setup else None
+
+    def registered(h: str) -> bool:
+        if h.startswith("unregistered."):
+            return False
+        return explicit is None or h in explicit
+
+    problems = []
+    for where, a, must in configs:
+        for tid, h in _native(a):
+            if must and not registered(h):
+                problems.append(f"{where}: native handler {h} of tool {tid} is not registered "
+                                f"(setup.handlers, TOOL-010)")
+    return sorted(set(problems))
+
+
+def check_matchers(doc: dict) -> list[str]:
+    """`$count` is well formed; `$not` never wraps `$contains` (use `$count`)."""
+    problems: list[str] = []
+
+    def walk(v, path: str) -> None:
+        if isinstance(v, dict):
+            if "$count" in v:
+                c = v["$count"]
+                bounds = [k for k in ("equals", "gte", "lte") if isinstance(c, dict) and k in c]
+                if (not isinstance(c, dict) or "of" not in c or len(bounds) != 1
+                        or set(c) - {"of", "equals", "gte", "lte"}
+                        or not (isinstance(c[bounds[0]], int) and c[bounds[0]] >= 0)):
+                    problems.append(f"{path}: $count must be {{of: m, equals|gte|lte: n}} with exactly one bound")
+            if "$not" in v and isinstance(v["$not"], dict) and "$contains" in v["$not"]:
+                problems.append(f"{path}: $not around $contains; use $count")
+            for k, x in v.items():
+                walk(x, f"{path}/{k}")
+        elif isinstance(v, list):
+            for i, x in enumerate(v):
+                walk(x, f"{path}/{i}")
+
+    walk(doc.get("expect"), "expect")
+    for i, step in enumerate(doc.get("script", []) or []):
+        walk(step.get("expect"), f"script[{i}].expect")
+    return problems
+
+
+def check_stub_call_keys(doc: dict) -> list[str]:
+    """`expect.stubCalls` keys name a stub: a native tool ID, `<server>/<tool>`,
+    `<endpoint>/<operation>`, or a remote hook ID."""
+    calls = (doc.get("expect") or {}).get("stubCalls") or {}
+    if not calls:
+        return []
+    setup = doc.get("setup") or {}
+    stubs = setup.get("stubs") or {}
+    valid = set(stubs.get("tools") or {}) | set(stubs.get("remoteHooks") or {})
+    for srv, server in (stubs.get("mcpServers") or {}).items():
+        names = set((server or {}).get("tools") or {})
+        for change in (server or {}).get("changes") or []:
+            names |= set(change.get("tools") or {})
+        valid |= {f"{srv}/{t}" for t in names}
+    for ep, ops in (stubs.get("httpEndpoints") or {}).items():
+        valid |= {f"{ep}/{op}" for op in (ops or {})}
+    cfg = setup.get("config") or {}
+    arts = _base_artifacts(cfg.get("base", "")) if cfg.get("base") else {}
+    arts = _apply(arts or {}, cfg.get("artifacts"), cfg.get("remove"))
+    for step in doc.get("script", []) or []:
+        if "load" in step:
+            arts = _apply(arts, (step["load"] or {}).get("artifacts"), (step["load"] or {}).get("remove"))
+    explicit = set(setup["handlers"]) if "handlers" in setup else None
+    valid |= {tid for tid, h in _native(arts)
+              if not h.startswith("unregistered.") and (explicit is None or h in explicit)}
+    return [f"expect.stubCalls: {k} names no stub (tool ID, <server>/<tool>, <endpoint>/<operation> or remote hook ID)"
+            for k in calls if k not in valid]
+
+
+def check_crashes(doc: dict) -> list[str]:
+    """A crash step arms a crash for a later action step on its session."""
+    problems: list[str] = []
+    script = doc.get("script", []) or []
+    for i, step in enumerate(script):
+        if "crash" not in step:
+            continue
+        target = (step["crash"] or {}).get("session")
+        for later in script[i + 1:]:
+            if "action" in later and (target is None or target in (later.get("session"), later.get("bind"))):
+                break
+        else:
+            problems.append(f"script[{i}]: crash has no later action step on {target or 'any session'}")
+    return problems
+
+
 def main() -> int:
     errors: list[str] = []
     schemas = load_schemas()
@@ -576,6 +722,10 @@ def main() -> int:
         if target == FIXTURE_ID:
             errors += [f"{fx.relative_to(ROOT)}: {e}" for e in check_placeholders(doc)]
             errors += [f"{fx.relative_to(ROOT)}: {e}" for e in check_inline_config(doc, schemas, reg)]
+            errors += [f"{fx.relative_to(ROOT)}: {e}" for e in check_handlers(doc)]
+            errors += [f"{fx.relative_to(ROOT)}: {e}" for e in check_matchers(doc)]
+            errors += [f"{fx.relative_to(ROOT)}: {e}" for e in check_crashes(doc)]
+            errors += [f"{fx.relative_to(ROOT)}: {e}" for e in check_stub_call_keys(doc)]
 
     # 4. Shared configuration artifacts validate against their kind's schema.
     errors += check_shared_config(schemas, reg)

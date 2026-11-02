@@ -211,3 +211,8 @@ agentry sessions are designed to run as steps inside a host's workflow engine (A
 - HITL-100: decisions are accepted, and escalations listed, at the root only (ORCH-063).
 - HITL-081: a chain uses its earliest `suspendedTtl` and strictest `onExpiry` (ORCH-065).
 - HITL-091: recovery handles in-flight children first, deepest first (ORCH-071).
+
+## Amendment 2026-11-01 — from Phase 4 (Area 4 fixtures)
+
+- **HITL-091** gains a first case, checked before the others: if every in-flight call of the orphaned run already has an outcome recorded in the idempotency store, the recorded outcomes are appended as the calls' `tool.result` events and the run **MUST** continue (TOOL-061). This applies whatever the tool's idempotency, since nothing is re-dispatched. Previously such a run fell through to "end the run `failed`", discarding a completed action.
+

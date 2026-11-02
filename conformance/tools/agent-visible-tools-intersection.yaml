@@ -128,11 +128,11 @@ expect:
     update_record: { count: 0 }
   providerRequests:
     scripted-a:
-      - tools: { $all: [{ $len: 2 }, { $contains: [{ id: lookup }, { id: ask_helper }] }] }
-      - tools: [{ id: lookup }]
-      - tools: [{ id: lookup }]
-      - tools: { $all: [{ $len: 2 }, { $contains: [{ id: lookup }, { id: ask_helper }] }] }
-      - tools: [{ id: ask_helper }]
-      - tools: { $not: { $contains: [{ id: lookup }] } }
-      - tools: { $not: { $contains: [{ id: lookup }] } }
-      - tools: [{ id: ask_helper }]
+      - tools: { $all: [{ $len: 2 }, { $contains: [{ name: lookup }, { name: ask_helper }] }] }
+      - tools: [{ name: lookup }]
+      - tools: [{ name: lookup }]
+      - tools: { $all: [{ $len: 2 }, { $contains: [{ name: lookup }, { name: ask_helper }] }] }
+      - tools: [{ name: ask_helper }]
+      - tools: { $count: { of: { name: lookup }, equals: 0 } }
+      - tools: { $count: { of: { name: lookup }, equals: 0 } }
+      - tools: [{ name: ask_helper }]

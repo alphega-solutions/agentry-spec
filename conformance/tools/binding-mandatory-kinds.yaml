@@ -9,12 +9,6 @@ description: >-
   `helper` persona, whose single scripted response becomes the agent tool's
   result. The fixture declares no feature, so every implementation must pass
   it; `langchain` is optional and not exercised.
-
-  Assumed runner conventions (not yet fixed by the fixture format): an MCP
-  server stub lists advertised tools under `tools`, each with `input` and a
-  `behaviours` list consumed in order; an HTTP endpoint stub is keyed by the
-  deployment's endpoint ID and holds a list of behaviours; stub calls are
-  recorded under the server or endpoint ID.
 requirements: [TOOL-013]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -139,7 +133,7 @@ setup:
       notes-mcp:
         tools:
           get_note:
-            input:
+            inputSchema:
               type: object
               required: [key]
               properties: { key: { type: string } }
@@ -147,7 +141,8 @@ setup:
               - ok: { output: { note: "mcp value" } }
     httpEndpoints:
       records-api:
-        - ok: { output: { record: "http value" } }
+        getRecord:
+          - ok: { output: { record: "http value" } }
 script:
   - action: run
     bind: $s
@@ -176,7 +171,7 @@ expect:
         - { type: tool.result, payload: { result: { error: { $any: true } } } }
   stubCalls:
     lookup: { count: 1 }
-    notes-mcp: { count: 1 }
-    records-api: { count: 1 }
+    notes-mcp/get_note: { count: 1 }
+    records-api/getRecord: { count: 1 }
   providerRequests:
     scripted-a: { count: 6 }

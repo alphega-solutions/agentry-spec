@@ -1,0 +1,172 @@
+schemaVersion: "0.1.0"
+id: tool.idem-crash-after-outcome-recorded
+title: A call whose outcome was recorded before a crash is not dispatched or governed again; its recorded outcome is returned
+description: >-
+  set_flag is mutating and NOT idempotent, and a remote beforeToolCall hook
+  `pre` (which continues) is required for it. The implementation is crashed
+  at `after_outcome_recorded` during the second run: the call has been
+  governed and dispatched, and its outcome is in the idempotency store, but
+  its tool.result has not been appended. After a restart and a clock advance
+  past the run lease, run() on the session performs recovery first
+  (HITL-092), which processes the interrupted call again (HITL-091). Stage 3
+  finds the recorded outcome (TOOL-061), so stages 4–9 are skipped: the stub
+  is not called again (it holds a second behaviour a re-dispatch would
+  consume), the hook is not called again, and no second tool.call is
+  emitted. The recorded outcome becomes the call's only tool.result and
+  reaches the model; the orphaned run continues to `responded`, with no
+  escalation even though the tool is not idempotent (HITL-091 as amended:
+  nothing is re-dispatched), and the new run() then responds.
+requirements: [TOOL-061, TOOL-030, HITL-091]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        remoteHooks:
+          - { id: pre, endpoint: "memory://hook-pre", region: test-region }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: Hook
+        id: pre
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [block]
+        timeoutMs: 1000
+        match: "tool.id == 'set_flag'"
+        source: { kind: remote, endpoint: pre }
+      - kind: Tool
+        id: set_flag
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Set a flag on a record. Safe to repeat.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, flag]
+          properties: { key: { type: string }, flag: { type: boolean } }
+        effect: mutating
+        idempotent: false
+        binding: { kind: native, handler: test.set_flag }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1, set_flag@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [pre@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: set_flag, arguments: { key: k1, flag: true } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Flag set." }]
+          usage: { inputTokens: 40, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "You're welcome." }]
+          usage: { inputTokens: 50, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      set_flag:
+        - ok: { output: { set: true, attempt: "first" } }
+        - ok: { output: { set: true, attempt: "second" } }
+    remoteHooks:
+      pre:
+        - { result: continue }
+        - { result: continue }
+  limits:
+    leaseTtl: PT5M
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - crash: { at: after_outcome_recorded, session: $s }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Flag k1" }]
+  - restart: {}
+  - clock: { advance: PT1H }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Thanks" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, turn: 2, payload: { callId: c1, tool: set_flag } }
+          - { type: tool.result, turn: 2, payload: { callId: c1, tool: set_flag, result: { ok: { output: { set: true, attempt: "first" } } } } }
+          - { type: model.request, turn: 2, step: 2 }
+          - { type: turn.completed, turn: 2 }
+          - { type: turn.started, turn: 3 }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: escalation.raised }
+        - { type: tool.result, payload: { result: { ok: { output: { attempt: "second" } } } } }
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $all:
+            - $count: { of: { type: tool.call, payload: { callId: c1 } }, equals: 1 }
+            - $count: { of: { type: tool.result, payload: { callId: c1 } }, equals: 1 }
+    idempotencyStore:
+      t1:
+        $k: { state: completed, outcome: { ok: { output: { set: true, attempt: "first" } } } }
+  stubCalls:
+    set_flag:
+      - { arguments: { key: k1, flag: true }, context: { sessionId: $s, idempotencyKey: $k } }
+    pre: { count: 1 }
+  providerRequests:
+    scripted-a:
+      - {}
+      - {}
+      - messages:
+          $contains:
+            - role: tool
+              parts:
+                $contains:
+                  - { type: tool_result, callId: c1, result: { ok: { output: { set: true, attempt: "first" } } } }
+      - {}

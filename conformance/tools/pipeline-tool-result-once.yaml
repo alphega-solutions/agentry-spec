@@ -12,12 +12,8 @@ description: >-
   c1 and c2 each have one `tool.call` followed by one `tool.result`. c3 and
   c4 have no `tool.call` and one `tool.result` each, produced by the
   harness. c5 has no `tool.call`, no result while it awaits the decision,
-  and one `tool.result` after the rejection.
-
-  "Exactly one" is asserted on the event log as "the log does not contain
-  two `tool.result` events for the call", which assumes `$contains` matches
-  each listed item against a distinct element; the fixture format has no
-  count-of-matches matcher.
+  and one `tool.result` after the rejection. "Exactly one" is asserted on
+  the event log with `$count`.
 requirements: [TOOL-034]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -65,7 +61,7 @@ script:
     session: $s
     reviewer: r1
     decisions:
-      - { decisionId: "01900000-0000-7000-8000-000000000001", escalationId: $esc, actionId: $act, type: reject }
+      - { decisionId: "01900000-0000-7000-8000-000000000001", pendingActionId: $act, type: reject }
     expect: { ok: true, endReason: responded }
 expect:
   sessions:
@@ -93,13 +89,13 @@ expect:
                 - { type: tool.result, step: 1, payload: { callId: c2, result: { error: { category: not_found } } } }
                 - { type: tool.result, step: 1, payload: { callId: c3, result: { error: { category: policy, code: agentry.tool.unavailable } } } }
                 - { type: tool.result, step: 1, payload: { callId: c4, result: { error: { category: invalid_input, code: agentry.tool.invalid_arguments } } } }
-            - $not: { $contains: [{ type: tool.call, payload: { callId: c1 } }, { type: tool.call, payload: { callId: c1 } }] }
-            - $not: { $contains: [{ type: tool.call, payload: { callId: c2 } }, { type: tool.call, payload: { callId: c2 } }] }
-            - $not: { $contains: [{ type: tool.result, payload: { callId: c1 } }, { type: tool.result, payload: { callId: c1 } }] }
-            - $not: { $contains: [{ type: tool.result, payload: { callId: c2 } }, { type: tool.result, payload: { callId: c2 } }] }
-            - $not: { $contains: [{ type: tool.result, payload: { callId: c3 } }, { type: tool.result, payload: { callId: c3 } }] }
-            - $not: { $contains: [{ type: tool.result, payload: { callId: c4 } }, { type: tool.result, payload: { callId: c4 } }] }
-            - $not: { $contains: [{ type: tool.result, payload: { callId: c5 } }, { type: tool.result, payload: { callId: c5 } }] }
+            - $count: { of: { type: tool.call, payload: { callId: c1 } }, equals: 1 }
+            - $count: { of: { type: tool.call, payload: { callId: c2 } }, equals: 1 }
+            - $count: { of: { type: tool.result, payload: { callId: c1 } }, equals: 1 }
+            - $count: { of: { type: tool.result, payload: { callId: c2 } }, equals: 1 }
+            - $count: { of: { type: tool.result, payload: { callId: c3 } }, equals: 1 }
+            - $count: { of: { type: tool.result, payload: { callId: c4 } }, equals: 1 }
+            - $count: { of: { type: tool.result, payload: { callId: c5 } }, equals: 1 }
   stubCalls:
     lookup: { count: 2 }
     update_record: { count: 0 }

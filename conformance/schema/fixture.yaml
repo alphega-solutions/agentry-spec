@@ -6,16 +6,22 @@ description: >-
   followed by an identifier are placeholders that bind on first match and must
   match consistently afterwards (EVAL-002). Write "$$" for a literal "$".
   Matcher objects may appear anywhere in expectations: {"$any": true},
-  {"$absent": true}, {"$regex": "..."}, {"$len": n}, {"$contains": [...]},
-  {"$not": <value or matcher>}, {"$every": <matcher applied to each array
-  element>}, {"$gte": n}, {"$lte": n}, {"$all": [<matchers that must all
-  hold>]}. Placeholders may be bound in `expect`
+  {"$absent": true}, {"$regex": "..."}, {"$len": n}, {"$contains": [...]}
+  (each listed item matches a distinct element), {"$not": <value or
+  matcher>}, {"$every": <matcher applied to each array element>}, {"$gte":
+  n}, {"$lte": n}, {"$all": [<matchers that must all hold>]}, and
+  {"$count": {"of": <matcher>, "equals"|"gte"|"lte": n}}, applied to an
+  array: the number of elements matching `of` (exactly one of `equals`,
+  `gte`, `lte`). Write "none matches" and "exactly one matches" with
+  `$count`, never as `$not` around `$contains`. Matcher names are reserved
+  and are never placeholders. Placeholders may be bound in `expect`
   or by a step's `capture`; a placeholder used in a step must be bound by an
   earlier step's capture. Arrays in expectations match exactly — same
   length, same order — unless wrapped in {"$contains": [...]}; objects match
   partially. `delayMs` and timeouts are measured on the virtual clock.
   Scripted provider `capabilities` are merged over defaults in which every
-  boolean capability is true and limits are 1,000,000 tokens.
+  boolean capability is true and limits are 1,000,000 tokens. Record shapes
+  (stub calls, provider requests, port records) are defined under `expect`.
 type: object
 additionalProperties: false
 required: [schemaVersion, id, title, requirements, contract, setup, script, expect]
@@ -108,18 +114,56 @@ $defs:
             responses:
               type: array
               items: { $ref: "#/$defs/scriptedResponse" }
+      handlers:
+        description: >-
+          Native handlers (TOOL-010). By default the runner registers a stub
+          handler for every `native` binding in every configuration the
+          fixture loads, except names beginning `unregistered.`, which are
+          never registered; a binding naming one is unresolved, a
+          configuration error at load. Set this only to restrict
+          registration to exactly the listed names. A registered native tool
+          with no `stubs.tools` entry records its calls and returns `ok` with
+          an empty output object.
+        type: array
+        uniqueItems: true
+        items: { type: string, pattern: "^(?!unregistered\\.)[A-Za-z0-9_.-]{1,128}$" }
       stubs:
-        description: Scripted stand-ins (EVAL-032).
+        description: >-
+          Scripted stand-ins (EVAL-032). Behaviours are consumed in order,
+          one per call (a retry is a call). Calls are recorded under
+          `expect.stubCalls`.
         type: object
         additionalProperties: false
         properties:
           tools:
+            description: >-
+              Native tool stubs, keyed by tool ID: the behaviours of the tool's
+              registered handler (`handlers`). A registered handler whose tool
+              has no entry has no behaviours, as with an empty list.
             type: object
             additionalProperties:
               type: array
               items: { $ref: "#/$defs/toolBehaviour" }
-          mcpServers: { type: object }
-          httpEndpoints: { type: object }
+          mcpServers:
+            description: >-
+              MCP server stubs, keyed by the server ID declared in the
+              deployment (TOOL-093). A stub that the deployment does not
+              declare is never reachable.
+            type: object
+            additionalProperties: { $ref: "#/$defs/mcpServerStub" }
+          httpEndpoints:
+            description: >-
+              HTTP endpoint stubs, keyed by the endpoint ID declared in the
+              deployment, then by operation ID: the behaviours of that
+              operation (TOOL-010 as amended 2026-11-01).
+            type: object
+            propertyNames: { pattern: "^[A-Za-z0-9_.-]{1,128}$" }
+            additionalProperties:
+              type: object
+              propertyNames: { pattern: "^[A-Za-z0-9_.-]{1,128}$" }
+              additionalProperties:
+                type: array
+                items: { $ref: "#/$defs/toolBehaviour" }
           remoteHooks:
             description: Scripted remote hook results, keyed by the remote hook ID declared in the deployment, consumed in order (HOOK-091).
             type: object
@@ -127,7 +171,9 @@ $defs:
               type: array
               items: { $ref: "#/$defs/hookBehaviour" }
       ports:
-        description: Initial contents of in-memory ports, keyed by port name.
+        description: >-
+          Initial contents of in-memory ports, keyed by port name, then
+          tenant, using the record shapes given under `expect.ports`.
         type: object
       secrets:
         description: Synthetic secret values served by the in-memory secrets provider, keyed by secret reference.
@@ -142,6 +188,14 @@ $defs:
             description: Payloads larger than this are stored in the BlobStore and referenced (CORE-154, TOOL-072).
             type: integer
             minimum: 1
+          leaseTtl:
+            description: >-
+              Length of the run lease the runner configures (HITL-090), as an
+              ISO 8601 duration. Default PT5M. A run whose lease is not renewed
+              within this time on the virtual clock is orphaned.
+            type: string
+            pattern: "^P(?!$)(\\d+D)?(T(?=\\d)(\\d+H)?(\\d+M)?(\\d+(\\.\\d+)?S)?)?$"
+            default: PT5M
 
   scriptedResponse:
     type: object
@@ -170,6 +224,49 @@ $defs:
       - required: [parts]
       - required: [error]
 
+  mcpServerStub:
+    description: >-
+      An MCP server stub. `tools` are the tools the server advertises, keyed
+      by the tool's name on the server, each with its advertised input schema
+      and annotations, and the behaviours of calls to it. `changes`
+      re-advertise tools while sessions run (TOOL-092): once the server has
+      received `afterCalls` calls in all (to any of its tools, completed or
+      not), each tool named in the change replaces the advertised definition
+      of that name (a tool not yet advertised is added); behaviours not
+      restated continue where they were. Changes apply in listed order.
+    type: object
+    additionalProperties: false
+    required: [tools]
+    properties:
+      tools:
+        type: object
+        additionalProperties: { $ref: "#/$defs/mcpToolStub" }
+      changes:
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [afterCalls, tools]
+          properties:
+            afterCalls: { type: integer, minimum: 0 }
+            tools:
+              type: object
+              additionalProperties: { $ref: "#/$defs/mcpToolStub" }
+
+  mcpToolStub:
+    type: object
+    additionalProperties: false
+    required: [inputSchema]
+    properties:
+      description: { type: string }
+      inputSchema: { description: The advertised input schema., type: object }
+      annotations:
+        description: Advertised MCP tool annotations (read-only, destructive, idempotent, open-world hints).
+        type: object
+      behaviours:
+        type: array
+        items: { $ref: "#/$defs/toolBehaviour" }
+
   toolBehaviour:
     type: object
     additionalProperties: false
@@ -185,6 +282,16 @@ $defs:
           message: { type: string }
       delayMs: { type: integer, minimum: 0 }
       hang: { type: boolean, description: Never completes unless cancelled. }
+      ignoreCancel:
+        description: >-
+          When false (the default), a delayed or hanging stub honours the
+          cancellation signal: it stops at once without producing its
+          scripted result, and its call record has `cancelled: true` and
+          `completed: false`. When true,
+          the stub records `cancelled: true` but carries on, completing after
+          `delayMs` (never, if `hang`).
+        type: boolean
+        default: false
 
   hookBehaviour:
     type: object
@@ -265,14 +372,51 @@ $defs:
         description: "Run-request values (CFG-101), using harness profile field paths, e.g. {budget: {tokens: 500}}."
         type: object
       reviewer: { type: string, description: Principal ID of the reviewer for decide/resume. }
-      decisions: { type: array, items: { type: object } }
+      decisions:
+        description: Decisions submitted with `decide` or `resume` (HITL-040), on the session's open escalation.
+        type: array
+        items: { $ref: "#/$defs/decision" }
       capture:
         type: array
         items: { $ref: "#/$defs/capture" }
       startAfter:
         description: Inside `concurrently` only — start this action once an event matching this pattern has been persisted.
         type: object
-      expect: { $ref: "#/$defs/stepOutcome" }
+      expect:
+        description: Not checked, and may be omitted, when an earlier `crash` step armed a crash for this action.
+        $ref: "#/$defs/stepOutcome"
+
+  decision:
+    description: >-
+      A decision (HITL-041). The escalation is the one holding the pending
+      action; the reviewer is the step's `reviewer`; the timestamp is the
+      virtual clock. `replacement` (for `edit`) holds the replacement
+      arguments of a `tool_call` action, or the replacement parts of a
+      `content` action. `outcome` (for `confirm`) is the stated outcome of a
+      `recovery` action, with `output` the stated `ok` output when it
+      succeeded.
+    type: object
+    additionalProperties: false
+    required: [decisionId, pendingActionId, type]
+    properties:
+      decisionId: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+      pendingActionId:
+        description: A pending action ID, usually a placeholder captured from `escalation.raised`.
+        type: string
+        minLength: 1
+      type: { enum: [approve, reject, edit, confirm] }
+      replacement: {}
+      outcome: { enum: [succeeded, failed] }
+      output: {}
+    allOf:
+      - if: { properties: { type: { const: edit } } }
+        then: { required: [replacement] }
+      - if: { properties: { type: { const: confirm } } }
+        then: { required: [outcome] }
+      - if: { properties: { type: { not: { const: confirm } } } }
+        then: { not: { anyOf: [{ required: [outcome] }, { required: [output] }] } }
+      - if: { properties: { type: { not: { const: edit } } } }
+        then: { not: { required: [replacement] } }
 
   loadStep:
     description: >-
@@ -341,6 +485,24 @@ $defs:
             $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/timestamp"
 
   crashStep:
+    description: >-
+      Arms a crash for the next action step on `session` (or, without
+      `session`, the next action step). That action runs until the
+      implementation first reaches the named point, where the
+      implementation stops abruptly: in-process state is lost, port
+      contents written so far are kept, the lease is not renewed, and the
+      host receives no outcome. The action's own `expect` is not checked and
+      may be omitted. If the action completes without reaching the point,
+      the fixture fails. A `restart` step restarts the implementation
+      against the same ports. Crash points (EVAL-035):
+      `after_started_record` — the call's started record is in the
+      idempotency store; the call is not dispatched.
+      `after_dispatch` — the stub has received the call; no outcome is
+      recorded.
+      `after_outcome_recorded` — the call's outcome is in the idempotency
+      store; its `tool.result` is not appended.
+      `after_event_append` — events are appended; the checkpoint is not
+      saved.
     type: object
     additionalProperties: false
     required: [crash]
@@ -352,7 +514,7 @@ $defs:
         properties:
           at:
             description: Named crash points (EVAL-035).
-            enum: [after_started_record, after_dispatch, after_event_append]
+            enum: [after_started_record, after_dispatch, after_outcome_recorded, after_event_append]
           session: { $ref: "#/$defs/placeholder" }
 
   restartStep:
@@ -470,10 +632,27 @@ $defs:
               items: { type: object }
             eventCount: { type: integer, minimum: 0 }
             checkpoint:
-              description: Partial match on checkpoint contents, using the field names of PORT-030.
+              description: >-
+                Partial match on checkpoint contents (PORT-030), with fields
+                `state`, `principalRef`, `tenant`, `persona`, `snapshotHash`,
+                `taint` (`{ tainted, provenances }`), `budget` (remaining
+                turn budget), `counters` (content-size counters),
+                `reasoning` (reasoning parts kept for continuation),
+                `escalation` (the open escalation, with `decisions` and
+                partial approvals), `heldResults` (results held while
+                suspended), `lease` (`{ holder, expiresAt }`),
+                `parentSessionId` and `childSessionIds`.
               type: object
       providerRequests:
-        description: Requests captured by scripted providers, matched in order (partial match).
+        description: >-
+          Requests captured by scripted providers, keyed by provider ID,
+          matched in order (partial match). Each record is `{ provider,
+          model, messages, tools, outputSchema }`: `messages` is the
+          assembled context as content messages; `tools` lists the visible
+          tool definitions as `{ name, description, input }`, where `name` is
+          the tool ID and `input` its input schema (nothing else of the
+          definition is sent); `outputSchema` is the output schema requested,
+          if any. `{count: n}` asserts only the number of requests.
         type: object
         additionalProperties:
           oneOf:
@@ -483,9 +662,20 @@ $defs:
               properties: { count: { type: integer, minimum: 0 } }
       stubCalls:
         description: >-
-          Calls recorded by stubs, keyed by tool ID, endpoint, or server. Each
-          record has `arguments`, `context` (tool context), `cancelled` (whether
-          the cancellation signal was received), and `completed`.
+          Calls recorded by stubs, in call order, keyed by: the tool ID for
+          native tools (calls to a registered handler are recorded whether
+          or not the tool has a `stubs.tools` entry); `<serverId>/<toolName>`
+          for MCP server stubs;
+          `<endpointId>/<operationId>` for HTTP endpoint stubs; the remote
+          hook ID for remote hook stubs. A tool call record is `{ arguments,
+          context: { sessionId, runId, principal, idempotencyKey, deadline,
+          traceContext }, cancelled, completed }`: `context` is the tool
+          context (TOOL-040), with `principal` the principal as the host
+          supplied it and `deadline` a UTC timestamp; `cancelled` is whether
+          the cancellation signal was received; `completed` is whether the
+          stub produced its scripted result. A remote hook call record is `{
+          arguments }`, holding the hook request. `{count: n}` asserts only
+          the number of calls.
         type: object
         additionalProperties:
           oneOf:
@@ -496,8 +686,20 @@ $defs:
       ports:
         description: >-
           Expected port contents (partial match), keyed by port name, then
-          tenant, then record key — e.g. eventLog: {t1: {$s: [events]}},
-          auditLog: {t1: [records]}, idempotencyStore: {t1: {<key>: record}}.
+          tenant. Record shapes: `eventLog: {t1: {<sessionId>: [events]}}`;
+          `idempotencyStore: {t1: {<key>: { state: started|completed,
+          outcome, childSessionId? }}}`, where `outcome` (present once
+          completed) is the tool result and `childSessionId` is held by
+          agent-bound calls (ORCH-002); `auditLog: {t1: [records]}`, each
+          record `{ timestamp, tenant, sessionId, principalRef, snapshotHash,
+          type, reviewer?, eventIds, details }` (PORT-071), with `type` one of
+          `hook_decision`, `policy_decision`, `escalation`, `decision`,
+          `tool_call` (a mutating call and its outcome, TOOL-074, whose
+          `details` are `{ callId, tool, arguments, outcome }`), `reviewer`
+          present for decisions, and `eventIds` the IDs of the events the
+          record links to; `blobStore: {t1: [{ id, hash, mediaType, size,
+          data }]}`; `checkpointStore: {t1: {<sessionId>: checkpoint}}`,
+          using the field names in `sessions.*.checkpoint`.
         type: object
       delivered:
         description: What the host received, per session.
