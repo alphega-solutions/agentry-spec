@@ -941,7 +941,7 @@ $defs:
               description: Ephemeral deltas received, in order.
             fallback: { type: boolean, description: The response was the fixed fallback message. }
       noPersistedContent:
-        description: Strings that must not appear anywhere in persisted events, checkpoints, audit records, blobs, or configuration snapshots.
+        description: Strings that must not appear anywhere in any port's stored records — events, checkpoints, idempotency records, audit records, blobs, configuration snapshots.
         type: array
         items: { type: string }
       noTelemetryContent:
