@@ -135,6 +135,18 @@ $defs:
           required: [responses]
           properties:
             capabilities: { type: object }
+            tokenCounting:
+              description: >-
+                How the scripted adapter counts context tokens (PROV-045, Area 7
+                amendment 2026-11-01), which the context manager uses for
+                compaction and overflow (CTX-050, CTX-090): a text part costs
+                one token per whitespace-separated word of its `text`; any
+                other part costs `nonTextPart` tokens; messages, roles and
+                tool definitions cost nothing. Defaults as below.
+              type: object
+              additionalProperties: false
+              properties:
+                nonTextPart: { type: integer, minimum: 0, default: 10 }
             responses:
               type: array
               items: { $ref: "#/$defs/scriptedResponse" }
@@ -207,6 +219,23 @@ $defs:
             additionalProperties:
               type: array
               items: { $ref: "#/$defs/hookBehaviour" }
+          vectorStores:
+            description: >-
+              Vector store sources, keyed by a source ID in the deployment's
+              `ports.vectorStore.sources`: behaviours consumed in order, one
+              per query (automatic retrieval or a retrieval tool call). A
+              behaviour's `results` are the records an unfiltering backend
+              returns for that query, in rank order; the implementation's
+              vector store port **MUST** filter them by tenant and access
+              before anything else sees them (PORT-080, CTX-041), and
+              apply the query's limit after filtering. Queries are recorded
+              under `expect.stubCalls.vectorStore/<sourceId>` as `{ arguments:
+              { tenant, principal, text, limit } }`.
+            type: object
+            propertyNames: { pattern: "^[A-Za-z0-9_.-]{1,128}$" }
+            additionalProperties:
+              type: array
+              items: { $ref: "#/$defs/vectorBehaviour" }
           nativeHooks:
             description: >-
               Native hook stubs, keyed by the `Hook` artifact ID whose source
@@ -351,6 +380,45 @@ $defs:
           `delayMs` (never, if `hang`).
         type: boolean
         default: false
+
+  vectorBehaviour:
+    type: object
+    additionalProperties: false
+    oneOf:
+      - required: [results]
+      - required: [error]
+    properties:
+      results:
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [id, text, tenant]
+          properties:
+            id: { type: string, minLength: 1 }
+            text: { type: string }
+            tenant: { type: string, minLength: 1 }
+            labels:
+              description: Stored labels. Absent means stored without labels (CTX-042).
+              type: array
+              items: { type: string }
+            access:
+              description: >-
+                Who in `tenant` may read the record: principal subjects and/or
+                roles; a principal matching either may read it. Absent: every
+                principal of the tenant.
+              type: object
+              additionalProperties: false
+              properties:
+                subjects: { type: array, items: { type: string } }
+                roles: { type: array, items: { type: string } }
+      error:
+        type: object
+        required: [category]
+        properties:
+          category: { type: string }
+          code: { type: string }
+      delayMs: { type: integer, minimum: 0 }
 
   hookBehaviour:
     description: >-

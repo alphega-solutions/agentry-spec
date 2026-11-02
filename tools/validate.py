@@ -725,11 +725,19 @@ def check_stub_call_keys(doc: dict) -> list[str]:
             if k not in remote_ids:
                 problems.append(f"setup.stubs.remoteHooks: {k} is not a remote hook ID declared in any "
                                 f"deployment the fixture loads (HOOK-092)")
+    if configs is not None and stubs.get("vectorStores"):
+        sources = {str(src) for _, arts, _ in configs for a in arts.values() if a.get("kind") == "Deployment"
+                   for src in (((a.get("ports") or {}).get("vectorStore") or {}).get("sources") or [])}
+        for k in stubs["vectorStores"]:
+            if k not in sources:
+                problems.append(f"setup.stubs.vectorStores: {k} is not a vector store source declared in any "
+                                f"deployment the fixture loads (CTX-020)")
     calls = (doc.get("expect") or {}).get("stubCalls") or {}
     if not calls:
         return problems
     valid = (set(stubs.get("tools") or {}) | set(stubs.get("remoteHooks") or {})
              | set(stubs.get("nativeHooks") or {}))
+    valid |= {f"vectorStore/{src}" for src in (stubs.get("vectorStores") or {})}
     for srv, server in (stubs.get("mcpServers") or {}).items():
         names = set((server or {}).get("tools") or {})
         for change in (server or {}).get("changes") or []:
@@ -747,7 +755,7 @@ def check_stub_call_keys(doc: dict) -> list[str]:
     valid |= {tid for tid, h in _native(arts, hooks=True)
               if not h.startswith("unregistered.") and (explicit is None or h in explicit)}
     return problems + [f"expect.stubCalls: {k} names no stub (tool ID, <server>/<tool>, <endpoint>/<operation> "
-                       f"remote hook ID, or native hook ID)" for k in calls if k not in valid]
+                       f"remote hook ID, native hook ID, or vectorStore/<source>)" for k in calls if k not in valid]
 
 
 def check_crashes(doc: dict) -> list[str]:

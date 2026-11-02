@@ -2,9 +2,9 @@ schemaVersion: "0.1.0"
 id: core.run-context-limit-idle
 title: Context that cannot fit after compaction ends the run `context_limit` and leaves the session `idle`
 description: >-
-  Both scripted models declare contextLimit 200 and maxOutputTokens 20, and
+  Both scripted models declare contextLimit 100 and maxOutputTokens 20, and
   the profile compacts by truncate. The first input is about 3,000
-  characters, far over the space available; the current turn's principal
+  characters (150 words; the scripted adapter counts one token per word), far over the 80 tokens available; the current turn's principal
   message cannot be dropped (CTX-060), so context cannot fit after
   compaction. No model call is made, an error event (limit,
   agentry.context.overflow) is emitted, and the run ends context_limit. The
@@ -39,12 +39,12 @@ setup:
       principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
   providers:
     scripted-a:
-      capabilities: { contextLimit: 200, maxOutputTokens: 20 }
+      capabilities: { contextLimit: 100, maxOutputTokens: 20 }
       responses:
         - parts: [{ type: text, text: "Hello." }]
           usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
     scripted-b:
-      capabilities: { contextLimit: 200, maxOutputTokens: 20 }
+      capabilities: { contextLimit: 100, maxOutputTokens: 20 }
       responses: []
 script:
   - action: run

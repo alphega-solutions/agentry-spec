@@ -177,3 +177,29 @@ This block replaces the provisional `context` field (CFG-090, CFG-092).
 
 - CTX-010: "policy-bundle `instructions`" is now the bundle field `policyInstructions` (CFG amendment).
 
+
+## Amendment 2026-11-01 — from Phase 4 (schemas and fixtures)
+
+Schemas: the `context.retrieved` and `context.compacted` payloads in `schemas/core/v1/event.yaml`; the `context` block in `schemas/config/v1/defs.yaml`; retrieval bindings in `schemas/config/v1/tool.yaml`.
+
+**Trust order** (also used by HOOK-021 and ORCH-011)
+
+- Provenances rank, most trusted first: `system`; `reviewer`; `principal`; `model`; trusted external content (`tool:` in `trustedTools`, `attachment:` in `trustedAttachmentSources`, `agent:` whose output is trusted); untrusted content (every other `tool:`, `attachment:` and `agent:`, and every `retrieval:`, HOOK-120). The **least-trusted** provenance of a set is its lowest-ranked one; ties go to the one that entered context first.
+
+**Measuring context** (CTX-050, CTX-090)
+
+- Context size is counted in tokens by the provider adapter of each candidate model (PROV-045); the context manager compacts until the context fits every candidate (PROV-044). Tool definitions are not part of the assembled context.
+
+**Units** (CTX-061, CTX-070)
+
+- An earlier **turn** unit is every message of that turn. A **step** unit of the current turn is one model response and its tool calls and results. A **summary** unit is an earlier summary. A unit is removed or summarized whole; `context.compacted` lists the units covered, in drop order.
+- A summary is one `assistant`-role message with one text part, placed after system content in the order summaries were made (CTX-010). Its part has the least-trusted provenance of the content it replaces and the union of its labels; the event's `provenances` lists every provenance it replaces, in order of first entry (CTX-081). Folding (CTX-062) summarizes earlier summaries together with the units being dropped; a folded summary is a unit of the new one.
+- The summarizer request carries no tools and only the content being summarized; its instructions are implementation-defined. Its usage is recorded on `context.compacted` and counts toward the turn budget (CTX-084).
+- CTX-085: a fallback emits `context.compacted` with `mode: truncate` and `fallback: summarizer_failed` (with an `error` event, `source: provider`) or `fallback: policy_denied` (with a `policy.decision` of kind `summarizer`, outcome `block`).
+
+**Retrieval**
+
+- CTX-031: the automatic retrieval query is the text of the principal message's text parts, after hook rewrites, joined with a newline. The port is queried with the session's tenant and principal, the source, that text, and the effective `retrieval.limit`. Each result becomes one `text` part appended to the principal message, in the order the port returned them, with provenance `retrieval:<source>` and its labels (CTX-042).
+- If the vector store fails during automatic retrieval, an `error` event is emitted (`source: port`), no `context.retrieved` is emitted, and the turn continues without retrieved content; nothing entered context, so the session is not tainted.
+- CTX-020: a retrieval tool's `input` declares a required string `query` and may declare an integer `limit` (default 5). Its `ok` output is `{results: [{id, text}]}` in the port's order; its `tool_result` part carries provenance `retrieval:<source>` and the union of the results' labels (stored labels, or the profile's `retrieval.defaultLabels` for results stored without any).
+- CTX-012: provider requests carry every part's provenance, which is what an adapter delimits by. Whether a given provider's formatting delimits untrusted content is verified per adapter, not by the core fixtures; the core fixtures check that untrusted parts reach the adapter with their provenance.

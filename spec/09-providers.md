@@ -210,3 +210,7 @@ All adapter fixtures run against every adapter, native or framework-wrapping.
 | PROV-081 | Provider safety refusal is a new block location (extends CORE-180); textual refusals are normal |
 | PROV-082 | Provider context-length errors end the run `context_limit` |
 | PROV-090 | `model.request` records which model was used and why |
+
+## Amendment 2026-11-01 — from Phase 4 (Area 7 fixtures)
+
+- **PROV-045** An adapter **MUST** count the tokens of assembled context for its model, deterministically for the same context. The context manager **MUST** use this count for compaction and overflow (CTX-050, CTX-090). The scripted adapter used by the conformance suite counts one token per word of each text part and a fixed cost per other part (`conformance/schema/fixture.yaml`).

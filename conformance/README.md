@@ -14,6 +14,7 @@ Data-only test cases every agentry implementation must pass (Area 11). An implem
 | `tools/` | Area 4 fixtures |
 | `hooks/` | Area 5 fixtures |
 | `hitl/` | Area 6 fixtures |
+| `context/` | Area 7 fixtures |
 | `cel/` | CEL rule fixtures (EVAL-005, HOOK-110–115) |
 | `coverage.yaml` | Which areas have complete fixtures, and therefore enforced coverage |
 
@@ -41,6 +42,8 @@ Matchers: `{"$any": true}`, `{"$absent": true}`, `{"$regex": "..."}`, `{"$len": 
 - **`stubs.mcpServers.<serverId>`** — `{ tools: { <toolName>: { inputSchema, annotations, behaviours } }, changes: [{ afterCalls: n, tools: {...} }] }`. A change re-advertises the named tools once the server has received `n` calls in all (TOOL-092).
 - **`stubs.httpEndpoints.<endpointId>.<operationId>`** — behaviours of that operation. Recorded `arguments` are the tool's arguments.
 - **`stubs.remoteHooks.<remoteHookId>`** and **`stubs.nativeHooks.<hookId>`** — hook behaviours, one per invocation: a `HookResult` (`answer`, or its fields given directly), `raw` (a verbatim response body that need not be a valid `HookResult`), `error`, or `hang: true`; `delayMs` delays an answer. A registered native hook with no entry answers `continue`. Each invocation is recorded with `arguments` = the `HookRequest`.
+- **`stubs.vectorStores.<sourceId>`** — one behaviour per query: the `results` an unfiltering backend returns (`{id, text, tenant, labels?, access?}`), which the implementation's vector store port filters by tenant and access (PORT-080), or `error`. Queries are recorded as `vectorStore/<sourceId>` stub calls with `arguments: { tenant, principal, text, limit }`.
+- **Token counting** — scripted adapters count context tokens deterministically (PROV-045): one per word of a text part, `tokenCounting.nonTextPart` (default 10) per other part, nothing for messages, roles or tool definitions. With `capabilities.contextLimit` and `maxOutputTokens`, this makes compaction and overflow exact.
 - **Model hooks** call their model through the scripted provider of their `source.model.provider`, consuming that provider's responses in order like any other call to it; give a model hook its own provider so its responses do not interleave with the session's. The model's answer is a `structured` part whose `value` is the `HookResult`, or a single text part holding it as JSON. These calls appear in `expect.providerRequests`.
 - **Behaviours** — exactly one of `ok`, `error` or `hang: true`; `ok` and `error` may take `delayMs`. A delayed or hanging stub honours cancellation (stops without its scripted result, records `cancelled: true`) unless `ignoreCancel: true`.
 - **`limits`** — `inlinePayloadBytes` (blob threshold, TOOL-072) and `leaseTtl` (run lease, ISO 8601, default `PT5M`).

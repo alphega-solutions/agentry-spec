@@ -302,27 +302,67 @@ $defs:
       error: { $ref: "https://alphega.io/agentry/schemas/core/error/v1.json" }
 
   contextRetrieved:
+    description: >-
+      One automatic retrieval (CTX-032). Each result is one text part with
+      provenance `retrieval:<source>`, stored in full in the BlobStore as its
+      JSON (CTX-003), in the order the port returned it. `limit` is the
+      effective `retrieval.limit`. An empty `results` still taints (CTX-040).
     type: object
     additionalProperties: false
-    required: [source, query, results]
+    required: [source, query, limit, results]
     properties:
       source: { type: string, minLength: 1 }
       query: { type: string }
+      limit: { type: integer, minimum: 1 }
       results:
         type: array
-        items: { $ref: "https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/blobRef" }
+        items:
+          type: object
+          additionalProperties: false
+          required: [blob, labels]
+          properties:
+            blob: { $ref: "https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/blobRef" }
+            labels:
+              description: The result's stored labels, or the profile's `retrieval.defaultLabels` when it had none (CTX-042).
+              $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/labels"
 
   contextCompacted:
+    description: >-
+      One compaction (CTX-082). `units` are the droppable units removed or
+      replaced, in drop order (CTX-061): an earlier turn `{turn}`, an earlier
+      step of the current turn `{turn, step}`, or an earlier summary
+      `{summary: <eventId of its context.compacted>}` (CTX-062). For
+      `summarize`, `summary` references the summary part's JSON in the
+      BlobStore and `usage` is the summarizer's. `fallback` is present when
+      a `summarize` compaction fell back to truncation (CTX-085), naming why.
     type: object
     additionalProperties: false
-    required: [mode, fromTurn, toTurn, provenances, labels]
+    required: [mode, units, provenances, labels]
     properties:
       mode: { enum: [truncate, summarize] }
-      fromTurn: { type: integer, minimum: 1 }
-      toTurn: { type: integer, minimum: 1 }
+      units:
+        type: array
+        minItems: 1
+        items:
+          type: object
+          additionalProperties: false
+          oneOf:
+            - required: [turn]
+              not: { required: [summary] }
+            - required: [summary]
+              not: { anyOf: [{ required: [turn] }, { required: [step] }] }
+          dependentRequired: { step: [turn] }
+          properties:
+            turn: { type: integer, minimum: 1 }
+            step: { type: integer, minimum: 1 }
+            summary: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
       summary: { $ref: "https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/blobRef" }
       provenances: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/provenances" }
       labels: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/labels" }
       usage: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/usage" }
-    if: { properties: { mode: { const: summarize } } }
-    then: { required: [summary] }
+      fallback: { enum: [summarizer_failed, policy_denied] }
+    allOf:
+      - if: { properties: { mode: { const: summarize } } }
+        then: { required: [summary, usage], not: { required: [fallback] } }
+      - if: { properties: { mode: { const: truncate } } }
+        then: { not: { anyOf: [{ required: [summary] }] } }
