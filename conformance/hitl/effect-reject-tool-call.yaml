@@ -8,8 +8,11 @@ description: >-
   `tool.result` is the error `{category: policy, code:
   agentry.hitl.rejected}`, which the model receives as the call's result in
   its next request, and the same turn continues to a response (no new
-  `turn.started`; the session goes `idle`).
-requirements: [HITL-060]
+  `turn.started`; the session goes `idle`). In the resume run
+  `escalation.resolved` immediately follows `run.started` (HITL-072 as
+  amended 2026-11-01), checked exactly through their consecutive `seq`
+  values.
+requirements: [HITL-060, HITL-072]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:
@@ -72,8 +75,8 @@ expect:
         mode: subsequence
         items:
           - { type: run.ended, runId: $r1, payload: { reason: escalated } }
-          - { type: run.started, runId: $r2, payload: { kind: resume } }
-          - { type: escalation.resolved, runId: $r2 }
+          - { type: run.started, runId: $r2, seq: $q0, payload: { kind: resume } }
+          - { type: escalation.resolved, runId: $r2, seq: $q1 }
           - { type: tool.result, runId: $r2, turn: 1, payload: { callId: c1, tool: update_record, result: { error: { category: policy, code: agentry.hitl.rejected } } } }
           - { type: model.request, runId: $r2, turn: 1, step: 2 }
           - { type: run.ended, runId: $r2, payload: { reason: responded } }
@@ -84,7 +87,12 @@ expect:
     eventLog:
       t1:
         $s:
-          $count: { of: { type: tool.result }, equals: 1 }
+          $all:
+            - $count: { of: { type: tool.result }, equals: 1 }
+            # escalation.resolved is the first event after the resume run's
+            # run.started (HITL-072 as amended): seq is gap-free (CORE-160),
+            # so exactly two events lie in [$q0, $q1].
+            - $count: { of: { seq: { $all: [{ $gte: $q0 }, { $lte: $q1 }] } }, equals: 2 }
   delivered:
     $s: { text: "The update was not approved." }
   stubCalls:

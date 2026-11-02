@@ -22,6 +22,15 @@ description: >-
   has an empty behaviour list), and no `approve` or `edit` decision exists in
   the audit log; the only decision recorded is the expiry
   rejection.
+
+
+  Timestamps: expiry processing is timestamped with the expiry time,
+  whenever it is detected (Area 6 amendment 2026-11-01, HITL-082,
+  CORE-041). So $close's `session.closed` (`expired`) is at
+  2026-01-04T00:00Z even though nothing accesses the session then, $reject's
+  expiry rejection and its audit record are at 2026-01-04T00:00Z, and
+  $reject's `session.closed` is at 2026-01-05T00:00Z, a further idleTtl
+  after the suspendedTtl expiry time.
 requirements: [HITL-080]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -156,5 +165,6 @@ expect:
           - $contains:
               - type: decision
                 sessionId: $reject
+                timestamp: { $regex: "^2026-01-04T00:00:00" }
                 reviewer: { $absent: true }
                 details: { pendingActionId: $act, type: reject, decidedBy: expiry, reviewer: { $absent: true } }

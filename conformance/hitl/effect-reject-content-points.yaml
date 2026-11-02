@@ -8,7 +8,10 @@ description: >-
   (afterModelCall, the model's response SYN-AMC-0060), gate-br
   (beforeResponse, the final response SYN-BR-0060), and gate-atc
   (afterToolCall, any lookup result). Each session's escalation holds one
-  `content` action at its point; the reviewer rejects it.
+  `content` action at its point; the reviewer rejects it. Because gate-amc
+  and gate-br escalate at afterModelCall and beforeResponse, the persona
+  allows only the buffered default@1 profile (HOOK-040; CFG-042 as amended
+  checks every persona against every allowed profile).
 
 
   $ss, $bmc, $amc, $br: the resume run ends `blocked`, the host receives
@@ -78,7 +81,7 @@ setup:
         tools: [lookup@1, update_record@1]
         fallbackMessage: "This request was blocked."
         defaultProfile: default@1
-        allowedProfiles: [default@1, streamed@1]
+        allowedProfiles: [default@1]
         requiredHooks: [gate-ss@1, gate-bmc@1, gate-amc@1, gate-br@1, gate-atc@1]
         model:
           provider: scripted-a

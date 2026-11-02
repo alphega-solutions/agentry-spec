@@ -9,8 +9,10 @@ description: >-
   during turn 2 (run $r2): the stub ran, its result never reached the
   implementation, and no outcome is recorded. After a restart, at +1m the
   lease has not lapsed, so the run is not orphaned: run() on $s fails with
-  `conflict` (the session is still `active`) and persists nothing. At +3m
-  the lease has lapsed; run() on $s first performs recovery (HITL-090,
+  `conflict` (the session is still `active`) and persists nothing. At
+  exactly +2m the lease has lapsed (a lease has elapsed when the current
+  time equals its expiry, Area 6 amendment 2026-11-01, so eager and lazy
+  detection agree on the time); run() on $s first performs recovery (HITL-090,
   HITL-091 step 4, HITL-092): the call has a started record and no
   outcome, so it is not re-dispatched; a `recovery` escalation is raised in
   the orphaned run $r2 (reason `agentry.recovery.unknown_outcome`, the
@@ -18,14 +20,14 @@ description: >-
   allowed), checkpointed and audited, and $r2 ends `escalated` with no new
   `run.started`. The triggering run() then proceeds with its own request
   on the now `suspended` session and is refused with `conflict` (CORE-051).
-  The PT2M lease is what is honoured: with the PT5M default the +3m access
+  The PT2M lease is what is honoured: with the PT5M default the +2m access
   would also be refused without recovery.
 
   $t shows the lease recorded with the checkpoint (HITL-090, PORT-030):
-  turn 1 responds at +3m; the implementation is crashed at
-  `after_started_record` during turn 2, also at +3m, and restarted. With
+  turn 1 responds at +2m; the implementation is crashed at
+  `after_started_record` during turn 2, also at +2m, and restarted. With
   no later access and no clock movement, $t's checkpoint is `active` and
-  holds a lease that expires at +3m + PT2M = 00:05:00.
+  holds a lease that expires at +2m + PT2M = 00:04:00.
 requirements: [HITL-090, HITL-091]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -77,8 +79,8 @@ script:
     principal: p1
     input: [{ type: text, text: "Anyone there?" }]
     expect: { ok: false, error: { category: conflict }, newEvents: 0 }
-  # Lease lapsed: recovery on access.
-  - clock: { advance: PT2M }
+  # Exactly the lease expiry (00:00 + PT2M): lapsed; recovery on access.
+  - clock: { advance: PT1M }
   - action: run
     session: $s
     principal: p1
@@ -116,7 +118,7 @@ expect:
           - type: escalation.raised
             runId: $r2
             turn: 2
-            timestamp: { $regex: "^2026-01-01T00:03:00" }
+            timestamp: { $regex: "^2026-01-01T00:02:00" }
             payload:
               escalation:
                 id: $esc
@@ -124,7 +126,7 @@ expect:
                 turn: 2
                 sources: [recovery]
                 reasonCodes: [agentry.recovery.unknown_outcome]
-                createdAt: { $regex: "^2026-01-01T00:03:00" }
+                createdAt: { $regex: "^2026-01-01T00:02:00" }
                 pendingActions:
                   - id: $act
                     kind: recovery
@@ -144,7 +146,7 @@ expect:
     $t:
       checkpoint:
         state: active
-        lease: { expiresAt: { $regex: "^2026-01-01T00:05:00" } }
+        lease: { expiresAt: { $regex: "^2026-01-01T00:04:00" } }
   ports:
     eventLog:
       t1:

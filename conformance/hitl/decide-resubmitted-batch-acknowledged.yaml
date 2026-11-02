@@ -12,23 +12,24 @@ description: >-
   acknowledged (not refused, not recorded again) and D2 is recorded.
 
   3. decide() with D1 restated as a `reject` — acknowledged without
-  effect: a recorded decision ID never takes effect a second time, whatever
-  the resubmission says (HITL-042), so c1 stays approved and is dispatched.
+  effect: a resubmitted decision ID is acknowledged without effect even if
+  its other fields differ (HITL-042 as amended 2026-11-01), so c1 stays
+  approved and is dispatched.
 
-  4. resume() retrying the whole batch D1 + D2 — accepted; the escalation
-  had not yet been resumed, so this is not a replay (CORE-053, HITL-071)
-  but a resume whose decisions are all already recorded; the session
-  resumes.
+  4. resume() retrying the whole batch D1 + D2 — accepted. Neither ID was
+  applied by an earlier accepted resume() (a decision ID is applied once
+  an accepted resume() has acted on it; one only recorded by decide() is
+  not), so this is not a replay (CORE-053, HITL-071) but a new resume
+  whose decisions are all already recorded (HITL-042 as amended
+  2026-11-01); the session resumes.
+
+  Each successful decide() emits no events (HITL-040 as amended).
 
 
   In all, exactly one `decision` audit record exists per decision ID (two
   in all, both `approve`), `escalation.resolved` lists D1 and D2 once each
   in recording order, and both calls are dispatched.
 
-
-  Reading chosen: CORE-053's "a decision ID that has already been applied"
-  means applied by an accepted resume(), not merely recorded by decide();
-  otherwise the decide-then-resume pattern of Appendix A could never resume.
 requirements: [HITL-042]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -91,20 +92,20 @@ script:
     reviewer: r1
     decisions:
       - { decisionId: "01900000-0000-7000-8000-000000000421", pendingActionId: $a1, type: approve }
-    expect: { ok: true }
+    expect: { ok: true, newEvents: 0 }
   - action: decide
     session: $s
     reviewer: r1
     decisions:
       - { decisionId: "01900000-0000-7000-8000-000000000421", pendingActionId: $a1, type: approve }
       - { decisionId: "01900000-0000-7000-8000-000000000422", pendingActionId: $a2, type: approve }
-    expect: { ok: true }
+    expect: { ok: true, newEvents: 0 }
   - action: decide
     session: $s
     reviewer: r1
     decisions:
       - { decisionId: "01900000-0000-7000-8000-000000000421", pendingActionId: $a1, type: reject }
-    expect: { ok: true }
+    expect: { ok: true, newEvents: 0 }
   - action: resume
     session: $s
     reviewer: r1

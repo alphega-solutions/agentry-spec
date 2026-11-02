@@ -9,7 +9,8 @@ description: >-
   $a: at 01:00 reviewer r1 approves with decide(). Nothing resumes: the
   session stays `suspended` with the decision held in its checkpoint's
   escalation, a `decision` audit record is written, and no run starts or
-  ends (one `run.started` in all, no `escalation.resolved`, no tool call).
+  ends (one `run.started` in all, no `escalation.resolved`, no tool call);
+  decide() itself emits no events (HITL-040 as amended 2026-11-01).
 
 
   $b: r1 approves with decide() at 01:00; at 02:00 resume() is called with
@@ -104,13 +105,13 @@ script:
     reviewer: r1
     decisions:
       - { decisionId: "01900000-0000-7000-8000-000000000a01", pendingActionId: $actA, type: approve }
-    expect: { ok: true }
+    expect: { ok: true, newEvents: 0 }
   - action: decide
     session: $b
     reviewer: r1
     decisions:
       - { decisionId: "01900000-0000-7000-8000-000000000b01", pendingActionId: $actB, type: approve }
-    expect: { ok: true }
+    expect: { ok: true, newEvents: 0 }
   - clock: { advance: PT1H }
   - action: resume
     session: $b

@@ -8,7 +8,13 @@ description: >-
   resume() — the same batch, D1 — is then replayed: its escalation was
   already resumed, so it returns the original outcome (script step 1,
   `responded`) and persists no event (HITL-071, CORE-053), even though the
-  session now has a different open escalation. The replay does no work:
+  session now has a different open escalation. This follows the amended
+  rule (HITL-042 as amended 2026-11-01): resume() first checks for replay,
+  and since D1 was applied by an earlier accepted resume(), it returns
+  that resume's outcome and nothing in its batch is validated or recorded.
+  Batch validation would otherwise have refused it, as $a1 is not in the
+  open escalation $esc2 (`not_found`, `agentry.hitl.unknown_action`); the
+  replay check precedes it. The replay does no work:
   no model call, no dispatch, no new run, and D1 is not recorded again or
   applied to $esc2. $esc2 stays open and undecided: the reviewer view
   shows $b1 with no decisions, and only D2 then resumes it, with

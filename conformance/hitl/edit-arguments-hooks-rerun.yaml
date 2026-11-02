@@ -23,13 +23,13 @@ description: >-
   the replacement and continues. Stage 7 treats the edit as approval: no
   second escalation, although `approval` is `always`. The call is
   dispatched once, with the replacement, which is also what `tool.call`
-  records.
-
-
-  Assumption: the provenance of the edited arguments is observed through
-  the `HookRequest` content (the call's one tool_call part, Area 5
-  amendment 2026-11-01); the `tool.call` event payload has no provenance
-  field.
+  records. The `tool.call` event carries the provenances and labels of its
+  arguments (CORE-151; HITL-061 as amended 2026-11-01): `provenances:
+  [reviewer]` and labels including pii. The provenance is also observed
+  through the `HookRequest` content (the call's one tool_call part, Area 5
+  amendment 2026-11-01). The first run emits no `tool.call` (gate escalates
+  at stage 6, before the call is recorded), so there is no model-proposed
+  `tool.call` to compare.
 requirements: [HITL-061]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -146,7 +146,11 @@ expect:
                 pendingActions:
                   - { id: $act, kind: tool_call, source: hook, hook: gate@1, arguments: { key: k1, value: v1 }, labels: { $contains: [pii] } }
           - { type: run.ended, runId: $r1, payload: { reason: escalated } }
-          - { type: tool.call, runId: $r2, payload: { callId: c1, arguments: { key: k1, value: v2 } } }
+          - type: tool.call
+            runId: $r2
+            provenances: [reviewer]
+            labels: { $contains: [pii] }
+            payload: { callId: c1, arguments: { key: k1, value: v2 } }
           - { type: run.ended, runId: $r2, payload: { reason: responded } }
       absentEvents:
         - { type: tool.call, runId: $r1 }

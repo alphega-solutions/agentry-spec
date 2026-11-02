@@ -9,9 +9,12 @@ description: >-
   run ends `escalated` with no second model request.
 
   The decisions are recorded out of action order: decide() approves $a3
-  with DA first, then resume() approves $a2 with DB. The accepted resume
+  with DA first (emitting no events), then resume() approves $a2 with DB. The accepted resume
   (HITL-072): emits `escalation.resolved` listing [DA, DB] — every decision
-  for the escalation, in recording order, not action order; continues turn
+  for the escalation, in recording order, not action order — as the first
+  event of the resume run after `run.started`, before any model or tool
+  work (HITL-072 as amended 2026-11-01; checked exactly: the two events'
+  `seq` values are consecutive, so nothing lies between them); continues turn
   1 (no `turn.started` in the resume run, and its model request is turn 1,
   step 2); dispatches c2 and c3 once each and does not re-dispatch the held
   c1. c2's stub is delayed, so c2 may complete after c3, yet the next model
@@ -128,7 +131,7 @@ script:
     reviewer: r1
     decisions:
       - { decisionId: "01900000-0000-7000-8000-0000000000a1", pendingActionId: $a3, type: approve }
-    expect: { ok: true }
+    expect: { ok: true, newEvents: 0 }
   - action: resume
     session: $s
     reviewer: r1
@@ -153,9 +156,10 @@ expect:
             step: 1
             payload: { escalation: { id: $esc, pendingActions: [{ id: $a2, callId: c2 }, { id: $a3, callId: c3 }] } }
           - { type: run.ended, runId: $r1, payload: { reason: escalated } }
-          - { type: run.started, runId: $r2, payload: { kind: resume } }
+          - { type: run.started, runId: $r2, seq: $q0, payload: { kind: resume } }
           - type: escalation.resolved
             runId: $r2
+            seq: $q1
             payload:
               escalationId: $esc
               decisions: ["01900000-0000-7000-8000-0000000000a1", "01900000-0000-7000-8000-0000000000a2"]
@@ -176,6 +180,10 @@ expect:
         $s:
           $all:
             - $count: { of: { type: run.started }, equals: 2 }
+            # escalation.resolved immediately follows the resume run's
+            # run.started: exactly two events lie in the seq range [$q0, $q1]
+            # (seq is gap-free, CORE-160).
+            - $count: { of: { seq: { $all: [{ $gte: $q0 }, { $lte: $q1 }] } }, equals: 2 }
             - $count: { of: { type: tool.result, runId: $r2, step: 1, payload: { callId: c2, result: { ok: { output: { updated: k1 } } } } }, equals: 1 }
             - $count: { of: { type: tool.result, runId: $r2, step: 1, payload: { callId: c3, result: { ok: { output: { status: k3 } } } } }, equals: 1 }
   stubCalls:

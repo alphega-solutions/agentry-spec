@@ -4,13 +4,15 @@ title: A decision type its pending action does not allow is refused with invalid
 description: >-
   $t: update_record (`approval: always`) escalates a `tool_call` action,
   which allows approve, reject and edit. A `confirm` on it is refused with
-  `invalid_input` (`details.decisionId` names it).
+  `invalid_input`, code `agentry.hitl.decision_not_allowed`
+  (`details.decisionId` names it).
 
 
   $m: the rule hook gate-model escalates at `beforeModelCall` (its `when`
   matches the marker SYN-GATE-0043 in the principal's input), raising a
   `content` action at a point other than `beforeResponse`, which allows
-  only approve and reject. An `edit` on it is refused with `invalid_input`.
+  only approve and reject. An `edit` on it is refused with `invalid_input`
+  (`agentry.hitl.decision_not_allowed`).
 
 
   In both sessions the refused decision is not recorded: resume() with no
@@ -114,7 +116,7 @@ script:
       - { decisionId: "01900000-0000-7000-8000-000000000441", pendingActionId: $actT, type: confirm, outcome: succeeded }
     expect:
       ok: false
-      error: { category: invalid_input, details: { decisionId: "01900000-0000-7000-8000-000000000441" } }
+      error: { category: invalid_input, code: agentry.hitl.decision_not_allowed, details: { decisionId: "01900000-0000-7000-8000-000000000441" } }
   - action: decide
     session: $m
     reviewer: r1
@@ -125,7 +127,7 @@ script:
         replacement: [{ type: text, text: "SYN-EDITED-0043" }]
     expect:
       ok: false
-      error: { category: invalid_input, details: { decisionId: "01900000-0000-7000-8000-000000000442" } }
+      error: { category: invalid_input, code: agentry.hitl.decision_not_allowed, details: { decisionId: "01900000-0000-7000-8000-000000000442" } }
   - action: resume
     session: $t
     reviewer: r1

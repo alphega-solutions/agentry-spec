@@ -6,7 +6,10 @@ description: >-
   bundle requires three beforeResponse hooks, in order: observer (native,
   continues), tagger (rule, annotates pii), gate (native: escalates the
   first time, continues the second); the persona adds after (native,
-  continues).
+  continues). Because gate escalates at beforeResponse, every persona
+  allows only the buffered default@1 profile (HOOK-040; CFG-042 as amended
+  checks every persona against every allowed profile), so the baseline
+  assistant@1 is overridden without streamed@1.
 
 
   First run: the model answers {answer: draft}; observer sees it, tagger
@@ -15,7 +18,8 @@ description: >-
 
 
   D1 edits the response to {answer: 7}, which fails the output schema
-  (CORE-130) → `invalid_input` (`details.decisionId` D1), not recorded:
+  (CORE-130) → `invalid_input` (`agentry.hitl.invalid_edit`,
+  `details.decisionId` D1), not recorded:
   resume() with no decisions then fails with `conflict`
   (`agentry.hitl.pending`).
 
@@ -100,6 +104,24 @@ setup:
           required: [answer]
           properties:
             answer: { type: string }
+      # The bundle's gate hook escalates at beforeResponse, so every persona
+      # must allow only buffered profiles (HOOK-040, CFG-042 as amended):
+      # the baseline assistant@1 is overridden without streamed@1.
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
   tenants:
     - id: t1
       principals:
@@ -137,7 +159,7 @@ script:
         replacement: [{ type: structured, value: { answer: 7 } }]
     expect:
       ok: false
-      error: { category: invalid_input, details: { decisionId: "01900000-0000-7000-8000-000000000651" } }
+      error: { category: invalid_input, code: agentry.hitl.invalid_edit, details: { decisionId: "01900000-0000-7000-8000-000000000651" } }
   - action: resume
     session: $s
     reviewer: r1

@@ -6,7 +6,7 @@ description: >-
   explicit@1, which sets `onExpiry: close`. Both have suspendedTtl PT72H.
   $a escalates at 00:00:00 with two actions (c1 update_record, c2
   set_status, both `approval: always`); a reviewer approves $a1 with
-  decide(), leaving $a2 undecided. $b escalates one second later. $a's
+  decide() (which emits no events), leaving $a2 undecided. $b escalates one second later. $a's
   escalation records expiresAt = createdAt + suspendedTtl.
 
   The clock is set to exactly $a's expiry (2026-01-04T00:00:00Z; a TTL has
@@ -14,8 +14,11 @@ description: >-
   amended): resume() on $a fails with `conflict` (CORE-022) and $a's
   session.closed is stamped with that instant; $b, one second younger, is
   still suspended, so resume() on it fails with `conflict` code
-  `agentry.hitl.pending` (HITL-070) and $b does not close then. One second later $b has reached its expiry too.
-  Both close `expired` at their expiry times (HITL-082, close branch): the
+  `agentry.hitl.pending` (HITL-070) and $b does not close then. One second
+  later $b has reached its expiry too, and nothing accesses it after that.
+  Both close `expired` with `session.closed` timestamped at their expiry
+  times (HITL-082, close branch; expiry processing is timestamped with the
+  expiry time whenever it is detected, Area 6 amendment 2026-11-01): the
   undecided actions get no expiry rejection (no `decidedBy: expiry` record),
   no escalation is resolved, no resume run starts, and neither call is
   dispatched — not even $a1, which was approved.
@@ -121,7 +124,7 @@ script:
     reviewer: r1
     decisions:
       - { decisionId: "01900000-0000-7000-8000-0000000000e1", pendingActionId: $a1, type: approve }
-    expect: { ok: true }
+    expect: { ok: true, newEvents: 0 }
   - clock: { advance: PT1S }
   - action: run
     bind: $b

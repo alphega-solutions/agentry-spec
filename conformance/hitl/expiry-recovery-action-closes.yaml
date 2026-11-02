@@ -7,14 +7,18 @@ description: >-
   `approval: always`.
 
   $a: turn 1 responds; the implementation is crashed at `after_dispatch`
-  while update_record c1 is in flight in turn 2, restarted, and the clock
-  advanced 10 minutes, past the run lease. resume() on $a performs
-  recovery: a `recovery` escalation is raised at 00:10 (expiresAt
-  2026-01-04T00:10:00Z) and the triggering resume() is refused with
-  `agentry.hitl.pending`. $b escalates on set_status (source `approval`)
-  at 00:10 too.
+  while update_record c1 is in flight in turn 2 (at 00:00), restarted, and
+  the clock advanced exactly to the lease expiry, 00:05 (default leaseTtl
+  PT5M; a lease has elapsed when the current time equals its expiry, Area
+  6 amendment 2026-11-01), so eager and lazy orphan detection agree on the
+  time. resume() on $a performs recovery: a `recovery` escalation is
+  raised at 00:05 (expiresAt 2026-01-04T00:05:00Z) and the triggering
+  resume() is refused with `agentry.hitl.pending`. $b escalates on
+  set_status (source `approval`) at 00:05 too.
 
-  At exactly 2026-01-04T00:10:00Z both suspendedTtls elapse. $b, the
+  At exactly 2026-01-04T00:05:00Z both suspendedTtls elapse; expiry
+  processing is timestamped with that expiry time whenever it is detected
+  (Area 6 amendment 2026-11-01). $b, the
   control, gets an expiry rejection and stays `suspended`, as `reject`
   prescribes. $a's undecided action is a recovery action, which a
   rejection cannot settle (no outcome is established), so $a closes
@@ -107,7 +111,8 @@ script:
     principal: p1
     input: [{ type: text, text: "Set k1 to v1" }]
   - restart: {}
-  - clock: { advance: PT10M }
+  # Exactly the lease expiry (crash at 00:00 + PT5M).
+  - clock: { advance: PT5M }
   - action: resume
     session: $a
     reviewer: r1
@@ -126,7 +131,7 @@ script:
       - event: { type: escalation.raised }
         bind: { payload.escalation.pendingActions.0.id: $actB }
     expect: { ok: true, endReason: escalated }
-  - clock: { set: "2026-01-04T00:10:00Z" }
+  - clock: { set: "2026-01-04T00:05:00Z" }
   # Control: a non-recovery action is rejected by expiry and the session stays suspended.
   - action: getReviewerView
     session: $b
@@ -153,10 +158,11 @@ expect:
               escalation:
                 id: $escA
                 sources: [recovery]
-                expiresAt: { $regex: "^2026-01-04T00:10:00" }
+                createdAt: { $regex: "^2026-01-01T00:05:00" }
+                expiresAt: { $regex: "^2026-01-04T00:05:00" }
                 pendingActions: [{ id: $actA, kind: recovery, callId: c1, tool: update_record }]
           - { type: run.ended, payload: { reason: escalated } }
-          - { type: session.closed, runId: { $absent: true }, timestamp: { $regex: "^2026-01-04T00:10:00" }, payload: { reason: expired } }
+          - { type: session.closed, runId: { $absent: true }, timestamp: { $regex: "^2026-01-04T00:05:00" }, payload: { reason: expired } }
       absentEvents:
         - { type: escalation.resolved }
         - { type: tool.result }
@@ -170,7 +176,7 @@ expect:
       t1:
         $all:
           - $count: { of: { type: decision, sessionId: $a }, equals: 0 }
-          - $count: { of: { type: decision, sessionId: $b, details: { pendingActionId: $actB, type: reject, decidedBy: expiry } }, equals: 1 }
+          - $count: { of: { type: decision, sessionId: $b, timestamp: { $regex: "^2026-01-04T00:05:00" }, details: { pendingActionId: $actB, type: reject, decidedBy: expiry, timestamp: { $regex: "^2026-01-04T00:05:00" } } }, equals: 1 }
   stubCalls:
     update_record:
       - { arguments: { key: k1, value: v1 }, completed: false }

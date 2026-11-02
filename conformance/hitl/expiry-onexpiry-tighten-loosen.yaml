@@ -20,13 +20,16 @@ description: >-
   When suspendedTtl (PT72H) elapses, the effective value decides the
   outcome (HITL-082): $a and $c close `expired` with no expiry rejection
   recorded, while $b (still `reject`) receives an expiry rejection, shown
-  in its reviewer view, and stays `suspended`.
+  in its reviewer view, and stays `suspended`. $a's and $c's
+  `session.closed` are timestamped with the expiry time,
+  2026-01-04T00:00:00Z, whenever the expiry is detected (Area 6 amendment
+  2026-11-01).
 
   This fixture complements cfg.strictness-orders-run-request and
   cfg.run-request-delegation-onexpiry, which check acceptance only; here
-  the accepted value is shown to take effect. Reading of the brief: "close
-  → reject" is the declared order (strictest first), so the tightening
-  direction is reject → close, consistent with those fixtures.
+  the accepted value is shown to take effect. The declared order "close →
+  reject" lists the strictest value first, so the tightening direction is
+  reject → close, consistent with those fixtures.
 requirements: [HITL-081]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -179,7 +182,7 @@ expect:
         items:
           - { type: run.started, payload: { kind: run, overrides: { onExpiry: close } } }
           - { type: run.ended, payload: { reason: escalated } }
-          - { type: session.closed, payload: { reason: expired } }
+          - { type: session.closed, timestamp: { $regex: "^2026-01-04T00:00:00" }, payload: { reason: expired } }
     $b:
       state: suspended
       absentEvents:
@@ -191,7 +194,7 @@ expect:
         mode: subsequence
         items:
           - { type: run.ended, payload: { reason: escalated } }
-          - { type: session.closed, payload: { reason: expired } }
+          - { type: session.closed, timestamp: { $regex: "^2026-01-04T00:00:00" }, payload: { reason: expired } }
   ports:
     auditLog:
       t1:

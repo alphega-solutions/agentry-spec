@@ -6,14 +6,17 @@ description: >-
   update_record and set_status are `approval: always`.
 
   $a escalates at 00:00 with $a1 (c1 update_record) and $a2 (c2
-  set_status); a reviewer approves $a1 with decide() (D1). $b escalates at
+  set_status); a reviewer approves $a1 with decide() (D1), which emits no events. $b escalates at
   00:00 with one action, $b1. At exactly 2026-01-04T00:00:00Z both
   suspendedTtls elapse (equal time counts as elapsed). Each undecided
   action — $a2 and $b1, but not the already decided $a1 — receives an
   expiry rejection: `type: reject`, `decidedBy: expiry`, no reviewer,
   timestamped with the expiry time, visible in the reviewer view and
   audited as a `decision` record (HITL-082, HITL-044 as amended). Both
-  sessions stay `suspended` and are now fully decided.
+  sessions stay `suspended` and are now fully decided. Expiry processing
+  is timestamped with the expiry time whenever it is detected (Area 6
+  amendment 2026-11-01); the clock is set exactly to the expiry, so the
+  reviewer views that first perform it see that time either way.
 
   At 01:00 resume() on $a with no new decisions is accepted:
   `escalation.resolved` lists D1 then $a2's expiry rejection (recording
@@ -23,7 +26,10 @@ description: >-
 
   $b receives no resume: one second before expiry + idleTtl
   (2026-01-04T23:59:59Z) its reviewer view is still served; at exactly
-  2026-01-05T00:00:00Z it closes `expired`, never having dispatched c1.
+  2026-01-05T00:00:00Z (the further idleTtl, measured from the
+  suspendedTtl expiry time) it closes `expired`, never having dispatched
+  c1; nothing accesses $b then, and its `session.closed` is timestamped
+  with that expiry time (Area 6 amendment 2026-11-01).
 requirements: [HITL-082]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -142,7 +148,7 @@ script:
     reviewer: r1
     decisions:
       - { decisionId: "01900000-0000-7000-8000-0000000000f1", pendingActionId: $a1, type: approve }
-    expect: { ok: true }
+    expect: { ok: true, newEvents: 0 }
   # Both suspendedTtls elapse exactly now.
   - clock: { set: "2026-01-04T00:00:00Z" }
   - action: getReviewerView

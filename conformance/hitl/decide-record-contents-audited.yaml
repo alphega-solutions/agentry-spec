@@ -88,7 +88,7 @@ script:
         pendingActionId: $a2
         type: edit
         replacement: { key: k2, value: v2-edited }
-    expect: { ok: true }
+    expect: { ok: true, newEvents: 0 }
   - clock: { advance: PT1H }
   - action: resume
     session: $s
