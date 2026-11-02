@@ -183,7 +183,10 @@ $defs:
               required: [reasonCode]
               properties:
                 result: true
-                reasonCode: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/errorCode" }
+                reasonCode:
+                  description: Hook-defined; the `agentry.` namespace is reserved for harness codes (HOOK-051).
+                  $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/errorCode"
+                  not: { pattern: "^agentry\\." }
 
   nativeSource:
     description: A handler registered in the implementation's language (Area 5 §8).

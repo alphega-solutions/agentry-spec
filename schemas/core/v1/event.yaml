@@ -55,9 +55,16 @@ allOf:
   - if: { properties: { type: { const: model.delta } } }
     then: { not: { required: [seq] } }
     else: { required: [seq] }
-  # runId: absent only on session.created, and on session.closed outside a run (CORE-150, amended)
+  # runId: absent only on session.created; on session.closed outside a run
+  # (CORE-150, amended); and on the hook.decision and error events of
+  # sessionEnd hooks when the session closes outside a run (HOOK-052, Area 5
+  # amendment 2026-11-01). A hook.decision without runId is at sessionEnd.
   - if:
-      properties: { type: { not: { enum: [session.created, session.closed] } } }
+      properties: { type: { not: { enum: [session.created, session.closed, hook.decision, error] } } }
+    then: { required: [runId] }
+  - if:
+      required: [type, payload]
+      properties: { type: { const: hook.decision }, payload: { not: { properties: { point: { const: sessionEnd } }, required: [point] } } }
     then: { required: [runId] }
   - if: { properties: { type: { const: session.created } } }
     then: { not: { required: [runId] } }

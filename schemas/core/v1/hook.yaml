@@ -105,8 +105,15 @@ $defs:
       principal: { $ref: "#/$defs/principal" }
       session: { $ref: "#/$defs/session" }
       content:
+        description: >-
+          The parts the point sees, in order. Reasoning parts are never shown
+          to hooks and are unaffected by rewrites (Area 5 amendment
+          2026-11-01). At the tool points it is exactly the one `tool_call`
+          or `tool_result` part.
         type: array
-        items: { $ref: "https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/part" }
+        items:
+          $ref: "https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/part"
+          not: { properties: { type: { const: reasoning } }, required: [type] }
       tool: { $ref: "#/$defs/tool" }
       call: { $ref: "#/$defs/call" }
       result: { $ref: "#/$defs/toolResult" }
@@ -127,13 +134,21 @@ $defs:
       - if: { properties: { point: { enum: [sessionStart, beforeModelCall, afterModelCall, beforeToolCall, afterToolCall, beforeResponse] } } }
         then: { required: [content], not: { anyOf: [{ required: [error] }, { required: [summary] }] } }
       - if: { properties: { point: { const: beforeToolCall } } }
-        then: { required: [tool, call], not: { required: [result] } }
+        then:
+          required: [tool, call]
+          not: { required: [result] }
+          properties: { content: { minItems: 1, maxItems: 1, items: { properties: { type: { const: tool_call } } } } }
       - if: { properties: { point: { const: afterToolCall } } }
-        then: { required: [tool, result], not: { required: [call] } }
+        then:
+          required: [tool, result]
+          not: { required: [call] }
+          properties: { content: { minItems: 1, maxItems: 1, items: { properties: { type: { const: tool_result } } } } }
       - if: { properties: { point: { enum: [sessionStart, beforeModelCall, afterModelCall, beforeResponse] } } }
         then: { not: { anyOf: [{ required: [tool] }, { required: [call] }, { required: [result] }] } }
       - if: { properties: { point: { const: onError } } }
         then: { required: [error], not: { anyOf: [{ required: [content] }, { required: [tool] }, { required: [call] }, { required: [result] }, { required: [summary] }] } }
+      - if: { properties: { point: { not: { const: sessionEnd } } } }
+        then: { required: [runId] }
       - if: { properties: { point: { const: sessionEnd } } }
         then: { required: [summary], not: { anyOf: [{ required: [content] }, { required: [tool] }, { required: [call] }, { required: [result] }, { required: [error] }] } }
     properties:
@@ -251,4 +266,7 @@ $defs:
           required: [reasonCode]
           properties:
             result: true
-            reasonCode: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/errorCode" }
+            reasonCode:
+              description: Hook-defined; the `agentry.` namespace is reserved for harness codes (HOOK-051).
+              $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/errorCode"
+              not: { pattern: "^agentry\\." }

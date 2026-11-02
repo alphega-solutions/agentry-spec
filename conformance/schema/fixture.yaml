@@ -767,7 +767,9 @@ $defs:
           or not the tool has a `stubs.tools` entry); `<serverId>/<toolName>`
           for MCP server stubs;
           `<endpointId>/<operationId>` for HTTP endpoint stubs; the remote
-          hook ID for remote hook stubs. A tool call record is `{ arguments,
+          hook ID for remote hook stubs; the Hook artifact ID for native
+          hook stubs (registered native hooks are recorded whether or not
+          they have a `stubs.nativeHooks` entry). A tool call record is `{ arguments,
           context: { sessionId, runId, principal, idempotencyKey, deadline,
           traceContext }, cancelled, completed }`: `arguments` are the
           tool's arguments (for HTTP endpoint stubs too, not an HTTP

@@ -31,5 +31,10 @@ properties:
       - required: [value]
       - required: [failure]
     properties:
-      value: {}
+      value:
+        description: >-
+          The expected result, compared by CEL type and value: a YAML integer
+          is a CEL `int`, a YAML float (e.g. `3.0`) a `double`, so `3` does
+          not match `3.0`. Strings, booleans, null, lists and maps map
+          directly.
       failure: { enum: [compile, type_check, runtime] }
