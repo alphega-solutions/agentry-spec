@@ -21,14 +21,16 @@ Data-only test cases every agentry implementation must pass (Area 11). An implem
 | `storage/` | Area 10 fixtures (harness-level: retention, legal holds, consistency, residency, redaction) |
 | `adapters/` | Area 9 provider adapter cases (format `schema/adapter-case.yaml`) and recorded vendor transcripts |
 | `cel/` | CEL rule fixtures (EVAL-005, HOOK-110–115) |
-| `coverage.yaml` | Which areas have complete fixtures, and therefore enforced coverage |
+| `eval/` | Area 11 fixtures: trace bundles, replay, eval runs, graders, reports, conversion, test doubles |
+| `golden/` | Golden trace bundles (EVAL-026; format `schemas/eval/v1/bundle.yaml`), checked by `tools/check_golden.py` |
+| `coverage.yaml` | Which areas have complete fixtures (enforced coverage), requirements verified elsewhere, and requirements pending a later phase |
 
 ## Writing a fixture
 
 A fixture has three parts:
 
 1. **`setup`** — virtual clock and ID seed, configuration (`base` plus overrides), tenants and principals, registered native handlers, scripted provider responses, stubs (native tools, MCP servers, HTTP endpoints, remote hooks), initial port contents, implementation limits.
-2. **`script`** — ordered steps (also `retention: {}`, which runs retention processing at the current virtual time): host actions (`run`, `resume`, `decide`, `close`, `cancel`, `getReviewerView`, `listPendingEscalations`), configuration loads, clock advances, crashes, restarts, abandoned streams, concurrent actions.
+2. **`script`** — ordered steps (also `retention: {}`, which runs retention processing at the current virtual time): host actions (`run`, `resume`, `decide`, `close`, `cancel`, `getReviewerView`, `listPendingEscalations`, and for Area 11 `exportBundle`, `replay`, `convert`, `evalRun`), configuration loads, clock advances, crashes, restarts, abandoned streams, concurrent actions.
 3. **`expect`** — event patterns per session, session states, step outcomes, captured provider requests and stub calls, port contents, and content that must never be persisted.
 
 A step's captures are processed in order, so a capture may use `session:` with a placeholder bound by an earlier capture of the same step (e.g. a child session). Placeholders (`$session`, `$run1`) bind on first match in `expect`, or through a step's `capture`, and must match consistently: a placeholder binds the whole value at its first match (scalar, object or array), and every later occurrence must equal that value exactly — deep equality, not the partial matching used for objects written out in an expectation. A placeholder used in a step must be captured by an earlier step. Placeholders may be map keys (e.g. an idempotency key under `ports.idempotencyStore`). `expect` is evaluated in document order, depth-first; a placeholder key must be bound (earlier in document order, or by a capture) before a matcher such as `$absent` is applied to the value under it.
@@ -65,6 +67,8 @@ Matchers: `{"$any": true}`, `{"$absent": true}`, `{"$regex": "..."}`, `{"$len": 
   The crashed action must be followed, later in the script, by a `restart` step before the next action step.
 - **Recovery** (HITL-091 as amended 2026-11-01): an orphaned run that continues keeps its `runId` and emits no new `run.started`. The host call that triggered recovery then runs its own run and receives its own outcome, which its step's `expect` matches.
 - **Decisions** in `resume`/`decide`: `{ decisionId, pendingActionId, type: approve|reject|edit|confirm, replacement?, outcome?: succeeded|failed, output? }`. `edit` needs `replacement`; `confirm` needs `outcome`, with `output` the stated output of a successful call. The escalation is the session's open one; the reviewer is the step's `reviewer`. `getReviewerView` (step `session`, `tenant`, `reviewer`) and `listPendingEscalations` (step `tenant`) return their result to the step's `expect.view` and `expect.escalations`.
+
+- **Area 11 actions**: `exportBundle` (step `session`, `tenant`) returns the session's trace bundle to `expect.bundle`. `replay` (`bundle`, a path relative to `conformance/`; `tenant`; `snapshot: recorded|candidate`; `hookMode: reEvaluate|replayDecisions`) runs the recording as a new session, which `bind` names, and returns divergences to `expect.divergences`. `convert` (`session`, `tenant`, `as: case|fixture`) returns the draft to `expect.draft`. `evalRun` (`run`, an inline eval run per `schemas/eval/v1/run.yaml`, with `cases`) returns the eval report to `expect.report`, and `bindResult` names it for later steps (e.g. as a `baseline`).
 
 ### Record shapes
 

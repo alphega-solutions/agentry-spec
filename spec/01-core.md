@@ -405,6 +405,10 @@ Writing schemas and fixtures for this area exposed these gaps. Requirement text 
 - **CORE-040/041** a TTL has elapsed when the current time is equal to or later than the expiry time.
 - **CORE-150/170** `model.response` is persisted after `afterModelCall` hooks, and records the response as those hooks left it, with any labels they added (consistent with TOOL-073 for tool results).
 
+## Amendment 2026-11-02 — from Phase 4 (Area 11)
+
+- **CORE-170** event catalog: the `turn.started` payload is `{message}`, the principal's message as it enters context — on the first turn, after the `sessionStart` hooks — with its provenances and labels (`schemas/core/v1/event.yaml`). `turn.started` is a content event for CORE-151: it carries `provenances` and `labels`. See the Area 11 amendment 2026-11-02 (CTX-001, EVAL-025).
+
 ## Amendment 2026-11-01 — from Phase 4 (Area 4)
 
 - **CORE-191** `unavailable`: for errors returned by a **tool**, handling follows TOOL-052/053 as amended — non-retryable tool errors are delivered to the model; retryable ones are retried, or treated as `fatal` when they may not be retried or retries are exhausted. The "then treated as `fatal`" rule applies to provider, port, and harness errors.

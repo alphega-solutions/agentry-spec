@@ -20,9 +20,10 @@ def main() -> int:
     config = load_yaml(ROOT / "conformance" / "coverage.yaml") or {}
     enforced = set(config.get("enforced", []))
     elsewhere = config.get("verifiedElsewhere") or {}
-    unknown = sorted(r for r in elsewhere if r not in reqs)
+    pending = config.get("pending") or {}
+    unknown = sorted(r for r in [*elsewhere, *pending] if r not in reqs)
     if unknown:
-        print(f"coverage.yaml: verifiedElsewhere names unknown requirements: {', '.join(unknown)}")
+        print(f"coverage.yaml: names unknown requirements: {', '.join(unknown)}")
         return 1
 
     covered: dict[str, list[str]] = defaultdict(list)
@@ -38,15 +39,19 @@ def main() -> int:
     failed = False
     for prefix in sorted(by_prefix):
         ids = sorted(by_prefix[prefix])
-        missing = [r for r in ids if r not in covered and r not in elsewhere]
+        open_ = [r for r in ids if r not in covered and r not in elsewhere]
+        missing = [r for r in open_ if r not in pending]
         status = "ENFORCED" if prefix in enforced else "reported"
-        print(f"{prefix:5} {len(ids) - len(missing):3}/{len(ids):3} covered  [{status}]")
+        note = f", {len(open_) - len(missing)} pending" if len(open_) > len(missing) else ""
+        print(f"{prefix:5} {len(ids) - len(open_):3}/{len(ids):3} covered{note}  [{status}]")
         if prefix in enforced and missing:
             failed = True
             for r in missing:
                 print(f"  MISSING {r}: {reqs[r]['text'][:90]}")
     for r, why in sorted(elsewhere.items()):
         print(f"  {r} verified elsewhere: {why}")
+    for r, why in sorted(pending.items()):
+        print(f"  {r} PENDING: {why}")
     return 1 if failed else 0
 
 

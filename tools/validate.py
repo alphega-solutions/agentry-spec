@@ -810,6 +810,33 @@ def check_stub_call_keys(doc: dict) -> list[str]:
                        f"remote hook ID, native hook ID, or vectorStore/<source>)" for k in calls if k not in valid]
 
 
+_URL = re.compile(r"\b(?:https?|wss?|grpcs?|tcp)://([^/\s\"'?#:]+)", re.I)  # network schemes only; memory:// and secret:// are in-process
+_TEST_HOST = re.compile(r"(^|\.)(example|test|invalid|localhost)$|(^|\.)example\.(com|net|org)$", re.I)
+
+
+def check_offline(doc) -> list[str]:
+    """EVAL-024: every URL in a fixture names a reserved test domain (RFC 2606,
+    RFC 6761), so no fixture can depend on a real endpoint. Never echoes the URL."""
+    found = False
+
+    def walk(v):
+        nonlocal found
+        if isinstance(v, dict):
+            for x in v.values():
+                walk(x)
+        elif isinstance(v, list):
+            for x in v:
+                walk(x)
+        elif isinstance(v, str):
+            for host in _URL.findall(v):
+                if host.lower() in ("alphega.io", "json-schema.org") and "schema" in v:
+                    continue  # schema identifiers, never fetched
+                if not _TEST_HOST.search(host):
+                    found = True
+    walk(doc)
+    return ["a URL names a host outside the reserved test domains (EVAL-024)"] if found else []
+
+
 def check_crashes(doc: dict) -> list[str]:
     """A crash step arms a crash for a later action step on its session, and the
     crashed action is followed by a `restart` step before the next action step."""
@@ -897,6 +924,7 @@ def main() -> int:
         for rid in doc.get("requirements", []):
             if rid not in reqs:
                 errors.append(f"{fx.relative_to(ROOT)}: unknown requirement {rid}")
+        errors += [f"{fx.relative_to(ROOT)}: {e}" for e in check_offline(doc)]
         if target == PORT_CASE_ID:
             errors += [f"{fx.relative_to(ROOT)}: {e}" for e in check_port_case(doc)]
         if target == FIXTURE_ID:

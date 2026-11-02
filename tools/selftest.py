@@ -1,4 +1,4 @@
-"""Spec-CI self-tests: the checks EVAL-002 and EVAL-010 require of the
+"""Spec-CI self-tests: the checks EVAL-002, EVAL-010 and EVAL-024 require of the
 validator and the coverage tool are exercised on deliberately broken inputs.
 
 Run from the repository root: python tools/selftest.py
@@ -54,8 +54,16 @@ def test_coverage_fails_when_last_fixture_removed() -> None:
         assert coverage_tool.main() == 0, "coverage fails on the unmodified suite"
 
 
+def test_real_endpoint_rejected() -> None:
+    """EVAL-024: a fixture URL outside the reserved test domains is an error; test domains and in-process schemes are not."""
+    assert validate.check_offline({"stubs": {"http": [{"url": "https://api.real-vendor.com/v1"}]}})
+    assert not validate.check_offline({"stubs": {"http": [{"url": "https://files.example.test/a"}]},
+                                       "providers": [{"endpoint": "memory://scripted-a"}]})
+
+
 def main() -> int:
-    tests = [test_unbound_placeholder_rejected, test_coverage_fails_when_last_fixture_removed]
+    tests = [test_unbound_placeholder_rejected, test_coverage_fails_when_last_fixture_removed,
+             test_real_endpoint_rejected]
     failed = 0
     for t in tests:
         try:

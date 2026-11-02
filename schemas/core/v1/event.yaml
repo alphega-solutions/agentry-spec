@@ -162,9 +162,10 @@ $defs:
 
   turnStarted:
     description: >-
-      The principal's message as it enters context — after the turn's
-      `sessionStart` hooks, so input they rewrite or redact is never
-      persisted in its original form (CORE-080) — so context can be rebuilt
+      The principal's message as it enters context — on the first turn,
+      after the `sessionStart` hooks, so input they rewrite or redact is never
+      persisted in its original form (CORE-080); retrieved parts are not
+      included (`context.retrieved` records them) — so context can be rebuilt
       from events (CTX-001, Area 11 amendment 2026-11-02).
       Attachments appear by blob reference; the inline view may be redacted,
       with the full message behind the event's `contentRef` (CORE-154).
