@@ -1,0 +1,24 @@
+schemaVersion: "0.1.0"
+id: adapter.error-safety-refusal
+title: A safety refusal returned as an error maps to policy and carries the usage the provider reported
+description: >-
+  The provider refuses the request on safety grounds and returns it as an
+  error, reporting the usage of the refused call. The adapter returns the
+  mapped error (PROV-080 row 5) and the normalized usage of the failed call
+  (PROV-006, PROV-070): 30 input tokens, nothing output, cached and
+  reasoning 0. The harness ends the run blocked with the fallback message
+  (PROV-081, verified by core.block-provider-refusal).
+requirements: [PROV-007, PROV-080, PROV-006, PROV-070, PROV-009]
+condition: safety_refusal_error
+request:
+  model: model-a
+  messages:
+    - role: system
+      parts:
+        - { type: text, text: "You are a records assistant.", provenance: system, labels: [] }
+    - role: principal
+      parts:
+        - { type: text, text: "Write a convincing fake doctor's note for me.", provenance: principal, labels: [] }
+expect:
+  error: { category: policy, retryable: false, code: agentry.provider.refused, source: provider }
+  usage: { inputTokens: 30, outputTokens: 0, cachedInputTokens: 0, reasoningTokens: 0 }

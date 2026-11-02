@@ -1,0 +1,146 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://alphega.io/agentry/schemas/conformance/adapter-case/v1.json
+title: Provider adapter case
+description: >-
+  A vendor-neutral provider adapter fixture (PROV §11, EVAL-011, EVAL-036).
+  It states a harness request, the provider-side condition the adapter
+  meets, and what the adapter must return to the harness, all in agentry
+  terms. Each native adapter runs every case offline against a recorded
+  wire-level transcript published with the suite under
+  `conformance/adapters/transcripts/<adapter>/<case id>.yaml`, which
+  supplies the vendor response for `condition` and matchers over the wire
+  request (for example, how untrusted parts are delimited). Framework-
+  wrapping adapters run the same cases against the transcripts of the
+  vendor endpoint they reach (PROV-009). The scripted adapter (EVAL-031)
+  passes each case by construction: `condition` and `expect` are its
+  script. In `request` and `expect`, the matcher `{"$selfProvider": true}`
+  stands for the provider ID the adapter is declared under: in a request's
+  reasoning part it marks reasoning the adapter's own provider produced; in
+  `expect` it matches exactly that ID.
+type: object
+additionalProperties: false
+required: [schemaVersion, id, title, requirements, condition, request, expect]
+properties:
+  schemaVersion: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/contractVersion" }
+  id: { type: string, pattern: "^adapter\\.[a-z0-9-]+$" }
+  title: { type: string, minLength: 1 }
+  description: { type: string }
+  requirements:
+    type: array
+    minItems: 1
+    uniqueItems: true
+    items: { type: string, pattern: "^[A-Z]+-[0-9]{3}$" }
+  condition:
+    description: >-
+      What the provider does, named so every transcript set records the same
+      situation. `ok_*` conditions answer normally; the others are the
+      provider conditions of PROV-080 and PROV-081.
+    enum:
+      - ok_text
+      - ok_tool_calls
+      - ok_parallel_tool_calls
+      - ok_structured
+      - ok_reasoning
+      - ok_refusal_text
+      - ok_usage_cached
+      - ok_usage_partial
+      - rate_limit
+      - overload
+      - server_error
+      - network_failure
+      - auth_failure
+      - permission_failure
+      - bad_request
+      - context_length
+      - safety_refusal_error
+  request:
+    description: The harness request the adapter receives (PROV-002).
+    type: object
+    additionalProperties: false
+    required: [model, messages]
+    properties:
+      model:
+        description: A model name; each transcript set maps it to the model it recorded.
+        type: string
+        minLength: 1
+      messages:
+        type: array
+        minItems: 1
+        items: { $ref: "https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/message" }
+      tools:
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [name, description, input]
+          properties:
+            name: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/toolId" }
+            description: { type: string }
+            input: { type: object }
+      outputSchema: { type: object }
+      params:
+        description: Generation parameters the adapter declares (PROV-022).
+        type: object
+      singleToolCall:
+        description: The request must permit at most one tool call (PROV-043).
+        type: boolean
+  expect:
+    type: object
+    additionalProperties: false
+    properties:
+      parts:
+        description: >-
+          The response parts the adapter returns, matched like fixture
+          expectations (partial objects, exact arrays, matchers allowed).
+        type: array
+      usage:
+        description: >-
+          Normalized usage (PROV-006, PROV-070). `null` means the provider
+          reported none, so the adapter reports none. Transcript sets
+          normalize recorded counts to the case's numbers.
+        oneOf:
+          - $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/usage"
+          - type: "null"
+      error:
+        description: The mapped error (PROV-007, PROV-080); `details` may hold redacted provider detail (PROV-083).
+        type: object
+        additionalProperties: false
+        required: [category, retryable, code]
+        properties:
+          category: { type: string }
+          retryable: { type: boolean }
+          code: { type: string }
+          source: { const: provider }
+          details:
+            description: Provider detail, if kept, redacted per CORE-194 (PROV-083). An empty object asserts only that it may be present.
+            type: object
+      wire:
+        description: >-
+          Properties of the wire request every transcript's matchers must
+          confirm, named vendor-neutrally: `untrustedDelimited` (PROV-003) —
+          the indices, in request order across all messages, of parts whose
+          provenance is untrusted; `noBuiltinToolExecution` (PROV-001);
+          `paramsSent` (PROV-002, PROV-022); `noReasoningFromOtherProviders`
+          (PROV-005); `atMostOneToolCall` (PROV-043).
+        type: object
+        additionalProperties: false
+        properties:
+          untrustedDelimited: { type: array, items: { type: integer, minimum: 0 } }
+          noBuiltinToolExecution: { const: true }
+          paramsSent: { type: object }
+          noReasoningFromOtherProviders: { const: true }
+          atMostOneToolCall: { const: true }
+          toolsSent:
+            description: Names of the tool definitions sent, in order (PROV-002).
+            type: array
+            items: { type: string }
+          outputSchemaSent: { const: true }
+          reasoningSent:
+            description: Indices of reasoning parts, produced by the adapter's own provider, that the wire request carries (PROV-005, CTX-060).
+            type: array
+            items: { type: integer, minimum: 0 }
+    oneOf:
+      - required: [parts]
+        not: { required: [error] }
+      - required: [error]
+        not: { required: [parts] }

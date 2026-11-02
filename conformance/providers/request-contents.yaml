@@ -1,0 +1,175 @@
+schemaVersion: "0.1.0"
+id: providers.request-contents
+title: Each model call hands the adapter the assembled context, exactly the visible tools, and the output schema
+description: >-
+  Harness side of PROV-002 (the adapter side is adapter.request-context-tools-schema-params).
+  Persona extractor lists lookup and update_record, declares an output
+  schema and sets `params` { maxOutputTokens: 512, temperature: 0.2 }
+  (declared by the scripted adapter); the run's runtime scope narrows the
+  visible set to lookup (TOOL-020). $sSchema: step 1 answers with a lookup
+  call, step 2 with a valid structured value. Both requests go to
+  scripted-a / model-a and carry exactly the assembled context (step 2
+  adds the step-1 assistant message and the one `tool` message), exactly
+  one tool definition (lookup, as `{name, description, input}`), the
+  persona's output schema, and the effective generation parameters
+  (`params`, PROV-022). $sPlain (control): persona assistant has no output
+  schema and no runtime scope, so its request lists both tools and no
+  `outputSchema`.
+requirements: [PROV-002]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Persona
+        id: extractor
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test extractor
+        instructions: "Extract the record as JSON."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+          params: { maxOutputTokens: 512, temperature: 0.2 }
+        outputSchema:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties:
+            key: { type: string }
+            value: { type: string }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # $sSchema
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: structured, value: { key: k1, value: "SYN-VALUE-0002" } }]
+          usage: { inputTokens: 30, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sPlain
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b: { responses: [] }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "SYN-VALUE-0002" } }
+script:
+  - action: run
+    bind: $sSchema
+    tenant: t1
+    principal: p1
+    persona: extractor@1
+    runtimeScope: [lookup@1]
+    input: [{ type: text, text: "Extract record k1" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sPlain
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Say hello" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sSchema:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, step: 1, payload: { provider: scripted-a, model: model-a, role: primary } }
+          - { type: tool.result, payload: { callId: c1 } }
+          - { type: model.request, step: 2, payload: { provider: scripted-a, model: model-a, role: primary } }
+          - { type: run.ended, payload: { reason: responded } }
+  providerRequests:
+    scripted-a:
+      # $sSchema, step 1
+      - provider: scripted-a
+        model: model-a
+        messages:
+          - role: system
+            parts:
+              - { type: text, text: "Follow organisational policy.", provenance: system }
+              - { type: text, text: "Extract the record as JSON.", provenance: system }
+          - role: principal
+            parts: [{ type: text, text: "Extract record k1", provenance: principal, labels: [] }]
+        tools:
+          - name: lookup
+            description: Look up a record by key.
+            input:
+              type: object
+              additionalProperties: false
+              required: [key]
+              properties: { key: { type: string } }
+        outputSchema:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties:
+            key: { type: string }
+            value: { type: string }
+        params: { maxOutputTokens: 512, temperature: 0.2 }
+      # $sSchema, step 2
+      - provider: scripted-a
+        model: model-a
+        messages:
+          - role: system
+            parts:
+              - { type: text, text: "Follow organisational policy.", provenance: system }
+              - { type: text, text: "Extract the record as JSON.", provenance: system }
+          - role: principal
+            parts: [{ type: text, text: "Extract record k1", provenance: principal, labels: [] }]
+          - role: assistant
+            parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 }, provenance: model }]
+          - role: tool
+            parts: [{ type: tool_result, callId: c1, result: { ok: { output: { value: "SYN-VALUE-0002" } } }, provenance: "tool:lookup" }]
+        tools:
+          - name: lookup
+            description: Look up a record by key.
+            input:
+              type: object
+              additionalProperties: false
+              required: [key]
+              properties: { key: { type: string } }
+        outputSchema:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties:
+            key: { type: string }
+            value: { type: string }
+        params: { maxOutputTokens: 512, temperature: 0.2 }
+      # $sPlain
+      - provider: scripted-a
+        model: model-a
+        messages:
+          - role: system
+            parts:
+              - { type: text, text: "Follow organisational policy.", provenance: system }
+              - { type: text, text: "You are a test assistant.", provenance: system }
+          - role: principal
+            parts: [{ type: text, text: "Say hello", provenance: principal, labels: [] }]
+        tools:
+          $all:
+            - $len: 2
+            - $contains:
+                - { name: lookup, description: Look up a record by key. }
+                - { name: update_record, description: Update a record. }
+        outputSchema: { $absent: true }
+    scripted-b: { count: 0 }
+  delivered:
+    $sSchema:
+      parts:
+        $contains:
+          - { type: structured, value: { key: k1, value: "SYN-VALUE-0002" } }

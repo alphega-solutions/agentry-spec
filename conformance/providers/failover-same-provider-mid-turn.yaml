@@ -1,0 +1,158 @@
+schemaVersion: "0.1.0"
+id: providers.failover-same-provider-mid-turn
+title: Mid-turn failover stays on the same provider; without a same-provider fallback the run fails and the session closes
+description: >-
+  Every failure below is an authentication error (`unavailable`, not
+  retryable), so it is eligible for failover at once (PROV-060) and no
+  retries intervene.
+
+
+  - $sSame (persona `dual@1`: scripted-a/model-a, fallbacks
+    [scripted-a/model-a2, scripted-b/model-b]): step 1 succeeds with a
+    lookup call; step 2's call to model-a fails mid-turn. The harness fails
+    over to model-a2, a model of the same provider (PROV-061), and the run
+    responds.
+  - $sCross (persona `assistant@1`: scripted-a/model-a, only fallback
+    scripted-b/model-b): the same failure at step 2. The only fallback is
+    on a different provider, which is not allowed mid-turn (PROV-062): the
+    error is treated as `fatal`, the run ends `failed`, the session closes
+    `failed`, and scripted-b is never called.
+  - $sStart (control, persona `assistant@1`): the failure is on the turn's
+    first model call, so failover to scripted-b is allowed and the run
+    responds. This shows $sCross failed only because the failure was
+    mid-turn.
+
+
+  Per the PROV-062 reading (amendment 2026-11-02), failover to a different
+  provider is allowed until a session model call of the turn has
+  succeeded, so it covers the turn's first call; mid-turn, fallbacks of
+  another provider are not eligible.
+requirements: [PROV-061, PROV-062]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Persona
+        id: dual
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant with two fallbacks
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-a, name: model-a2 }
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # $sSame, step 1 (model-a)
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sSame, step 2 (model-a): fails
+        - error: { category: unavailable, code: agentry.provider.auth, retryable: false }
+        # $sSame, step 2 (model-a2)
+        - parts: [{ type: text, text: "SYN-SAME-PROVIDER reply." }]
+          usage: { inputTokens: 40, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sCross, step 1 (model-a)
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k2 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sCross, step 2 (model-a): fails, no same-provider fallback
+        - error: { category: unavailable, code: agentry.provider.auth, retryable: false }
+        # $sStart, step 1 (model-a): fails on the turn's first call
+        - error: { category: unavailable, code: agentry.provider.auth, retryable: false }
+    scripted-b:
+      responses:
+        # $sStart, step 1 (model-b)
+        - parts: [{ type: text, text: "SYN-TURN-START reply." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "SYN-VALUE-1" } }
+        - ok: { output: { value: "SYN-VALUE-2" } }
+script:
+  - action: run
+    bind: $sSame
+    tenant: t1
+    principal: p1
+    persona: dual@1
+    input: [{ type: text, text: "Look up k1" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sCross
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k2" }]
+    expect: { ok: true, endReason: failed }
+  - action: run
+    bind: $sStart
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sSame:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-a, model: model-a, role: primary } }
+          - { type: tool.result, payload: { callId: c1 } }
+          - { type: model.request, turn: 1, step: 2, payload: { provider: scripted-a, model: model-a, role: primary } }
+          - { type: error, payload: { error: { category: unavailable, code: agentry.provider.auth } } }
+          - { type: model.request, turn: 1, step: 2, payload: { provider: scripted-a, model: model-a2, role: fallback, fallbackReason: failover } }
+          - { type: run.ended, payload: { reason: responded } }
+    $sCross:
+      state: closed
+      closeReason: failed
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-a, model: model-a } }
+          - { type: tool.result, payload: { callId: c1 } }
+          - { type: model.request, turn: 1, step: 2, payload: { provider: scripted-a, model: model-a } }
+          - { type: error, payload: { error: { category: unavailable, code: agentry.provider.auth } } }
+          - { type: run.ended, payload: { reason: failed } }
+          - { type: session.closed, payload: { reason: failed } }
+      absentEvents:
+        - { type: model.request, payload: { provider: scripted-b } }
+        - { type: model.request, payload: { role: fallback } }
+        - { type: model.response, step: 2 }
+    $sStart:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-a, model: model-a, role: primary } }
+          - { type: error, payload: { error: { category: unavailable, code: agentry.provider.auth } } }
+          - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-b, model: model-b, role: fallback, fallbackReason: failover } }
+          - { type: run.ended, payload: { reason: responded } }
+  providerRequests:
+    scripted-a:
+      - { model: model-a }
+      - { model: model-a }
+      - { model: model-a2 }
+      - { model: model-a }
+      - { model: model-a }
+      - { model: model-a }
+    scripted-b:
+      - { model: model-b }
+  delivered:
+    $sSame: { text: "SYN-SAME-PROVIDER reply.", fallback: false }
+    $sStart: { text: "SYN-TURN-START reply.", fallback: false }

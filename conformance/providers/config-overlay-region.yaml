@@ -1,0 +1,193 @@
+schemaVersion: "0.1.0"
+id: providers.config-overlay-region
+title: Policies are evaluated on provider declarations after environment overlays; an overlay that moves a provider's region is re-evaluated
+description: >-
+  org@1 sets `dataResidency: [test-region, test-region-2]`, and its pii
+  policy requires `provider.region == 'test-region'`. Both providers start
+  in test-region. The rule hook pii-tagger labels content pii when it holds
+  SYN-PII-0041. Persona assistant: primary scripted-b/model-b, fallback
+  scripted-a/model-a. Persona solo: scripted-b/model-b only.
+
+  1. $s1 (no overlay): pii content goes to the primary on scripted-b,
+     which satisfies the requirement.
+  2. A `prod` overlay moves scripted-b to `other-region`, outside
+     `dataResidency`: solo's only model is no longer allowed → the load is
+     rejected. The previous snapshot stays in force: $s2 (pii) still runs
+     on scripted-b.
+  3. A `prod` overlay moves scripted-b to `test-region-2` (inside
+     `dataResidency`) and loads. The pii requirement is evaluated on the
+     overlaid region: $s3 (pii) is routed to the scripted-a fallback, with
+     a routing `policy.decision`; $s4 (no label, control) still uses
+     scripted-b.
+
+  Each overlay restates both provider declarations in full; only
+  scripted-b's region differs from the baseline.
+requirements: [PROV-013]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        dataResidency: [test-region, test-region-2]
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            providerRequirement: "provider.region == 'test-region'"
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+      - kind: Hook
+        id: pii-tagger
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeModelCall]
+        results: [annotate]
+        timeoutMs: 1000
+        source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-PII-0041'))", then: { result: annotate, labels: [pii] } }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [pii-tagger@1]
+        model:
+          provider: scripted-b
+          name: model-b
+          fallbacks:
+            - { provider: scripted-a, name: model-a }
+      - kind: Persona
+        id: solo
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [pii-tagger@1]
+        model: { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Three on a." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      responses:
+        - parts: [{ type: text, text: "One on b." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Two on b." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Four on b." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $s1
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "First SYN-PII-0041" }]
+    expect: { ok: true, endReason: responded }
+  # Overlay moves scripted-b outside dataResidency.
+  - load:
+      overlay:
+        environment: prod
+        deployment:
+          providers:
+            - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+            - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: other-region, retainsData: false }
+    expect: { ok: false, error: { category: configuration } }
+  - action: run
+    bind: $s2
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Second SYN-PII-0041" }]
+    expect: { ok: true, endReason: responded }
+  # Overlay moves scripted-b to another resident region that fails the pii requirement.
+  - load:
+      overlay:
+        environment: prod
+        deployment:
+          providers:
+            - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+            - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region-2, retainsData: false }
+    expect: { ok: true }
+  - action: run
+    bind: $s3
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Third SYN-PII-0041" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $s4
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Fourth plain" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s1:
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: pii-tagger@1, result: annotate, labelsAdded: [pii] } }
+          - { type: model.request, payload: { provider: scripted-b, model: model-b, role: primary } }
+      absentEvents:
+        - { type: policy.decision }
+    $s2:
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: pii-tagger@1, result: annotate, labelsAdded: [pii] } }
+          - { type: model.request, payload: { provider: scripted-b, model: model-b, role: primary } }
+      absentEvents:
+        - { type: policy.decision }
+    $s3:
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: pii-tagger@1, result: annotate, labelsAdded: [pii] } }
+          - { type: policy.decision, payload: { kind: routing, outcome: switch, details: { provider: scripted-a, model: model-a } } }
+          - { type: model.request, payload: { provider: scripted-a, model: model-a, role: fallback, fallbackReason: routing } }
+      absentEvents:
+        - { type: model.request, payload: { provider: scripted-b } }
+    $s4:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, payload: { provider: scripted-b, model: model-b, role: primary } }
+      absentEvents:
+        - { type: policy.decision }
+  providerRequests:
+    scripted-a:
+      - messages: { $contains: [{ parts: { $contains: [{ type: text, text: "Third SYN-PII-0041" }] } }] }
+    scripted-b:
+      - messages: { $contains: [{ parts: { $contains: [{ type: text, text: "First SYN-PII-0041" }] } }] }
+      - messages: { $contains: [{ parts: { $contains: [{ type: text, text: "Second SYN-PII-0041" }] } }] }
+      - messages: { $contains: [{ parts: { $contains: [{ type: text, text: "Fourth plain" }] } }] }
+  delivered:
+    $s1: { text: "One on b." }
+    $s2: { text: "Two on b." }
+    $s3: { text: "Three on a." }
+    $s4: { text: "Four on b." }

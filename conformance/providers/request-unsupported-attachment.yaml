@@ -1,0 +1,167 @@
+schemaVersion: "0.1.0"
+id: providers.request-unsupported-attachment
+title: "`run()` with an attachment no allowed model supports is rejected before a run starts; one that only a fallback supports goes to the first capable fallback"
+description: >-
+  The deployment adds scripted-c. scripted-a and scripted-b declare
+  `vision: false`; scripted-c keeps the default `vision: true`; every
+  model keeps `documents: true`. Persona assistant (baseline) has primary
+  scripted-a and fallback scripted-b; persona viewer has primary scripted-a
+  and fallbacks scripted-b then scripted-c.
+
+  - Step 0 (assistant + image attachment): no model of the persona has
+    `vision`, so `run()` fails with `invalid_input`,
+    agentry.provider.unsupported_content, and nothing is persisted: no
+    session, no `run.started`, no provider request (PROV-042, first
+    bullet).
+  - $sFile (control, assistant + file attachment): scripted-a has
+    `documents`, so the run starts and the primary is used.
+  - $sView (viewer + image attachment): a capable fallback exists, so
+    `run()` is accepted; the call skips scripted-a (no vision) and
+    scripted-b (no vision) and goes to scripted-c, recorded as
+    `role: fallback`, `fallbackReason: capability`, with no
+    `policy.decision` (Providers amendment 2026-11-02). Neither scripted-a
+    nor scripted-b receives the image.
+
+  Content only a fallback supports is accepted at `run()` and sent to the
+  first capable, allowed fallback (PROV-042 reading, amendment 2026-11-02).
+requirements: [PROV-042]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          - { id: scripted-c, adapter: scripted, endpoint: "memory://scripted-c", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: Persona
+        id: viewer
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test viewer
+        instructions: "You are a test assistant."
+        tools: [lookup@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+            - { provider: scripted-c, name: model-c }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { vision: false }
+      responses:
+        # $sFile
+        - parts: [{ type: text, text: "Read the notes." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      capabilities: { vision: false }
+      responses: []
+    scripted-c:
+      responses:
+        # $sView
+        - parts: [{ type: text, text: "I see a chart." }]
+          usage: { inputTokens: 30, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+  ports:
+    blobStore:
+      t1:
+        - id: blob-img-42
+          hash: "sha256:b137d4fedee2dcd3f23a9e3f3d774e5d254879e2fd178bc2fc46df934cf936b0"
+          mediaType: image/png
+          size: 19
+          data: "U1lOLUlNQUdFLVBST1YtMDA0Mg=="
+        - id: blob-file-42
+          hash: "sha256:a15b0be820818ef0fe6de895330b9076ce0bd10e3a78ff7f6424f6d4505040ed"
+          mediaType: text/plain
+          size: 32
+          data: "U1lOLUZJTEUtUFJPVi0wMDQyOiB3aWRnZXQgbm90ZXM="
+script:
+  - action: run
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input:
+      - { type: text, text: "Describe this" }
+      - { type: image, mediaType: image/png, source: upload, blob: { id: blob-img-42, hash: "sha256:b137d4fedee2dcd3f23a9e3f3d774e5d254879e2fd178bc2fc46df934cf936b0", mediaType: image/png, size: 19 } }
+    expect: { ok: false, error: { category: invalid_input, code: agentry.provider.unsupported_content }, newEvents: 0 }
+  - action: run
+    bind: $sFile
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input:
+      - { type: text, text: "Read these notes" }
+      - { type: file, mediaType: text/plain, name: notes.txt, source: upload, blob: { id: blob-file-42, hash: "sha256:a15b0be820818ef0fe6de895330b9076ce0bd10e3a78ff7f6424f6d4505040ed", mediaType: text/plain, size: 32 } }
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sView
+    tenant: t1
+    principal: p1
+    persona: viewer@1
+    input:
+      - { type: text, text: "Describe this" }
+      - { type: image, mediaType: image/png, source: upload, blob: { id: blob-img-42, hash: "sha256:b137d4fedee2dcd3f23a9e3f3d774e5d254879e2fd178bc2fc46df934cf936b0", mediaType: image/png, size: 19 } }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sFile:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, payload: { provider: scripted-a, model: model-a, role: primary, fallbackReason: { $absent: true } } }
+          - { type: run.ended, payload: { reason: responded } }
+    $sView:
+      events:
+        mode: subsequence
+        items:
+          - { type: run.started }
+          - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-c, model: model-c, role: fallback, fallbackReason: capability } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: policy.decision }
+        - { type: model.request, payload: { provider: scripted-a } }
+        - { type: model.request, payload: { provider: scripted-b } }
+  providerRequests:
+    scripted-a:
+      - messages:
+          $contains:
+            - role: principal
+              parts:
+                - { type: text, text: "Read these notes" }
+                - { type: file, blob: { id: blob-file-42 } }
+    scripted-b: { count: 0 }
+    scripted-c:
+      - messages:
+          $contains:
+            - role: principal
+              parts:
+                - { type: text, text: "Describe this" }
+                - { type: image, blob: { id: blob-img-42 }, provenance: "attachment:upload" }
+  delivered:
+    $sFile: { text: "Read the notes.", fallback: false }
+    $sView: { text: "I see a chart.", fallback: false }

@@ -1,0 +1,56 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://alphega.io/agentry/schemas/conformance/adapter-manifest/v1.json
+title: Provider adapter manifest
+description: >-
+  What a provider adapter declares (PROV-008, PROV-009): for each model it
+  serves, its capabilities (PROV-030) and the generation parameters it
+  accepts (PROV-022). Configuration is checked against it at load time
+  (PROV-022, PROV-031, PROV-040). A framework-wrapping adapter also names
+  the vendor endpoint it reaches, and runs the adapter cases against that
+  vendor's transcripts. Each adapter publishes its manifest with its
+  transcripts under `conformance/adapters/manifests/<adapter>.yaml`.
+type: object
+additionalProperties: false
+required: [schemaVersion, adapter, kind, models]
+properties:
+  schemaVersion: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/contractVersion" }
+  adapter:
+    description: The adapter ID a deployment's provider declaration names.
+    type: string
+    pattern: "^[a-z0-9][a-z0-9_.-]*$"
+  kind: { enum: [native, framework, scripted] }
+  vendorEndpoint:
+    description: For `framework` adapters, the vendor endpoint kind it reaches (PROV-009), whose transcripts it runs.
+    type: string
+    minLength: 1
+  models:
+    description: Model name → declaration. `*` declares every model the adapter serves (the scripted adapter).
+    type: object
+    minProperties: 1
+    additionalProperties:
+      type: object
+      additionalProperties: false
+      required: [capabilities, params]
+      properties:
+        capabilities:
+          type: object
+          additionalProperties: false
+          required: [contextLimit, maxOutputTokens, toolUse, parallelToolCalls, structuredOutput, vision, documents, reasoning, streaming]
+          properties:
+            contextLimit: { type: integer, minimum: 1 }
+            maxOutputTokens: { type: integer, minimum: 1 }
+            toolUse: { type: boolean }
+            parallelToolCalls: { type: boolean }
+            structuredOutput: { type: boolean }
+            vision: { type: boolean }
+            documents: { type: boolean }
+            reasoning: { type: boolean }
+            streaming: { type: boolean }
+        params:
+          description: Names of the generation parameters accepted (PROV-022).
+          type: array
+          uniqueItems: true
+          items: { type: string, pattern: "^[a-z][A-Za-z0-9]{0,63}$" }
+if: { properties: { kind: { const: framework } } }
+then: { required: [vendorEndpoint] }
+else: { not: { required: [vendorEndpoint] } }

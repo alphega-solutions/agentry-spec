@@ -1,0 +1,148 @@
+schemaVersion: "0.1.0"
+id: providers.config-capability-restrict-context
+title: A deployment restriction lowering a model's contextLimit is honoured by compaction
+description: >-
+  scripted-a and scripted-b both declare contextLimit 1000 and
+  maxOutputTokens 20; the profile compacts by truncation at the default
+  90%. System content is 8 tokens ("Follow organisational policy." 3 +
+  "You are a test assistant." 5). In each session, turn 1 sends 8 + 40 = 48
+  tokens and gets a 2-word reply; turn 2 sends 8 + 40 + 2 + 30 = 80.
+
+  - $sWide, before any restriction: space 1000 − 20 = 980, trigger level
+    882; 80 fits, no compaction, and turn 2 carries turn 1.
+  - A deployment restricting scripted-a/model-a to `contextLimit: 100`
+    loads.
+  - $sNarrow, after it: the smallest candidate limit is now 100, space 80,
+    trigger level 72. Turn 1 (48) fits; turn 2 (80 > 72) compacts turn 1
+    away (8 + 30 = 38), recorded by `context.compacted`, and its request
+    holds a single principal message.
+
+  Both sessions are identical apart from the snapshot they were created
+  under. scripted-b is never called.
+requirements: [PROV-031]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: []
+        context: { compaction: { mode: truncate } }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { contextLimit: 1000, maxOutputTokens: 20 }
+      responses:
+        # $sWide
+        - parts: [{ type: text, text: "Reply one." }]
+          usage: { inputTokens: 48, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Reply two." }]
+          usage: { inputTokens: 80, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sNarrow
+        - parts: [{ type: text, text: "Reply one." }]
+          usage: { inputTokens: 48, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Reply two." }]
+          usage: { inputTokens: 38, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      capabilities: { contextLimit: 1000, maxOutputTokens: 20 }
+      responses: []
+script:
+  - action: run
+    bind: $sWide
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYN-WA-01 SYN-WA-02 SYN-WA-03 SYN-WA-04 SYN-WA-05 SYN-WA-06 SYN-WA-07 SYN-WA-08 SYN-WA-09 SYN-WA-10 SYN-WA-11 SYN-WA-12 SYN-WA-13 SYN-WA-14 SYN-WA-15 SYN-WA-16 SYN-WA-17 SYN-WA-18 SYN-WA-19 SYN-WA-20 SYN-WA-21 SYN-WA-22 SYN-WA-23 SYN-WA-24 SYN-WA-25 SYN-WA-26 SYN-WA-27 SYN-WA-28 SYN-WA-29 SYN-WA-30 SYN-WA-31 SYN-WA-32 SYN-WA-33 SYN-WA-34 SYN-WA-35 SYN-WA-36 SYN-WA-37 SYN-WA-38 SYN-WA-39 SYN-WA-40" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $sWide
+    principal: p1
+    input: [{ type: text, text: "SYN-WB-01 SYN-WB-02 SYN-WB-03 SYN-WB-04 SYN-WB-05 SYN-WB-06 SYN-WB-07 SYN-WB-08 SYN-WB-09 SYN-WB-10 SYN-WB-11 SYN-WB-12 SYN-WB-13 SYN-WB-14 SYN-WB-15 SYN-WB-16 SYN-WB-17 SYN-WB-18 SYN-WB-19 SYN-WB-20 SYN-WB-21 SYN-WB-22 SYN-WB-23 SYN-WB-24 SYN-WB-25 SYN-WB-26 SYN-WB-27 SYN-WB-28 SYN-WB-29 SYN-WB-30" }]
+    expect: { ok: true, endReason: responded }
+  - load:
+      artifacts:
+        - kind: Deployment
+          id: test
+          version: 1
+          schemaVersion: "0.1.0"
+          environment: test
+          policyBundles: [org@1]
+          attachmentSources: [upload, email]
+          providers:
+            - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false, capabilities: { model-a: { contextLimit: 100 } } }
+            - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          ports:
+            eventLog: { adapter: memory, region: test-region }
+            checkpointStore: { adapter: memory, region: test-region }
+            idempotencyStore: { adapter: memory, region: test-region }
+            snapshotStore: { adapter: memory, region: test-region }
+            blobStore: { adapter: memory, region: test-region }
+            auditLog: { adapter: memory, region: test-region }
+            secrets: { adapter: memory, region: test-region }
+          retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+    expect: { ok: true }
+  - action: run
+    bind: $sNarrow
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYN-NA-01 SYN-NA-02 SYN-NA-03 SYN-NA-04 SYN-NA-05 SYN-NA-06 SYN-NA-07 SYN-NA-08 SYN-NA-09 SYN-NA-10 SYN-NA-11 SYN-NA-12 SYN-NA-13 SYN-NA-14 SYN-NA-15 SYN-NA-16 SYN-NA-17 SYN-NA-18 SYN-NA-19 SYN-NA-20 SYN-NA-21 SYN-NA-22 SYN-NA-23 SYN-NA-24 SYN-NA-25 SYN-NA-26 SYN-NA-27 SYN-NA-28 SYN-NA-29 SYN-NA-30 SYN-NA-31 SYN-NA-32 SYN-NA-33 SYN-NA-34 SYN-NA-35 SYN-NA-36 SYN-NA-37 SYN-NA-38 SYN-NA-39 SYN-NA-40" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $sNarrow
+    principal: p1
+    input: [{ type: text, text: "SYN-NB-01 SYN-NB-02 SYN-NB-03 SYN-NB-04 SYN-NB-05 SYN-NB-06 SYN-NB-07 SYN-NB-08 SYN-NB-09 SYN-NB-10 SYN-NB-11 SYN-NB-12 SYN-NB-13 SYN-NB-14 SYN-NB-15 SYN-NB-16 SYN-NB-17 SYN-NB-18 SYN-NB-19 SYN-NB-20 SYN-NB-21 SYN-NB-22 SYN-NB-23 SYN-NB-24 SYN-NB-25 SYN-NB-26 SYN-NB-27 SYN-NB-28 SYN-NB-29 SYN-NB-30" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sWide:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, turn: 2, step: 1, payload: { provider: scripted-a, model: model-a } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: context.compacted }
+    $sNarrow:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.response, turn: 1, step: 1 }
+          - { type: context.compacted, turn: 2, step: 1, payload: { mode: truncate, units: [{ turn: 1 }] } }
+          - { type: model.request, turn: 2, step: 1, payload: { provider: scripted-a, model: model-a } }
+          - { type: run.ended, payload: { reason: responded } }
+  providerRequests:
+    scripted-a:
+      - {}
+      - messages:
+          $all:
+            - $count: { of: { role: principal }, equals: 2 }
+            - $contains:
+                - role: principal
+                  parts: [{ type: text, text: "SYN-WA-01 SYN-WA-02 SYN-WA-03 SYN-WA-04 SYN-WA-05 SYN-WA-06 SYN-WA-07 SYN-WA-08 SYN-WA-09 SYN-WA-10 SYN-WA-11 SYN-WA-12 SYN-WA-13 SYN-WA-14 SYN-WA-15 SYN-WA-16 SYN-WA-17 SYN-WA-18 SYN-WA-19 SYN-WA-20 SYN-WA-21 SYN-WA-22 SYN-WA-23 SYN-WA-24 SYN-WA-25 SYN-WA-26 SYN-WA-27 SYN-WA-28 SYN-WA-29 SYN-WA-30 SYN-WA-31 SYN-WA-32 SYN-WA-33 SYN-WA-34 SYN-WA-35 SYN-WA-36 SYN-WA-37 SYN-WA-38 SYN-WA-39 SYN-WA-40" }]
+      - {}
+      - messages:
+          $all:
+            - $count: { of: { role: principal }, equals: 1 }
+            - $count: { of: { role: assistant }, equals: 0 }
+            - $contains:
+                - role: principal
+                  parts: [{ type: text, text: "SYN-NB-01 SYN-NB-02 SYN-NB-03 SYN-NB-04 SYN-NB-05 SYN-NB-06 SYN-NB-07 SYN-NB-08 SYN-NB-09 SYN-NB-10 SYN-NB-11 SYN-NB-12 SYN-NB-13 SYN-NB-14 SYN-NB-15 SYN-NB-16 SYN-NB-17 SYN-NB-18 SYN-NB-19 SYN-NB-20 SYN-NB-21 SYN-NB-22 SYN-NB-23 SYN-NB-24 SYN-NB-25 SYN-NB-26 SYN-NB-27 SYN-NB-28 SYN-NB-29 SYN-NB-30" }]
+    scripted-b: { count: 0 }

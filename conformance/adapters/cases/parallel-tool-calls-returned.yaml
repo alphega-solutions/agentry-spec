@@ -1,0 +1,31 @@
+schemaVersion: "0.1.0"
+id: adapter.parallel-tool-calls-returned
+title: Without singleToolCall, several tool calls in one response are all returned
+description: >-
+  Control for `adapter.single-tool-call-requested`: the same request without
+  `singleToolCall`. The provider answers with two `lookup` calls; the adapter
+  returns both as `tool_call` parts in the provider's order, with distinct
+  call IDs, and executes neither.
+requirements: [PROV-043, PROV-001, PROV-004, PROV-009]
+condition: ok_parallel_tool_calls
+request:
+  model: model-a
+  messages:
+    - role: principal
+      parts:
+        - { type: text, text: "Look up records A-100 and B-200.", provenance: principal, labels: [] }
+  tools:
+    - name: lookup
+      description: Look up a record by key.
+      input:
+        type: object
+        additionalProperties: false
+        required: [key]
+        properties:
+          key: { type: string }
+expect:
+  parts:
+    - { type: tool_call, callId: "$c1", tool: lookup, arguments: { key: "A-100" } }
+    - { type: tool_call, callId: { "$not": "$c1" }, tool: lookup, arguments: { key: "B-200" } }
+  wire:
+    noBuiltinToolExecution: true

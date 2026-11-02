@@ -18,7 +18,9 @@ description: >-
 
   - $sCounted: the summarizer uses 40 + 10 = 50; step 1 then uses 57 + 5
     = 62 and asks for a lookup. The turn has used 112, so the budget is
-    exhausted and no step-2 call is made: the run ends `budget_exhausted`.
+    reached: the step-1 call completes and its lookup is dispatched, and
+    the check before step 2 ends the run `budget_exhausted` with no step-2
+    call.
     Without the summarizer's 50 the turn would be at 62 and would continue.
     The summarizer's usage is recorded on `context.compacted`, so
     `run.ended` carries no `unrecordedUsage`.
@@ -28,10 +30,18 @@ description: >-
     `context.compacted`), and the summarizer's usage is recorded as
     `unrecordedUsage` on `run.ended` (CTX-084 as amended).
 
+  Budget placement follows the Area 9 reading of PROV-071, PROV-074 and
+  CFG-091 (amendment 2026-11-02, "Readings settled with the Area 9
+  fixtures"): budgets are checked before each session model call and
+  before each summarizer call; a session call that reaches the budget
+  completes, including dispatching its tool calls; a summarizer call that
+  reaches it ends the run at once, its usage (and cost, when priced) on
+  `run.ended` as `unrecordedUsage` (`unrecordedCost`). No model here is
+  priced, so `unrecordedCost` is not asserted.
+
   Every candidate (scripted-a, scripted-b) sets maxOutputTokens 20, so the
-  default reserve is 20. Both sessions are idle afterwards. Not asserted:
-  whether $sCounted's lookup runs before the run ends.
-requirements: [CTX-084]
+  default reserve is 20. Both sessions are idle afterwards.
+requirements: [CTX-084, PROV-071]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:
@@ -156,3 +166,5 @@ expect:
     scripted-a: { count: 3 }
     scripted-sum: { count: 2 }
     scripted-b: { count: 0 }
+  stubCalls:
+    lookup: { count: 1 }

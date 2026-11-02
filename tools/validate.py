@@ -14,6 +14,7 @@ from common import ROOT, fixture_files, load_schemas, load_yaml, registry, spec_
 
 FIXTURE_ID = "https://alphega.io/agentry/schemas/conformance/fixture/v1.json"
 CEL_ID = "https://alphega.io/agentry/schemas/conformance/cel-fixture/v1.json"
+ADAPTER_ID = "https://alphega.io/agentry/schemas/conformance/adapter-case/v1.json"
 
 
 PLACEHOLDER = re.compile(r"^\$[A-Za-z_][A-Za-z0-9_]*$")
@@ -583,7 +584,19 @@ def check_handlers(doc: dict) -> list[str]:
 
 
 MATCHERS = {"$any", "$absent", "$regex", "$len", "$contains", "$not", "$every",
-            "$gte", "$lte", "$all", "$count"}
+            "$gte", "$lte", "$all", "$count", "$selfProvider"}
+
+
+def _self_provider_as_string(value):
+    """Adapter cases: `{"$selfProvider": true}` stands for the adapter's
+    declared provider ID; check it as the string it will become."""
+    if value == {"$selfProvider": True}:
+        return "self-provider"
+    if isinstance(value, dict):
+        return {k: _self_provider_as_string(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_self_provider_as_string(v) for v in value]
+    return value
 
 
 def _pattern_sites(doc: dict):
@@ -828,8 +841,14 @@ def main() -> int:
     ids: set[str] = set()
     for fx in fixture_files():
         doc = load_yaml(fx)
-        target = CEL_ID if str(doc.get("id", "")).startswith("cel.") else FIXTURE_ID
-        for err in validator(target).iter_errors(doc):
+        rel = fx.relative_to(ROOT / "conformance").parts
+        target = (CEL_ID if rel[0] == "cel"
+                  else ADAPTER_ID if rel[:2] == ("adapters", "cases") else FIXTURE_ID)
+        prefix = {CEL_ID: "cel.", ADAPTER_ID: "adapter."}.get(target)
+        if prefix and not str(doc.get("id", "")).startswith(prefix):
+            errors.append(f"{fx.relative_to(ROOT)}: id must start with {prefix!r}")
+        checked = _self_provider_as_string(doc) if target == ADAPTER_ID else doc
+        for err in validator(target).iter_errors(checked):
             errors.append(f"{fx.relative_to(ROOT)}: {describe(err)}")
         fid = doc.get("id")
         if fid in ids:
@@ -846,6 +865,11 @@ def main() -> int:
             errors += [f"{fx.relative_to(ROOT)}: {e}" for e in check_placeholder_keys(doc)]
             errors += [f"{fx.relative_to(ROOT)}: {e}" for e in check_crashes(doc)]
             errors += [f"{fx.relative_to(ROOT)}: {e}" for e in check_stub_call_keys(doc)]
+
+    # 3b. Adapter manifests validate against their format.
+    for mf in sorted((ROOT / "conformance" / "adapters" / "manifests").glob("*.yaml")):
+        for err in validator("https://alphega.io/agentry/schemas/conformance/adapter-manifest/v1.json").iter_errors(load_yaml(mf)):
+            errors.append(f"{mf.relative_to(ROOT)}: {describe(err)}")
 
     # 4. Shared configuration artifacts validate against their kind's schema.
     errors += check_shared_config(schemas, reg)

@@ -1,0 +1,121 @@
+schemaVersion: "0.1.0"
+id: providers.usage-recorded
+title: Normalized usage is recorded for every call, including failed calls that report it; unreported fields are 0
+description: >-
+  Persona `assistant@1` on scripted-a/model-a.
+
+
+  - $s: step 1 reports full usage, with cached input inside input and
+    reasoning inside output (100 input of which 40 cached; 30 output of
+    which 20 reasoning); its `model.response` records exactly those values,
+    not cached or reasoning tokens added on top. Step 2's provider reports
+    only input and output tokens; its `model.response` records
+    `cachedInputTokens` and `reasoningTokens` as 0.
+  - $sErr: the first call fails with a retryable `unavailable` and reports
+    only 70 input tokens: its `error` event carries the provider and model
+    called and usage {70, 0, 0, 0} (PROV-006, PROV-070, 2026-11-02
+    amendment). The first retry fails without reporting usage: its `error`
+    event carries no `usage`. The second retry answers without reporting
+    usage at all: its `model.response` records all four fields as 0.
+
+
+  A scripted response's `usage` is the usage the provider reports, for a
+  success or an error; a field left out is one the provider does not
+  report, and no `usage` means none is reported (fixture format,
+  `scriptedResponse.usage`). That the harness treats cached and reasoning
+  tokens as inside input and output is also observable through budgets
+  (providers.usage-budget-failed-calls) and cost (providers.cost-recorded).
+requirements: [PROV-006, PROV-070]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # $s, step 1: full usage
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 100, outputTokens: 30, cachedInputTokens: 40, reasoningTokens: 20 }
+        # $s, step 2: cached and reasoning not reported
+        - parts: [{ type: text, text: "SYN-USAGE reply." }]
+          usage: { inputTokens: 50, outputTokens: 5 }
+        # $sErr: failed call reporting input only
+        - error: { category: unavailable, code: agentry.provider.unavailable, retryable: true }
+          usage: { inputTokens: 70 }
+        # $sErr: failed call reporting no usage
+        - error: { category: unavailable, code: agentry.provider.unavailable, retryable: true }
+        # $sErr: answer reporting no usage
+        - parts: [{ type: text, text: "SYN-RETRIED reply." }]
+    scripted-b: { responses: [] }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "SYN-VALUE-1" } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sErr
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - type: model.response
+            step: 1
+            payload:
+              provider: scripted-a
+              model: model-a
+              usage: { inputTokens: 100, outputTokens: 30, cachedInputTokens: 40, reasoningTokens: 20 }
+          - type: model.response
+            step: 2
+            payload:
+              provider: scripted-a
+              model: model-a
+              usage: { inputTokens: 50, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+          - { type: run.ended, payload: { reason: responded } }
+    $sErr:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, step: 1, payload: { provider: scripted-a, model: model-a } }
+          - type: error
+            payload:
+              provider: scripted-a
+              model: model-a
+              error: { category: unavailable, code: agentry.provider.unavailable }
+              usage: { inputTokens: 70, outputTokens: 0, cachedInputTokens: 0, reasoningTokens: 0 }
+          - { type: model.request, step: 1, payload: { provider: scripted-a, model: model-a } }
+          - type: error
+            payload:
+              provider: scripted-a
+              model: model-a
+              error: { category: unavailable, code: agentry.provider.unavailable }
+              usage: { $absent: true }
+          - { type: model.request, step: 1, payload: { provider: scripted-a, model: model-a } }
+          - type: model.response
+            step: 1
+            payload:
+              provider: scripted-a
+              model: model-a
+              usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, reasoningTokens: 0 }
+          - { type: run.ended, payload: { reason: responded } }
+  providerRequests:
+    scripted-a: { count: 5 }
+    scripted-b: { count: 0 }

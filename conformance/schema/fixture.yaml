@@ -43,9 +43,14 @@ description: >-
   its event was persisted.
 
 
-  Scripted provider `capabilities` are merged over defaults in which every
-  boolean capability is true, `contextLimit` is 1,000,000 tokens and
-  `maxOutputTokens` is 4,096. Record shapes
+  Numbers in expectations (for example `cost.amount`) are compared as
+  decimals with an absolute tolerance of 1e-9.
+
+
+  Scripted provider `capabilities` are merged over the scripted adapter's
+  declaration in `conformance/adapters/manifests/scripted.yaml` (every
+  boolean capability true, `contextLimit` 1,000,000, `maxOutputTokens`
+  4,096), which also lists the generation parameters it accepts. Record shapes
   (stub calls, provider requests, port records) are defined under `expect`.
 type: object
 additionalProperties: false
@@ -290,7 +295,13 @@ $defs:
         description: Deltas to emit before the final response, when streaming.
         type: array
         items: { type: string }
-      usage: { type: object }
+      usage:
+        description: >-
+          The usage the provider reports for this call, success or error.
+          A field left out is one the provider does not report (normalized
+          to 0, PROV-070); no `usage` at all means none is reported (on an
+          error, the `error` event then carries no usage).
+        type: object
       error:
         type: object
         required: [category]
@@ -836,7 +847,10 @@ $defs:
         description: >-
           Requests captured by scripted providers, keyed by provider ID,
           matched in order (partial match). Each record is `{ provider,
-          model, messages, tools, outputSchema }`: `messages` is the
+          model, messages, tools, outputSchema, params, singleToolCall }`
+          (`params` the generation parameters sent, PROV-002;
+          `singleToolCall` true when the request permits at most one tool
+          call, PROV-043): `messages` is the
           assembled context as content messages, in which a step's tool
           results are ONE message with role `tool` holding every
           `tool_result` part of that step, in request order (TOOL-032);

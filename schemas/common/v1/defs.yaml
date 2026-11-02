@@ -84,6 +84,20 @@ $defs:
   runEndReason:
     description: CORE-060 as amended by Area 7 (context_limit).
     enum: [responded, escalated, blocked, step_limit, budget_exhausted, context_limit, timeout, cancelled, failed]
+  cost:
+    description: >-
+      Cost of a model call (PROV-074), from normalized usage and the price
+      table in the session's snapshot, in the price table's currency:
+      (inputTokens − cachedInputTokens) × input + cachedInputTokens ×
+      cachedInput + (outputTokens − reasoningTokens) × output +
+      reasoningTokens × reasoning, each price per million tokens. Present
+      only when the model is priced.
+    type: object
+    additionalProperties: false
+    required: [amount, currency]
+    properties:
+      amount: { type: number, minimum: 0 }
+      currency: { type: string, pattern: "^[A-Z]{3}$" }
   usage:
     description: Normalized usage (PROV-070).
     type: object

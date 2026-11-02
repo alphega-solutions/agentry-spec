@@ -18,9 +18,10 @@ description: >-
 
   A rejected load is not clamped to a permitted value and accepted: the
   session created at the end is pinned to the snapshot of the last accepted
-  load and calls scripted-a/model-a. Each rejection's details name the
+  load and calls scripted-a/model-a with the merged maxOutputTokens 500.
+  Each rejection's details name the
   artifact, the field (a JSON Pointer into that artifact) and the layer.
-requirements: [CFG-020, CFG-032]
+requirements: [CFG-020, CFG-032, PROV-020]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:
@@ -113,5 +114,6 @@ expect:
           - { type: session.created, snapshotHash: { $all: [$hProfile, { $not: $hPersona }] } }
           - { type: model.request, payload: { provider: scripted-a, model: model-a } }
   providerRequests:
-    scripted-a: { count: 1 }
+    scripted-a:
+      - { provider: scripted-a, model: model-a, params: { maxOutputTokens: 500 } }
     scripted-b: { count: 0 }

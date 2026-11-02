@@ -1,0 +1,75 @@
+schemaVersion: "0.1.0"
+id: providers.config-undeclared-provider
+title: A model on a provider the deployment does not declare is rejected, wherever the model is named
+description: >-
+  The deployment declares scripted-a and scripted-b only; no layer restricts
+  providers (the baseline bundle sets no `allowedProviders`), so an
+  undeclared provider is the only error in each failing load. A model on
+  the undeclared `scripted-z` is rejected as a persona's primary model, as a
+  fallback, as `compaction.model`, and as a model hook's model. Controls:
+  the same summarizer slot naming scripted-b loads, and the model hook
+  loads once the deployment declares scripted-z.
+requirements: [PROV-011]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+script:
+  # Primary model on an undeclared provider.
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], model: { provider: scripted-z, name: model-z } }
+    expect: { ok: false, error: { category: configuration } }
+  # Fallback on an undeclared provider.
+  - load:
+      artifacts:
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }, { provider: scripted-z, name: model-z }] } }
+    expect: { ok: false, error: { category: configuration } }
+  # Summarizer model on an undeclared provider.
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, deliveryMode: buffered, budget: { tokens: 100000 }, timeouts: { run: PT5M, tool: PT30S }, retry: { unavailable: 2 }, outputRetryLimit: 2, limits: { partSize: 1048576, sessionSize: 10485760 }, defaultAttachmentLabels: [], context: { compaction: { mode: summarize, model: { provider: scripted-z, name: sum-z } } } }
+    expect: { ok: false, error: { category: configuration } }
+  # Control: the same summarizer slot on a declared provider.
+  - load:
+      artifacts:
+        - { kind: HarnessProfile, id: default, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, deliveryMode: buffered, budget: { tokens: 100000 }, timeouts: { run: PT5M, tool: PT30S }, retry: { unavailable: 2 }, outputRetryLimit: 2, limits: { partSize: 1048576, sessionSize: 10485760 }, defaultAttachmentLabels: [], context: { compaction: { mode: summarize, model: { provider: scripted-b, name: model-b } } } }
+    expect: { ok: true }
+  # Model hook on an undeclared provider.
+  - load:
+      artifacts:
+        - { kind: Hook, id: judge, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [block], timeoutMs: 5000, source: { kind: model, model: { provider: scripted-z, name: judge-z }, instructions: "Classify the request. Answer with a HookResult.", maxTokens: 200 } }
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], requiredHooks: [judge@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }] } }
+    expect: { ok: false, error: { category: configuration } }
+  # Control: the same hook once scripted-z is declared.
+  - load:
+      artifacts:
+        - { kind: Hook, id: judge, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [block], timeoutMs: 5000, source: { kind: model, model: { provider: scripted-z, name: judge-z }, instructions: "Classify the request. Answer with a HookResult.", maxTokens: 200 } }
+        - { kind: Persona, id: assistant, version: 1, schemaVersion: "0.1.0", instructions: "You are a test assistant.", tools: [lookup@1, update_record@1], fallbackMessage: "This request was blocked.", defaultProfile: default@1, allowedProfiles: [default@1, streamed@1], requiredHooks: [judge@1], model: { provider: scripted-a, name: model-a, fallbacks: [{ provider: scripted-b, name: model-b }] } }
+        - kind: Deployment
+          id: test
+          version: 1
+          schemaVersion: "0.1.0"
+          environment: test
+          policyBundles: [org@1]
+          attachmentSources: [upload, email]
+          providers:
+            - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+            - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+            - { id: scripted-z, adapter: scripted, endpoint: "memory://scripted-z", region: test-region, retainsData: false }
+          ports:
+            eventLog: { adapter: memory, region: test-region }
+            checkpointStore: { adapter: memory, region: test-region }
+            idempotencyStore: { adapter: memory, region: test-region }
+            snapshotStore: { adapter: memory, region: test-region }
+            blobStore: { adapter: memory, region: test-region }
+            auditLog: { adapter: memory, region: test-region }
+            secrets: { adapter: memory, region: test-region }
+          retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+    expect: { ok: true }
+expect: {}

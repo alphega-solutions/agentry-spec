@@ -1,0 +1,20 @@
+schemaVersion: "0.1.0"
+id: adapter.error-permission-failure
+title: A permission failure maps to the auth code, not retryable
+description: >-
+  The credentials are valid but not permitted to use the model. The adapter
+  returns the same mapping as an authentication failure (PROV-080 row 2):
+  category unavailable, not retryable, code agentry.provider.auth.
+requirements: [PROV-007, PROV-080, PROV-009]
+condition: permission_failure
+request:
+  model: model-a
+  messages:
+    - role: system
+      parts:
+        - { type: text, text: "You are a records assistant.", provenance: system, labels: [] }
+    - role: principal
+      parts:
+        - { type: text, text: "What is the status of record A-100?", provenance: principal, labels: [] }
+expect:
+  error: { category: unavailable, retryable: false, code: agentry.provider.auth, source: provider }

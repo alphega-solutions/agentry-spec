@@ -1,0 +1,26 @@
+schemaVersion: "0.1.0"
+id: adapter.usage-cached-and-reasoning
+title: Cached input is counted within input tokens, reasoning within output tokens
+description: >-
+  The provider reports a prompt-cache hit and reasoning tokens. Vendors
+  report these differently (cached tokens inside or beside input; reasoning
+  inside or beside output); the adapter normalizes them so that
+  `inputTokens` includes `cachedInputTokens` and `outputTokens` includes
+  `reasoningTokens`. Here 2,000 of 2,400 input tokens were cached and 120 of
+  300 output tokens were reasoning. Reasoning text the provider does not
+  return is not invented: the parts are the answer text only.
+requirements: [PROV-006, PROV-070, PROV-009]
+condition: ok_usage_cached
+request:
+  model: model-a
+  messages:
+    - role: system
+      parts:
+        - { type: text, text: "You are a records assistant. Records policy follows in full.", provenance: system, labels: [] }
+    - role: principal
+      parts:
+        - { type: text, text: "Summarise the records policy.", provenance: principal, labels: [] }
+expect:
+  parts:
+    - { type: text, text: { "$regex": "\\S" } }
+  usage: { inputTokens: 2400, outputTokens: 300, cachedInputTokens: 2000, reasoningTokens: 120 }

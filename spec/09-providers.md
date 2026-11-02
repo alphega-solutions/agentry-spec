@@ -214,3 +214,39 @@ All adapter fixtures run against every adapter, native or framework-wrapping.
 ## Amendment 2026-11-01 — from Phase 4 (Area 7 fixtures)
 
 - **PROV-045** An adapter **MUST** count the tokens of assembled context for its model, deterministically for the same context. The context manager **MUST** use this count for compaction and overflow (CTX-050, CTX-090). The scripted adapter used by the conformance suite counts one token per word of each text part and a fixed cost per other part (`conformance/schema/fixture.yaml`).
+
+## Amendment 2026-11-02 — from Phase 4 (schemas and fixtures)
+
+Schemas: provider declarations, capability restrictions and the price table in `schemas/config/v1/deployment.yaml`; the `model` block and `providerRequirement` in `schemas/config/v1/defs.yaml`; `model.request`, `model.response` and `error` payloads and the `cost` definition in `schemas/core/v1/event.yaml` and `schemas/common/v1/defs.yaml`; the provider adapter case format in `conformance/schema/adapter-case.yaml`.
+
+**Two kinds of fixture**
+
+- Adapter rules (PROV-001–009, PROV-080, PROV-083) are verified by vendor-neutral **adapter cases** in `conformance/adapters/cases/`. Each native adapter runs them offline against recorded wire transcripts (EVAL-036); a framework-wrapping adapter runs them against the transcripts of the vendor endpoint it reaches (PROV-009); the scripted adapter passes them by construction (EVAL-031). Wire-level properties — such as how untrusted parts are delimited (PROV-003) — are stated vendor-neutrally in each case (`expect.wire`) and confirmed by each transcript's matchers.
+- Harness rules (routing, capability checks, failover, usage accounting, cost, configuration, recording) are verified by ordinary fixtures in `conformance/providers/` on scripted providers.
+
+**Recording usage and cost**
+
+- PROV-006, PROV-065, PROV-070: an `error` event for a failed model call carries the `provider` and `model` called and, when the provider reported it, the call's `usage` (and `cost`).
+- PROV-074: when a model is priced, its `model.response` carries `cost` computed as defined by `cost` in `schemas/common/v1/defs.yaml` (uncached input, cached input, non-reasoning output and reasoning output, each at its price per million tokens), in the price table's currency. A summarizer's cost is on its `context.compacted`; a model hook's on its `hook.decision`; a failed call's on its `error`. `budget.cost` counts the cost of every model call in the turn except model hooks. A cost budget is reached when the turn's cost is equal to or greater than it.
+- PROV-071: a token budget is reached when `inputTokens + outputTokens` summed over the turn is equal to or greater than it.
+
+**Routing and failover**
+
+- PROV-051, PROV-052: a routing `policy.decision` has kind `routing`; outcome `switch` names the model chosen in `details` (`{provider, model}`), and outcome `block` is emitted when no model is allowed. A capability switch (PROV-042) records `fallbackReason: capability` on the `model.request` and no `policy.decision`.
+- PROV-060–063: "the next model in `fallbacks`" is counted from the model that failed; models skipped for routing or capability in this call are skipped for failover too. Each failover emits an `error` event (category and code of the failure) before the next `model.request`, which records `role: fallback`, `fallbackReason: failover`.
+- PROV-062: failover to a different provider is allowed until a session model call of the turn has succeeded (summarizer and model-hook calls do not count), so it covers the turn's first call and its retries, including in a resumed turn whose earlier runs made no successful session model call. Models skipped for routing or capability in a call are skipped for its failover too. Mid-turn, fallbacks of another provider are not eligible: failover goes to the next eligible same-provider fallback in order, and without one the error is `fatal`.
+
+**Readings settled with the Area 9 fixtures**
+
+- PROV-012, CFG-070: `dataResidency` is checked at load for the provider of every model that could run for a persona (as PROV-073 lists them: primary, fallbacks, summarizer and model hooks); one outside residency is a configuration error. A declared provider no model uses is not checked. A `providerRequirement` failure is never a load error: it only makes the provider not allowed for content with that label (routing, PROV-051).
+- PROV-040, CTX-100 *(narrows PROV-040)*: the reserve check applies to a `reserveOutputTokens` a layer sets; the default reserve is never an error. An effective `params.maxOutputTokens` above the smallest (possibly restricted) `maxOutputTokens` capability among the primary and its fallbacks is a configuration error, not clamped.
+- PROV-041, CORE-132: for a model without `structuredOutput`, the adapter returns text and the harness parses it as JSON into the `structured` part before validating; the output schema is still sent.
+- PROV-042: content only a fallback supports is accepted at `run()` and sent to the first capable, allowed fallback (`fallbackReason: capability`).
+- PROV-043: if a model without `parallelToolCalls` returns several tool calls anyway, the harness processes the first; each other call gets one `tool.result` with error `invalid_input` (`agentry.provider.parallel_not_allowed`) and is never dispatched.
+- PROV-053, PROV-060: a failover whose only fallback is not allowed for the content does not happen; the failure stands (`fatal` once retries are exhausted), the run ends `failed`, not `blocked`, and no routing decision is emitted.
+- PROV-055: after a provider switch in a turn, reasoning produced before it is sent to no provider for the rest of the turn, including the provider that produced it.
+- PROV-065: every failed attempt, including each retry, emits its own `error` event.
+- PROV-071, PROV-074, CFG-091: budgets are checked immediately before each session model call (after compaction, `beforeModelCall` hooks and routing) and before each summarizer call. A session call whose response reaches the budget completes, including dispatching its tool calls; the run ends `budget_exhausted` at the next check, so a final response still ends `responded`. A summarizer call whose usage reaches the budget ends the run at once, before its compaction is recorded (CTX-084 as amended); its usage and cost are recorded as `unrecordedUsage` and `unrecordedCost` on `run.ended`.
+- PROV-021: a lower layer's `fallbacks` list only selects which of the pinning layer's entries remain; the pinning layer's order always applies.
+- PROV-003: an adapter delimits every `tool:`, `retrieval:`, `attachment:` and `agent:` part, whatever the trust configuration; the adapter request carries no trust information, and delimiting trusted parts too is harmless (CTX-012).
+- PROV-090: every later call on a failover model in the same turn records `role: fallback`, `fallbackReason: failover` (PROV-063).

@@ -16,6 +16,8 @@ Data-only test cases every agentry implementation must pass (Area 11). An implem
 | `hitl/` | Area 6 fixtures |
 | `context/` | Area 7 fixtures |
 | `orchestration/` | Area 8 fixtures |
+| `providers/` | Area 9 fixtures (harness-level, on scripted providers) |
+| `adapters/` | Area 9 provider adapter cases (format `schema/adapter-case.yaml`) and recorded vendor transcripts |
 | `cel/` | CEL rule fixtures (EVAL-005, HOOK-110–115) |
 | `coverage.yaml` | Which areas have complete fixtures, and therefore enforced coverage |
 
@@ -29,7 +31,7 @@ A fixture has three parts:
 
 A step's captures are processed in order, so a capture may use `session:` with a placeholder bound by an earlier capture of the same step (e.g. a child session). Placeholders (`$session`, `$run1`) bind on first match in `expect`, or through a step's `capture`, and must match consistently: a placeholder binds the whole value at its first match (scalar, object or array), and every later occurrence must equal that value exactly — deep equality, not the partial matching used for objects written out in an expectation. A placeholder used in a step must be captured by an earlier step. Placeholders may be map keys (e.g. an idempotency key under `ports.idempotencyStore`). `expect` is evaluated in document order, depth-first; a placeholder key must be bound (earlier in document order, or by a capture) before a matcher such as `$absent` is applied to the value under it.
 
-Matchers: `{"$any": true}`, `{"$absent": true}`, `{"$regex": "..."}`, `{"$len": n}`, `{"$contains": [...]}` (each item matches a distinct element), `{"$not": m}`, `{"$every": m}`, `{"$gte": n}`, `{"$lte": n}`, `{"$all": [m1, m2]}`, and `{"$count": {"of": m, "equals"|"gte"|"lte": n}}`, which counts the array elements matching `m`. Write "no element matches" and "exactly one matches" with `$count`, never as `$not` around `$contains`. Matcher names are reserved and are never placeholders; any other `$`-key must be a placeholder.
+Matchers: `{"$any": true}`, `{"$absent": true}`, `{"$regex": "..."}`, `{"$len": n}`, `{"$contains": [...]}` (each item matches a distinct element), `{"$not": m}`, `{"$every": m}`, `{"$gte": n}`, `{"$lte": n}`, `{"$all": [m1, m2]}`, and `{"$count": {"of": m, "equals"|"gte"|"lte": n}}`, which counts the array elements matching `m`. In adapter cases only, `{"$selfProvider": true}` stands for the adapter's declared provider ID. Write "no element matches" and "exactly one matches" with `$count`, never as `$not` around `$contains`. Matcher names are reserved and are never placeholders; any other `$`-key must be a placeholder.
 
 ### Execution model
 
@@ -66,7 +68,7 @@ Matchers: `{"$any": true}`, `{"$absent": true}`, `{"$regex": "..."}`, `{"$len": 
 
 - **Stub calls** (`expect.stubCalls`), keyed by native tool ID, `<serverId>/<toolName>`, `<endpointId>/<operationId>`, or remote hook ID: `{ arguments, context: { sessionId, runId, principal, idempotencyKey, deadline, traceContext }, cancelled, completed }`; `arguments` are the tool's arguments (HTTP stubs included), and `completed` is whether the stub's result reached the implementation. Remote and native hook invocations record `{ arguments }`, the `HookRequest` (`schemas/core/v1/hook.yaml`), keyed by remote hook ID or hook ID.
 - **Vector store queries** (`expect.stubCalls.vectorStore/<sourceId>`): `{ arguments: { tenant, principal: { subject, tenant, roles }, text, limit } }`.
-- **Provider requests** (`expect.providerRequests`): `{ provider, model, messages, tools: [{ name, description, input }], outputSchema }`; a tool's `name` is its tool ID. A step's tool results are sent as ONE message with role `tool` holding all its `tool_result` parts in request order (TOOL-032).
+- **Provider requests** (`expect.providerRequests`): `{ provider, model, messages, tools: [{ name, description, input }], outputSchema, params, singleToolCall }`; a tool's `name` is its tool ID. A step's tool results are sent as ONE message with role `tool` holding all its `tool_result` parts in request order (TOOL-032).
 - **Ports** (`expect.ports`, keyed by port name, then tenant):
   - `eventLog: {t1: {<sessionId>: [events]}}`;
   - `idempotencyStore: {t1: {<key>: { state: started|completed, outcome, childSessionId? }}}`;

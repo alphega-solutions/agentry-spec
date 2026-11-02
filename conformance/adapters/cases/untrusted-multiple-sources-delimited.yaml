@@ -1,0 +1,43 @@
+schemaVersion: "0.1.0"
+id: adapter.untrusted-multiple-sources-delimited
+title: Every untrusted part across a multi-step history is delimited, and only those
+description: >-
+  A longer history. Parts in request order: 0 system (`system`), 1 principal
+  (`principal`), 2 model text (`model`), 3 and 4 two model tool calls
+  (`model`), 5 and 6 their results (`tool:lookup`), 7 model text (`model`),
+  8 principal follow-up (`principal`), 9 a child agent's output
+  (`agent:researcher`). Untrusted: 5, 6 and 9. No trust configuration
+  accompanies the request, so tool results and agent output are untrusted
+  (ADR-0008; Area 7 provenance ranking).
+requirements: [PROV-003, PROV-009]
+condition: ok_text
+request:
+  model: model-a
+  messages:
+    - role: system
+      parts:
+        - { type: text, text: "You are a records assistant.", provenance: system, labels: [] }
+    - role: principal
+      parts:
+        - { type: text, text: "Compare records A-100 and B-200.", provenance: principal, labels: [] }
+    - role: assistant
+      parts:
+        - { type: text, text: "I will look up both records.", provenance: model, labels: [] }
+        - { type: tool_call, callId: call-1, tool: lookup, arguments: { key: "A-100" }, provenance: model, labels: [] }
+        - { type: tool_call, callId: call-2, tool: lookup, arguments: { key: "B-200" }, provenance: model, labels: [] }
+    - role: tool
+      parts:
+        - { type: tool_result, callId: call-1, tool: lookup, result: { ok: { output: { key: "A-100", status: active } } }, provenance: "tool:lookup", labels: [] }
+        - { type: tool_result, callId: call-2, tool: lookup, result: { ok: { output: { key: "B-200", status: closed } } }, provenance: "tool:lookup", labels: [] }
+    - role: assistant
+      parts:
+        - { type: text, text: "A-100 is active and B-200 is closed.", provenance: model, labels: [] }
+    - role: principal
+      parts:
+        - { type: text, text: "Include the researcher's notes.", provenance: principal, labels: [] }
+        - { type: text, text: "Researcher notes: B-200 was closed in error.", provenance: "agent:researcher", labels: [] }
+expect:
+  parts:
+    - { type: text, text: { "$regex": "\\S" } }
+  wire:
+    untrustedDelimited: [5, 6, 9]

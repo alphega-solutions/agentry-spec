@@ -1,0 +1,28 @@
+schemaVersion: "0.1.0"
+id: adapter.request-params-only
+title: Generation parameters are sent on a request without tools or output schema
+description: >-
+  A plain text request with only `maxOutputTokens` and `temperature` set. The
+  adapter sends both parameters and returns the answer as a `text` part. The
+  transcript's matchers confirm the parameters and that no tool definitions
+  were sent (`toolsSent: []`); no output schema was given, so
+  `outputSchemaSent` is not asserted.
+requirements: [PROV-002, PROV-004, PROV-009]
+condition: ok_text
+request:
+  model: model-a
+  messages:
+    - role: principal
+      parts:
+        - { type: text, text: "Say hello in one sentence.", provenance: principal, labels: [] }
+  params:
+    maxOutputTokens: 64
+    temperature: 0
+expect:
+  parts:
+    - { type: text, text: { "$regex": "\\S" } }
+  wire:
+    toolsSent: []
+    paramsSent:
+      maxOutputTokens: 64
+      temperature: 0

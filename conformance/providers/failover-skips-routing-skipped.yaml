@@ -1,0 +1,142 @@
+schemaVersion: "0.1.0"
+id: providers.failover-skips-routing-skipped
+title: A model skipped for routing in a call is skipped for that call's failover too; failover counts on from the model that failed
+description: >-
+  Per the PROV-060–063 and PROV-062 readings (amendment 2026-11-02), "the
+  next model in `fallbacks`" is counted from the model that failed, and
+  models skipped for routing or capability in a call are skipped for its
+  failover too. The bundle adds the label example.test:b-only, allowed
+  only on scripted-b; the rule hook b-tagger (beforeModelCall) adds it
+  when the content holds SYN-BONLY-0062. Persona assistant:
+  scripted-a/model-a, fallbacks [scripted-b/model-b, scripted-b/model-b2].
+  Every model failure is an authentication error (`unavailable`, not
+  retryable), eligible for failover at once (PROV-060).
+
+  - $sRouted: the input holds SYN-BONLY-0062, so at the turn's first call
+    routing skips model-a and uses model-b (routing `policy.decision`
+    switch; `model.request` fallback/routing). model-b fails; failover
+    goes to model-b2 (fallback/failover), which answers. model-a, skipped
+    for routing in this call, is never called, and model-b is called
+    once.
+  - $sControl: no label, so model-a is called and fails; failover goes to
+    the next model after it, model-b (fallback/failover, cross-provider at
+    the turn's first call), which answers. No routing decision.
+requirements: [PROV-060, PROV-062]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+          "example.test:b-only":
+            allowedProviders: [scripted-b]
+            redaction: [{ mode: mask }]
+      - kind: Hook
+        id: b-tagger
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeModelCall]
+        results: [annotate]
+        timeoutMs: 1000
+        source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-BONLY-0062'))", then: { result: annotate, labels: ["example.test:b-only"] } }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [b-tagger@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+            - { provider: scripted-b, name: model-b2 }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # $sControl, step 1 (model-a): fails
+        - error: { category: unavailable, code: agentry.provider.auth, retryable: false }
+    scripted-b:
+      responses:
+        # $sRouted, step 1 (model-b): fails
+        - error: { category: unavailable, code: agentry.provider.auth, retryable: false }
+        # $sRouted, step 1 (model-b2)
+        - parts: [{ type: text, text: "SYN-ROUTED reply." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sControl, step 1 (model-b)
+        - parts: [{ type: text, text: "SYN-CONTROL reply." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $sRouted
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Note SYN-BONLY-0062" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sControl
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Plain note" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sRouted:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: policy.decision, payload: { kind: routing, outcome: switch, details: { provider: scripted-b, model: model-b } } }
+          - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-b, model: model-b, role: fallback, fallbackReason: routing } }
+          - { type: error, payload: { provider: scripted-b, model: model-b, error: { category: unavailable, code: agentry.provider.auth } } }
+          - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-b, model: model-b2, role: fallback, fallbackReason: failover } }
+          - { type: model.response, turn: 1, step: 1, payload: { provider: scripted-b, model: model-b2 } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: model.request, payload: { provider: scripted-a } }
+    $sControl:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-a, model: model-a, role: primary } }
+          - { type: error, payload: { provider: scripted-a, model: model-a, error: { category: unavailable, code: agentry.provider.auth } } }
+          - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-b, model: model-b, role: fallback, fallbackReason: failover } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: policy.decision, payload: { kind: routing } }
+  providerRequests:
+    scripted-a:
+      - { model: model-a }
+    scripted-b:
+      - { model: model-b }
+      - { model: model-b2 }
+      - { model: model-b }
+  delivered:
+    $sRouted: { text: "SYN-ROUTED reply.", fallback: false }
+    $sControl: { text: "SYN-CONTROL reply.", fallback: false }

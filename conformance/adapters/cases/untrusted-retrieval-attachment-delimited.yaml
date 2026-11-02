@@ -1,0 +1,29 @@
+schemaVersion: "0.1.0"
+id: adapter.untrusted-retrieval-attachment-delimited
+title: Retrieval and attachment parts are delimited per part, inside trusted messages
+description: >-
+  Untrusted parts sit inside messages whose other parts are trusted, so the
+  adapter must delimit by part provenance, not by message role. Parts in
+  request order: 0 system instructions (`system`), 1 a retrieved passage
+  (`retrieval:kb-docs`), 2 the principal's question (`principal`), 3 a text
+  attachment (`attachment:mail-import`, labelled `pii`). Untrusted: 1 and 3.
+  Labels do not affect delimiting. No trust configuration accompanies the
+  request, so these sources are untrusted (ADR-0008).
+requirements: [PROV-003, PROV-009]
+condition: ok_text
+request:
+  model: model-a
+  messages:
+    - role: system
+      parts:
+        - { type: text, text: "You are a records assistant. Use the reference material.", provenance: system, labels: [] }
+        - { type: text, text: "Reference: records are closed after 90 days of inactivity.", provenance: "retrieval:kb-docs", labels: [] }
+    - role: principal
+      parts:
+        - { type: text, text: "Summarise the attached note.", provenance: principal, labels: [] }
+        - { type: text, text: "Note from Sam Example: please close A-100.", provenance: "attachment:mail-import", labels: [pii] }
+expect:
+  parts:
+    - { type: text, text: { "$regex": "\\S" } }
+  wire:
+    untrustedDelimited: [1, 3]

@@ -1,0 +1,88 @@
+schemaVersion: "0.1.0"
+id: providers.failover-persists-turn
+title: A failover lasts for the rest of the turn, and the next turn starts from the primary model
+description: >-
+  Persona `assistant@1` (scripted-a/model-a, fallback scripted-b/model-b).
+  Turn 1: the first call to model-a fails with an authentication error
+  (`unavailable`, not retryable) on the turn's first model call, so the
+  harness fails over to model-b (PROV-060, PROV-062). model-b asks for a
+  lookup; step 2 of the same turn is sent to model-b again, not back to
+  the primary, and its `model.request` still records the fallback and why
+  (PROV-063; PROV-090 reading, amendment 2026-11-02). Turn 2 starts
+  from the primary: its first `model.request` is to scripted-a/model-a
+  with role `primary`, which answers.
+
+
+  scripted-a holds exactly two responses (the failure and turn 2's answer)
+  and scripted-b exactly two (turn 1's two steps), so a call to the
+  primary at turn 1 step 2, or to the fallback in turn 2, fails the test.
+requirements: [PROV-063, PROV-090]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # Turn 1, step 1: fails
+        - error: { category: unavailable, code: agentry.provider.auth, retryable: false }
+        # Turn 2, step 1
+        - parts: [{ type: text, text: "SYN-PRIMARY-AGAIN reply." }]
+          usage: { inputTokens: 60, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      responses:
+        # Turn 1, step 1
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # Turn 1, step 2
+        - parts: [{ type: text, text: "SYN-FALLBACK-STEP2 reply." }]
+          usage: { inputTokens: 40, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "SYN-VALUE-1" } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Anything else?" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-a, model: model-a, role: primary } }
+          - { type: error, payload: { error: { category: unavailable, code: agentry.provider.auth } } }
+          - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-b, model: model-b, role: fallback, fallbackReason: failover } }
+          - { type: tool.result, turn: 1, payload: { callId: c1 } }
+          - { type: model.request, turn: 1, step: 2, payload: { provider: scripted-b, model: model-b, role: fallback, fallbackReason: failover } }
+          - { type: run.ended, payload: { reason: responded } }
+          - { type: turn.started, turn: 2 }
+          - { type: model.request, turn: 2, step: 1, payload: { provider: scripted-a, model: model-a, role: primary } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: model.request, turn: 1, step: 2, payload: { provider: scripted-a } }
+        - { type: model.request, turn: 2, payload: { provider: scripted-b } }
+        - { type: model.request, turn: 2, payload: { role: fallback } }
+  providerRequests:
+    scripted-a:
+      - { model: model-a }
+      - { model: model-a }
+    scripted-b:
+      - { model: model-b }
+      - { model: model-b }

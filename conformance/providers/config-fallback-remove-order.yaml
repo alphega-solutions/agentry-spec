@@ -1,0 +1,135 @@
+schemaVersion: "0.1.0"
+id: providers.config-fallback-remove-order
+title: A lower layer may remove fallbacks but not add them; the remaining fallbacks keep the pinning layer's order
+description: >-
+  The persona sets scripted-a/model-a with fallbacks [model-a1, model-a2,
+  model-a3], all on scripted-a, so every failover is same-provider and
+  allowed at any point (PROV-061).
+
+  - The default profile restating the list with an extra model-a4 → rejected
+    (adds a fallback).
+  - The default profile listing [model-a3, model-a1] → accepted: it removes
+    model-a2. Per the PROV-021 reading (amendment 2026-11-02), a lower
+    layer's `fallbacks` list only selects which of the pinning layer's
+    entries remain, and the pinning layer's order always applies: the
+    effective order is the persona's, [model-a1, model-a3].
+
+  The run's first call (model-a) fails with a non-retryable authentication
+  error, so it is eligible for failover at once (PROV-060); model-a1 fails
+  the same way; model-a3 answers. scripted-a therefore receives exactly
+  three requests, for model-a, model-a1 and model-a3 in that order:
+  model-a2 is never tried, and model-a1 precedes model-a3 although the
+  profile listed them the other way round.
+requirements: [PROV-021]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-a, name: model-a1 }
+            - { provider: scripted-a, name: model-a2 }
+            - { provider: scripted-a, name: model-a3 }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - error: { category: unavailable, code: agentry.provider.auth, retryable: false }
+        - error: { category: unavailable, code: agentry.provider.auth, retryable: false }
+        - parts: [{ type: text, text: "Answered by a3." }]
+          usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b: { responses: [] }
+script:
+  # Adds model-a4.
+  - load:
+      artifacts:
+        - kind: HarnessProfile
+          id: default
+          version: 1
+          schemaVersion: "0.1.0"
+          idleTtl: PT24H
+          suspendedTtl: PT72H
+          stepLimit: 8
+          deliveryMode: buffered
+          budget: { tokens: 100000 }
+          timeouts: { run: PT5M, tool: PT30S }
+          retry: { unavailable: 2 }
+          outputRetryLimit: 2
+          limits: { partSize: 1048576, sessionSize: 10485760 }
+          defaultAttachmentLabels: []
+          model:
+            fallbacks:
+              - { provider: scripted-a, name: model-a1 }
+              - { provider: scripted-a, name: model-a2 }
+              - { provider: scripted-a, name: model-a3 }
+              - { provider: scripted-a, name: model-a4 }
+    expect: { ok: false, error: { category: configuration } }
+  # Removes model-a2 (listed in another order).
+  - load:
+      artifacts:
+        - kind: HarnessProfile
+          id: default
+          version: 1
+          schemaVersion: "0.1.0"
+          idleTtl: PT24H
+          suspendedTtl: PT72H
+          stepLimit: 8
+          deliveryMode: buffered
+          budget: { tokens: 100000 }
+          timeouts: { run: PT5M, tool: PT30S }
+          retry: { unavailable: 2 }
+          outputRetryLimit: 2
+          limits: { partSize: 1048576, sessionSize: 10485760 }
+          defaultAttachmentLabels: []
+          model:
+            fallbacks:
+              - { provider: scripted-a, name: model-a3 }
+              - { provider: scripted-a, name: model-a1 }
+    expect: { ok: true }
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, payload: { provider: scripted-a, model: model-a, role: primary } }
+          - { type: error, payload: { provider: scripted-a, model: model-a, error: { category: unavailable, code: agentry.provider.auth } } }
+          - { type: model.request, payload: { provider: scripted-a, model: model-a1, role: fallback, fallbackReason: failover } }
+          - { type: error, payload: { provider: scripted-a, model: model-a1, error: { category: unavailable, code: agentry.provider.auth } } }
+          - { type: model.request, payload: { provider: scripted-a, model: model-a3, role: fallback, fallbackReason: failover } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: model.request, payload: { model: model-a2 } }
+  providerRequests:
+    scripted-a:
+      - { provider: scripted-a, model: model-a }
+      - { provider: scripted-a, model: model-a1 }
+      - { provider: scripted-a, model: model-a3 }
+    scripted-b: { count: 0 }
+  delivered:
+    $s: { text: "Answered by a3." }
