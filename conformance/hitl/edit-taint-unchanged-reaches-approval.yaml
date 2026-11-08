@@ -1,0 +1,154 @@
+schemaVersion: "0.1.0"
+id: hitl.edit-taint-unchanged-reaches-approval
+title: "An edit of a `taint` action, even one whose replacement equals the original arguments, reaches stage 7 and escalates under `approval: always`"
+description: >-
+  The baseline trusts no tools, so the lookup result (c1) taints the
+  session. update_record (mutating, default `onTainted: escalate`) has
+  `approval: always`. The bundle's reviewer rules: `taint` actions need
+  role `security`, `approval` actions role `approver`.
+
+
+  The model requests c2 update_record {k1, v1}; the taint rule escalates it
+  (E1, source `taint`, reason `agentry.taint.mutating`). r-security edits
+  it with a replacement equal to the original arguments. The edit skips
+  the taint rule (stage 5) and, because the action's source is `taint`,
+  stage 7 runs on the edited arguments (HITL-061 as amended 2026-11-07):
+  `approval: always` raises E2 in the resume run, with source `approval`,
+  reason `agentry.approval.always` and the (unchanged) arguments. An edit
+  is therefore never a way to skip approval-source review. Nothing is
+  dispatched until r-approver approves E2; the call is then dispatched
+  once, with provenance `reviewer`.
+requirements: [HITL-061]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.update_record }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        reviewerRules:
+          taint: [{ rule: "'security' in reviewer.roles" }]
+          approval: [{ rule: "'approver' in reviewer.roles" }]
+        sensitivityPolicies:
+          pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+          phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r-security, subject: reviewer-security, assurance: multi_factor, roles: [security] }
+        - { id: r-approver, subject: reviewer-approver, assurance: multi_factor, roles: [approver] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Done." }]
+          usage: { inputTokens: 40, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: "synthetic untrusted value" } }
+      update_record:
+        - ok: { output: { updated: true } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1, then set it to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $e1, payload.escalation.pendingActions.0.id: $act1 }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $s
+    reviewer: r-security
+    decisions:
+      - decisionId: "01900000-0000-7000-8000-000000000711"
+        pendingActionId: $act1
+        type: edit
+        replacement: { key: k1, value: v1 }
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $e2, payload.escalation.pendingActions.0.id: $act2 }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $s
+    reviewer: r-approver
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000712", pendingActionId: $act2, type: approve }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            runId: $r1
+            payload:
+              escalation:
+                id: $e1
+                sources: [taint]
+                pendingActions:
+                  - { id: $act1, kind: tool_call, source: taint, reasonCode: agentry.taint.mutating, callId: c2, arguments: { key: k1, value: v1 } }
+          - { type: run.ended, runId: $r1, payload: { reason: escalated } }
+          - { type: escalation.resolved, runId: $r2, payload: { escalationId: $e1 } }
+          - type: escalation.raised
+            runId: $r2
+            payload:
+              escalation:
+                id: { $all: [$e2, { $not: $e1 }] }
+                sources: [approval]
+                reasonCodes: [agentry.approval.always]
+                pendingActions:
+                  - id: { $all: [$act2, { $not: $act1 }] }
+                    kind: tool_call
+                    source: approval
+                    reasonCode: agentry.approval.always
+                    callId: c2
+                    arguments: { key: k1, value: v1 }
+                    reviewerRequirements: { rules: ["'approver' in reviewer.roles"] }
+          - { type: run.ended, runId: $r2, payload: { reason: escalated } }
+          - { type: escalation.resolved, runId: $r3, payload: { escalationId: $e2 } }
+          - type: tool.call
+            runId: $r3
+            provenances: [reviewer]
+            payload: { callId: c2, arguments: { key: k1, value: v1 } }
+          - { type: run.ended, runId: $r3, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call, runId: $r1, payload: { callId: c2 } }
+        - { type: tool.call, runId: $r2 }
+  stubCalls:
+    update_record: [{ arguments: { key: k1, value: v1 } }]
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $count: { of: { type: escalation.raised }, equals: 2 }

@@ -95,7 +95,7 @@ As in Area 1 §2. Requirement IDs use the prefix `HITL-`. The schemas `Escalatio
 | `confirm` | `recovery` | The stated outcome is recorded in the idempotency store and delivered to the model: `succeeded` as an `ok` result (with output if supplied), `failed` as an error of category `unavailable`, `retryable: false` (`agentry.hitl.confirmed_failed`). The call is never re-dispatched |
 
 - **HITL-060** Implementations **MUST** apply decisions with the effects above.
-- **HITL-061** Edited tool arguments **MUST** carry provenance `reviewer` (trusted) and at least the sensitivity labels of the arguments they replace. They re-enter the tool pipeline at stage 2 (argument validation), pass stage 4 (assurance), skip stage 5 (taint rule), and run **all** `beforeToolCall` hooks (stage 6). Stage 7 treats the edit as approval. A hook may still block or escalate the edited arguments.
+- **HITL-061** Edited tool arguments **MUST** carry provenance `reviewer` (trusted) and at least the sensitivity labels of the arguments they replace. They re-enter the tool pipeline at stage 2 (argument validation), pass stage 4 (assurance), skip stage 5 (taint rule), and run **all** `beforeToolCall` hooks (stage 6). At stage 7, an edit of an action with source `approval` counts as approval. For any other source, stage 7 **MUST** run on the edited arguments as it would after an `approve`. A hook may still block or escalate the edited arguments.
 - **HITL-062** An edited response **MUST** carry provenance `reviewer` and at least the labels of the response it replaces, **MUST** satisfy any output schema (CORE-130), and **MUST** pass through **all** `beforeResponse` hooks from the first.
 - **HITL-063** An `edit` that fails validation **MUST** be refused with error category `invalid_input`; the pending action stays undecided.
 
@@ -154,6 +154,7 @@ As in Area 1 §2. Requirement IDs use the prefix `HITL-`. The schemas `Escalatio
 | Reject tool call → `policy` error, turn continues | HITL-060 |
 | Reject at each content point → outcome per table | HITL-060 |
 | Edit arguments → `reviewer` provenance, labels kept, validated, taint skipped, all hooks run | HITL-061 |
+| Edit of a `taint` or `hook` action → stage 7 runs on the edited arguments (escalates under `always`, evaluates approval rules under `policy`, self-approval per source); edit of an `approval` action → approved | HITL-061 |
 | Edited response must satisfy output schema and pass all `beforeResponse` hooks | HITL-062 |
 | Invalid edit → `invalid_input`, action undecided | HITL-063 |
 | Confirm `succeeded` → `ok` result, no re-dispatch; `failed` → `agentry.hitl.confirmed_failed` | HITL-060 |
@@ -189,7 +190,7 @@ As in Area 1 §2. Requirement IDs use the prefix `HITL-`. The schemas `Escalatio
 | HITL-043, 063 | Disallowed decision types and invalid edits fail with `invalid_input` |
 | HITL-051 | Multi-approver counting rules for approve vs edit |
 | §7.3 | Error codes `agentry.hitl.rejected` and `agentry.hitl.confirmed_failed`; confirmed failures are non-retryable `unavailable` |
-| HITL-061, 062 | **Edits re-run validation and all hooks** (only the taint rule and approval are skipped) and keep the replaced content's labels |
+| HITL-061, 062 | **Edits re-run validation and all hooks** (only the taint rule is skipped, and approval only for an action with source `approval`) and keep the replaced content's labels |
 | HITL-070 | Incomplete `resume()` fails with `conflict` (`agentry.hitl.pending`) |
 | HITL-081 | `onExpiry` field and strictness order (extends CFG-090) |
 | HITL-082 | **Amends Area 1 CORE-020:** with `onExpiry: reject`, an expired suspended session stays `suspended` (fully decided) until `resume()`, then closes after a further `idleTtl` if none arrives |
@@ -253,7 +254,7 @@ Schemas: `schemas/core/v1/hitl.yaml` (`escalation`, `pendingAction`, `decision`,
 - HITL-042: a resubmitted decision ID is acknowledged without effect even if its other fields differ. A `resume()` first checks for replay: if any decision ID it carries was applied by an earlier accepted `resume()`, it returns that resume's outcome (CORE-053) and nothing in its batch is validated or recorded.
 - A decision on an action that is already decided — including one decided by expiry rejection — is refused with `conflict` (`agentry.hitl.already_decided`). A second decision from the same reviewer on an undecided action is refused with `conflict` (`agentry.hitl.duplicate_reviewer`), since approvals must come from distinct reviewers (HITL-024). These refusals are part of batch validation (HITL-040–043). For CORE-053, a decision ID is *applied* once an accepted `resume()` has acted on it; a `resume()` whose decisions were all recorded earlier by `decide()` is a new resume, not a replay.
 - Refusal codes: `agentry.hitl.reviewer_refused` (`unauthorized`, HITL-022, HITL-023), `agentry.hitl.decision_not_allowed` (`invalid_input`, HITL-043), `agentry.hitl.invalid_edit` (`invalid_input`, HITL-063), `agentry.hitl.unknown_action` (`not_found`, a pending action ID not in the open escalation).
-- HITL-061: `tool.call` events carry the `provenances` and `labels` of their arguments (CORE-151): `model` for model-proposed arguments, `reviewer` after an edit. All `beforeToolCall` hooks run on edited arguments, including one that escalated before; stage 7 then does not escalate again.
+- HITL-061: `tool.call` events carry the `provenances` and `labels` of their arguments (CORE-151): `model` for model-proposed arguments, `reviewer` after an edit. All `beforeToolCall` hooks run on edited arguments, including one that escalated before. Stage 7 then follows HITL-061 as amended 2026-11-07: an action with source `approval` does not escalate again; for any other source, stage 7 runs on the edited arguments.
 - HITL-072: `escalation.resolved` is the first event of the resume run after `run.started`, before any model or tool work.
 - TOOL-036 re-escalation: when a later stage would rewrite approved arguments, the new pending action has source `approval` and reason code `agentry.approval.rewritten`, whatever the source of the first; its `arguments` are the rewritten ones.
 - TOOL-034: a call whose pending action is never decided because the session closes (expiry, `close()`, `cancel()`) gets no `tool.result`; this is the only exception to exactly one result per call, as for chains (ORCH-066).
@@ -264,3 +265,12 @@ Schemas: `schemas/core/v1/hitl.yaml` (`escalation`, `pendingAction`, `decision`,
 **Known fixture limits**
 
 - HITL-061's stage 4 for edited arguments is not observable: an edit changes only arguments, and the principal and snapshot are fixed for the session (CORE-012), so the edited call always gets the original call's assurance outcome, and a call that fails stage 4 never escalates.
+
+## Amendment 2026-11-07 — stage 7 after an edit (post-Phase 4 review)
+
+Requirement text above has been edited where noted.
+
+- **HITL-061** (text above edited; the Area 6 amendment 2026-11-01 HITL-061 reading updated to match). An edit counts as approval at stage 7 only when the edited action's source is `approval`: stage 7 raised that action, so its reviewer rules, `requiredApprovals` and `allowSelfApproval` have already been applied to the reviewers who edited. For an action with source `taint` or `hook`, stage 7 runs on the edited arguments exactly as it would after an `approve` (TOOL-036, HOOK-125). `approval: always` escalates (`agentry.approval.always`). `approval: policy` evaluates the approval rules with `call.arguments` set to the replacement (HOOK-130–132). `never` continues.
+- **Why.** Before this change every edit counted as approval, so `edit` was a stronger decision than `approve` but got weaker checks. A reviewer who satisfied only the `taint` or `hook` reviewer rules could dispatch a call that needed approval-source review: bypassing that source's rules and `requiredApprovals`, self-approving where `allowSelfApproval` allowed it only for `hook`, and skipping approval rules on arguments the edit changed. A replacement equal to the original arguments was enough.
+- **The new escalation.** An escalation raised at stage 7 after an edit is a new record in the resume run, raised after `escalation.resolved` (HITL-002, HITL-072). Its one action has source `approval`, no `hook`, and the edited arguments, with provenance `reviewer` and the labels HITL-061 requires. Its reviewer requirements are those of source `approval`. A reviewer who satisfies the rules of both sources still decides twice, as after an `approve`.
+- **Fixtures.** `hitl.edit-hook-escalation-reaches-approval` (rules per source, plus the `approval`-source control), `hitl.edit-taint-unchanged-reaches-approval` (a replacement equal to the original), `hitl.edit-approval-rules-on-replacement` (`approval: policy`), `hitl.edit-self-approval-per-source` (HITL-023). `hitl.edit-arguments-hooks-rerun` no longer asserts the stage 7 shortcut; its tool now has the default `approval: never`.
