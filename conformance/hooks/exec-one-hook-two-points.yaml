@@ -24,6 +24,7 @@ setup:
         schemaVersion: "0.1.0"
         points: [beforeModelCall, afterModelCall]
         results: [annotate]
+        failureMode: failOpen
         timeoutMs: 1000
         source: { kind: native, handler: test.hook.observer }
       - kind: Persona

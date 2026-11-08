@@ -268,7 +268,7 @@ These went beyond the settled notes and ADRs and were approved with this spec.
 
 ## Amendment 2026-10-31 — from Area 5
 
-- CFG-042: a `streamed` profile is also invalid if any `afterModelCall` or `beforeResponse` hook declares `rewrite`, `block`, or `escalate` (HOOK-040).
+- CFG-042: a `streamed` profile is also invalid if any `afterModelCall` or `beforeResponse` hook declares `rewrite`, `block`, or `escalate`, or is `failClosed` (HOOK-040 as amended 2026-11-07).
 - CFG-070, CFG-080: policy bundles and personas may declare `approvalRules` (merge `union`) (HOOK-130).
 - CFG-070, CFG-090: policy bundles and profiles may set `guardrails.requireDeterministic` (merge `stricter`, order `true` → `false`) (HOOK-104).
 - CFG-110: a deployment also declares remote hook endpoints (HOOK-092).

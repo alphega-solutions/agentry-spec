@@ -1,16 +1,19 @@
 schemaVersion: "0.1.0"
-id: hook.fail-annotate-only-continues
-title: A `failClosed` hook that declares neither `block` nor `escalate` is treated as `continue` when it fails
+id: hook.fail-annotate-only-blocks
+title: A failed `failClosed` hook that declares only `annotate` is a block; the same hook declared `failOpen` continues
 description: >-
-  Both remote beforeModelCall hooks are explicit failClosed guardrails and
-  both error. $sAnnotateOnly: labeller declares only annotate, so its
-  failure is continue (HOOK-053): the model is called. $sBlockable
-  (control): labeller-blocking declares annotate and block, so the same
-  failure is a block. Both failures emit an `error` event with code
-  agentry.hook.failed, category unavailable, retryable false, source hook
-  (HOOK-051 as amended 2026-11-01), never the endpoint's own code
-  test.hook.down. The block also emits hook.decision {result: block,
-  reasonCode: agentry.hook.failed}; the continue emits no hook.decision.
+  Two remote beforeModelCall guardrails declare only annotate, each matched
+  by its own marker so exactly one runs per session, and both error.
+  $sClosed: labeller is failClosed, so its failure is a block whatever
+  results it declares (HOOK-053 as amended 2026-11-07): no model call, the
+  run ends blocked with the fallback message, and the input is never sent
+  unlabelled. $sOpen (control): labeller-open is identical but declares
+  failureMode: failOpen, so the same failure is continue and the model is
+  called. Both failures emit an `error` event with code agentry.hook.failed,
+  category unavailable, retryable false, source hook (HOOK-051 as amended
+  2026-11-01), never the endpoint's own code test.hook.down. The block also
+  emits hook.decision {result: block, reasonCode: agentry.hook.failed}; the
+  continue emits no hook.decision.
 requirements: [HOOK-053, HOOK-051]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -32,7 +35,7 @@ setup:
           - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
         remoteHooks:
           - { id: labeller, endpoint: "memory://hook-labeller", region: test-region }
-          - { id: labeller-blocking, endpoint: "memory://hook-labeller-blocking", region: test-region }
+          - { id: labeller-open, endpoint: "memory://hook-labeller-open", region: test-region }
         ports:
           eventLog: { adapter: memory, region: test-region }
           checkpointStore: { adapter: memory, region: test-region }
@@ -53,15 +56,15 @@ setup:
         match: "content.exists(p, p.type == 'text' && p.text.contains('SYN-LABEL'))"
         source: { kind: remote, endpoint: labeller }
       - kind: Hook
-        id: labeller-blocking
+        id: labeller-open
         version: 1
         schemaVersion: "0.1.0"
         points: [beforeModelCall]
-        results: [annotate, block]
-        failureMode: failClosed
+        results: [annotate]
+        failureMode: failOpen
         timeoutMs: 1000
-        match: "content.exists(p, p.type == 'text' && p.text.contains('SYN-BLOCKABLE'))"
-        source: { kind: remote, endpoint: labeller-blocking }
+        match: "content.exists(p, p.type == 'text' && p.text.contains('SYN-OPEN'))"
+        source: { kind: remote, endpoint: labeller-open }
       - kind: Persona
         id: assistant
         version: 1
@@ -72,7 +75,7 @@ setup:
         fallbackMessage: "This request was blocked."
         defaultProfile: default@1
         allowedProfiles: [default@1, streamed@1]
-        requiredHooks: [labeller@1, labeller-blocking@1]
+        requiredHooks: [labeller@1, labeller-open@1]
         model:
           provider: scripted-a
           name: model-a
@@ -90,33 +93,26 @@ setup:
     remoteHooks:
       labeller:
         - error: { category: unavailable, code: test.hook.down }
-      labeller-blocking:
+      labeller-open:
         - error: { category: unavailable, code: test.hook.down }
 script:
   - action: run
-    bind: $sAnnotateOnly
+    bind: $sClosed
     tenant: t1
     principal: p1
     persona: assistant@1
     input: [{ type: text, text: "SYN-LABEL" }]
-    expect: { ok: true, endReason: responded }
+    expect: { ok: true, endReason: blocked }
   - action: run
-    bind: $sBlockable
+    bind: $sOpen
     tenant: t1
     principal: p1
     persona: assistant@1
-    input: [{ type: text, text: "SYN-BLOCKABLE" }]
-    expect: { ok: true, endReason: blocked }
+    input: [{ type: text, text: "SYN-OPEN" }]
+    expect: { ok: true, endReason: responded }
 expect:
   sessions:
-    $sAnnotateOnly:
-      events:
-        mode: subsequence
-        items:
-          - { type: error, payload: { error: { code: agentry.hook.failed, category: unavailable, retryable: false, source: hook } } }
-          - { type: model.request }
-          - { type: run.ended, payload: { reason: responded } }
-    $sBlockable:
+    $sClosed:
       events:
         mode: subsequence
         items:
@@ -124,23 +120,30 @@ expect:
           - { type: run.ended, payload: { reason: blocked } }
       absentEvents:
         - { type: model.request }
+    $sOpen:
+      events:
+        mode: subsequence
+        items:
+          - { type: error, payload: { error: { code: agentry.hook.failed, category: unavailable, retryable: false, source: hook } } }
+          - { type: model.request }
+          - { type: run.ended, payload: { reason: responded } }
   ports:
     eventLog:
       t1:
-        $sAnnotateOnly:
+        $sClosed:
+          $all:
+            - $count: { of: { type: hook.decision }, equals: 1 }
+            - $count: { of: { type: hook.decision, payload: { hook: labeller@1, point: beforeModelCall, result: block, reasonCode: agentry.hook.failed } }, equals: 1 }
+            - $count: { of: { type: error, payload: { error: { code: test.hook.down } } }, equals: 0 }
+        $sOpen:
           $all:
             - $count: { of: { type: hook.decision }, equals: 0 }
             - $count: { of: { type: error, payload: { error: { code: test.hook.down } } }, equals: 0 }
-        $sBlockable:
-          $all:
-            - $count: { of: { type: hook.decision }, equals: 1 }
-            - $count: { of: { type: hook.decision, payload: { hook: labeller-blocking@1, point: beforeModelCall, result: block, reasonCode: agentry.hook.failed } }, equals: 1 }
-            - $count: { of: { type: error, payload: { error: { code: test.hook.down } } }, equals: 0 }
   stubCalls:
     labeller: { count: 1 }
-    labeller-blocking: { count: 1 }
+    labeller-open: { count: 1 }
   providerRequests:
     scripted-a: { count: 1 }
   delivered:
-    $sAnnotateOnly: { text: "Answered.", fallback: false }
-    $sBlockable: { text: "This request was blocked.", fallback: true }
+    $sClosed: { text: "This request was blocked.", fallback: true }
+    $sOpen: { text: "Answered.", fallback: false }

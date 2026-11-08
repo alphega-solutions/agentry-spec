@@ -57,6 +57,7 @@ setup:
         schemaVersion: "0.1.0"
         points: [afterModelCall]
         results: [annotate]
+        failureMode: failOpen
         timeoutMs: 1000
         source: { kind: native, handler: test.hook.tagger }
       - kind: Tool

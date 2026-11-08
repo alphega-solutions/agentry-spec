@@ -1,15 +1,20 @@
 schemaVersion: "0.1.0"
 id: cfg.semantic-streamed-output-hooks
-title: A streamed profile is rejected if any afterModelCall or beforeResponse hook declares rewrite, block, or escalate
+title: A streamed profile is rejected if any afterModelCall or beforeResponse hook declares rewrite, block, or escalate, or is failClosed
 description: >-
   Each load replaces `streamed@1` (allowed by the baseline persona) so that
   it requires one output hook. Streamed text cannot be recalled, so a hook at
   afterModelCall or beforeResponse able to block, rewrite, or escalate is a
   configuration error, for each of the three results at each of the two
   points. Rewrite is declared by remote hooks, since rule hooks cannot
-  rewrite. Controls load: annotate-only output hooks and a blocking
-  beforeModelCall hook on the streamed profile, and the blocking and
-  rewriting output hooks on the buffered profile.
+  rewrite. A failed failClosed hook is a block whatever it declares
+  (HOOK-053 as amended 2026-11-07), so an annotate-only output hook that is
+  failClosed is also rejected, whether by default (a guardrail with no
+  failureMode, at afterModelCall) or explicitly (at beforeResponse) (HOOK-040
+  as amended 2026-11-07). Controls load: annotate-only output hooks
+  declared failOpen and a blocking beforeModelCall hook on the streamed
+  profile, and the blocking and rewriting output hooks on the buffered
+  profile.
 requirements: [CFG-042, HOOK-040]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -80,10 +85,22 @@ script:
         - { kind: Hook, id: br-rewrite, version: 1, schemaVersion: "0.1.0", points: [beforeResponse], results: [rewrite], timeoutMs: 1000, source: { kind: remote, endpoint: scanner } }
         - { kind: HarnessProfile, id: streamed, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, deliveryMode: streamed, requiredHooks: [br-rewrite@1] }
     expect: { ok: false, error: { category: configuration } }
-  # Controls, accepted: advisory output hooks on the streamed profile; a blocking input hook on it; blocking output hooks on the buffered profile.
+  # Streamed + annotate-only afterModelCall guardrail, failClosed by default: rejected.
   - load:
       artifacts:
-        - { kind: Hook, id: amc-annotate, version: 1, schemaVersion: "0.1.0", points: [afterModelCall, beforeResponse], results: [annotate], timeoutMs: 1000, source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-PII'))", then: { result: annotate, labels: [pii] } } }
+        - { kind: Hook, id: amc-annotate-closed, version: 1, schemaVersion: "0.1.0", points: [afterModelCall], results: [annotate], timeoutMs: 1000, source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-PII'))", then: { result: annotate, labels: [pii] } } }
+        - { kind: HarnessProfile, id: streamed, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, deliveryMode: streamed, requiredHooks: [amc-annotate-closed@1] }
+    expect: { ok: false, error: { category: configuration } }
+  # Streamed + annotate-only beforeResponse hook declared failClosed: rejected.
+  - load:
+      artifacts:
+        - { kind: Hook, id: br-annotate-closed, version: 1, schemaVersion: "0.1.0", points: [beforeResponse], results: [annotate], failureMode: failClosed, timeoutMs: 1000, source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-PII'))", then: { result: annotate, labels: [pii] } } }
+        - { kind: HarnessProfile, id: streamed, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, deliveryMode: streamed, requiredHooks: [br-annotate-closed@1] }
+    expect: { ok: false, error: { category: configuration } }
+  # Controls, accepted: failOpen advisory output hooks on the streamed profile; a blocking input hook on it; blocking output hooks on the buffered profile.
+  - load:
+      artifacts:
+        - { kind: Hook, id: amc-annotate, version: 1, schemaVersion: "0.1.0", points: [afterModelCall, beforeResponse], results: [annotate], failureMode: failOpen, timeoutMs: 1000, source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-PII'))", then: { result: annotate, labels: [pii] } } }
         - { kind: Hook, id: bmc-block, version: 1, schemaVersion: "0.1.0", points: [beforeModelCall], results: [block], timeoutMs: 1000, source: { kind: rule, when: "content.exists(p, p.type == 'text' && p.text.contains('SYN-UNSAFE'))", then: { result: block, reasonCode: test.guard.blocked } } }
         - { kind: HarnessProfile, id: streamed, version: 1, schemaVersion: "0.1.0", idleTtl: PT24H, suspendedTtl: PT72H, stepLimit: 8, deliveryMode: streamed, requiredHooks: [amc-annotate@1, bmc-block@1] }
     expect: { ok: true }

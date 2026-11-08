@@ -111,9 +111,12 @@ properties:
     description: >-
       What an error, timeout, or undeclared or malformed result means
       (HOOK-050, HOOK-051). Default `failClosed` for a guardrail and
-      `failOpen` for a telemetry hook. `failClosed` takes effect only for a
-      hook that declares `block` or `escalate` (HOOK-053); at `onError` and
-      `sessionEnd` a failure is always `continue` (HOOK-052).
+      `failOpen` for a telemetry hook. A failed `failClosed` hook is a
+      `block` whatever results it declares (HOOK-053 as amended
+      2026-11-07), so a `failClosed` hook at `afterModelCall` or
+      `beforeResponse` cannot be used with a `streamed` profile (HOOK-040);
+      at `onError` and `sessionEnd` a failure is always `continue`
+      (HOOK-052).
     enum: [failClosed, failOpen]
   timeoutMs:
     description: Per-invocation limit in milliseconds (HOOK-001). Exceeding it is a failure (HOOK-050).
