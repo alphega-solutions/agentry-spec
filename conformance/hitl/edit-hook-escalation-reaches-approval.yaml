@@ -1,0 +1,244 @@
+schemaVersion: "0.1.0"
+id: hitl.edit-hook-escalation-reaches-approval
+title: An edit of a `hook` action reaches stage 7 and escalates for approval-source review; an edit of an `approval` action counts as approval
+description: >-
+  update_record has `approval: always`. The bundle requires one native
+  beforeToolCall hook, gate, and declares reviewer rules per source:
+  `hook` actions need a reviewer with role `security`, `approval` actions
+  one with role `approver`.
+
+
+  $s: gate escalates the model's call c1 {k1, v1} (source `hook`).
+  r-security, who satisfies only the `hook` rule, edits the arguments to
+  {k1, v2}. The edited call re-enters the pipeline, gate continues, and
+  stage 7 runs on the edited arguments (HITL-061 as amended 2026-11-07):
+  `approval: always` raises a second escalation E2 in the resume run,
+  after `escalation.resolved` for E1. E2's one action has source
+  `approval`, reason `agentry.approval.always`, no `hook`, the edited
+  arguments, and the `approval` source's reviewer rule. Nothing is
+  dispatched yet. r-security's approval of E2 is refused with
+  `unauthorized` (`agentry.hitl.reviewer_refused`, HITL-022), so the edit
+  cannot stand in for approval-source review. r-approver approves E2; the
+  call continues at stage 8 (gate is not invoked again) and is dispatched
+  once, with the edited arguments and provenance `reviewer`.
+
+
+  $c (control): gate continues, and stage 7 escalates c1 {k2, v1} with
+  source `approval`. r-approver edits it to {k2, v2}. Every
+  beforeToolCall hook runs again (gate continues), and because the
+  action's source is `approval`, stage 7 counts the edit as approval: no
+  second escalation, and the replacement is dispatched in the resume run.
+requirements: [HITL-061, HITL-021]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.update_record }
+      - kind: Hook
+        id: gate
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [escalate]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.gate }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        requiredHooks: [gate@1]
+        reviewerRules:
+          hook: [{ rule: "'security' in reviewer.roles" }]
+          approval: [{ rule: "'approver' in reviewer.roles" }]
+        sensitivityPolicies:
+          pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+          phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r-security, subject: reviewer-security, assurance: multi_factor, roles: [security] }
+        - { id: r-approver, subject: reviewer-approver, assurance: multi_factor, roles: [approver] }
+  providers:
+    scripted-a:
+      responses:
+        # $s: first run
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $s: after E2 is approved and the call is dispatched
+        - parts: [{ type: text, text: "Updated as edited." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $c: first run
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k2, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $c: after the edit is dispatched
+        - parts: [{ type: text, text: "Updated." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+        - ok: { output: { updated: true } }
+    nativeHooks:
+      gate:
+        # $s first run: escalates c1
+        - result: escalate
+          reasonCode: test.hook.review
+        # $s resume run, on the edited arguments
+        - result: continue
+        # $c first run
+        - result: continue
+        # $c resume run, on the edited arguments
+        - result: continue
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $e1, payload.escalation.pendingActions.0.id: $act1 }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $s
+    reviewer: r-security
+    decisions:
+      - decisionId: "01900000-0000-7000-8000-000000000701"
+        pendingActionId: $act1
+        type: edit
+        replacement: { key: k1, value: v2 }
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $e2, payload.escalation.pendingActions.0.id: $act2 }
+    expect: { ok: true, endReason: escalated }
+  # The hook-source reviewer cannot also give the approval-source decision.
+  - action: decide
+    session: $s
+    reviewer: r-security
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000702", pendingActionId: $act2, type: approve }
+    expect:
+      ok: false
+      newEvents: 0
+      error: { category: unauthorized, code: agentry.hitl.reviewer_refused, details: { decisionId: "01900000-0000-7000-8000-000000000702" } }
+  - action: resume
+    session: $s
+    reviewer: r-approver
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000703", pendingActionId: $act2, type: approve }
+    expect: { ok: true, endReason: responded }
+  # Control: an edit of an `approval` action counts as approval at stage 7.
+  - action: run
+    bind: $c
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k2 to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $actC }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $c
+    reviewer: r-approver
+    decisions:
+      - decisionId: "01900000-0000-7000-8000-000000000704"
+        pendingActionId: $actC
+        type: edit
+        replacement: { key: k2, value: v2 }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            runId: $r1
+            payload:
+              escalation:
+                id: $e1
+                sources: [hook]
+                pendingActions:
+                  - { id: $act1, kind: tool_call, source: hook, hook: gate@1, callId: c1, arguments: { key: k1, value: v1 } }
+          - { type: run.ended, runId: $r1, payload: { reason: escalated } }
+          - { type: run.started, runId: $r2, payload: { kind: resume } }
+          - { type: escalation.resolved, runId: $r2, payload: { escalationId: $e1, decisions: ["01900000-0000-7000-8000-000000000701"] } }
+          - type: escalation.raised
+            runId: $r2
+            payload:
+              escalation:
+                id: { $all: [$e2, { $not: $e1 }] }
+                sources: [approval]
+                reasonCodes: [agentry.approval.always]
+                pendingActions:
+                  - id: { $all: [$act2, { $not: $act1 }] }
+                    kind: tool_call
+                    source: approval
+                    reasonCode: agentry.approval.always
+                    hook: { $absent: true }
+                    callId: c1
+                    arguments: { key: k1, value: v2 }
+                    reviewerRequirements:
+                      requiredApprovals: 1
+                      rules: ["'approver' in reviewer.roles"]
+          - { type: run.ended, runId: $r2, payload: { reason: escalated } }
+          - { type: escalation.resolved, runId: $r3, payload: { escalationId: $e2, decisions: ["01900000-0000-7000-8000-000000000703"] } }
+          - type: tool.call
+            runId: $r3
+            provenances: [reviewer]
+            payload: { callId: c1, arguments: { key: k1, value: v2 } }
+          - { type: run.ended, runId: $r3, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call, runId: $r1 }
+        - { type: tool.call, runId: $r2 }
+    $c:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            payload:
+              escalation:
+                sources: [approval]
+                pendingActions:
+                  - { id: $actC, kind: tool_call, source: approval, reasonCode: agentry.approval.always, arguments: { key: k2, value: v1 } }
+          - { type: run.ended, payload: { reason: escalated } }
+          - type: tool.call
+            provenances: [reviewer]
+            payload: { callId: c1, arguments: { key: k2, value: v2 } }
+          - { type: run.ended, payload: { reason: responded } }
+  stubCalls:
+    gate: { count: 4 }
+    update_record:
+      - arguments: { key: k1, value: v2 }
+      - arguments: { key: k2, value: v2 }
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $count: { of: { type: escalation.raised }, equals: 2 }
+        $c:
+          $count: { of: { type: escalation.raised }, equals: 1 }

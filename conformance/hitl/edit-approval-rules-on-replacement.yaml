@@ -1,0 +1,221 @@
+schemaVersion: "0.1.0"
+id: hitl.edit-approval-rules-on-replacement
+title: "After an edit of a `hook` action, `approval: policy` evaluates the approval rules on the replacement"
+description: >-
+  update_record has `approval: policy`; the bundle's only approval rule is
+  `call.arguments.value == 'v-flagged'`. The bundle requires one native
+  beforeToolCall hook, gate, which escalates each session's first call and
+  continues on the edited one. Every call is the session's first step, so
+  no session is tainted.
+
+
+  The model's arguments {_, v1} do not match the rule, so stage 7 would
+  have let them through. Each escalation is a `hook` action, and the edit
+  re-enters the pipeline; stage 7 then runs on the edited arguments
+  (HITL-061 as amended 2026-11-07), with `call.arguments` the replacement
+  (HOOK-130, HOOK-131):
+
+  - $sFlag: r1 edits the value to `v-flagged`. The rule is true, so stage
+    7 raises E2 in the resume run with source `approval`, reason
+    `agentry.approval.rule` and the edited arguments; nothing is
+    dispatched until r1 approves E2.
+  - $sClear (control): r1 edits the value to `v2`. The rule is false, so
+    stage 7 continues: no second escalation, and the replacement is
+    dispatched in the resume run.
+requirements: [HITL-061, HOOK-131]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: policy
+        binding: { kind: native, handler: test.update_record }
+      - kind: Hook
+        id: gate
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [beforeToolCall]
+        results: [escalate]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.gate }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        requiredHooks: [gate@1]
+        approvalRules: ["call.arguments.value == 'v-flagged'"]
+        sensitivityPolicies:
+          pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+          phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        # $sFlag: first run
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sFlag: after E2 is approved and the call is dispatched
+        - parts: [{ type: text, text: "Flagged update done." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sClear: first run
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k2, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sClear: after the edit is dispatched
+        - parts: [{ type: text, text: "Updated." }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - ok: { output: { updated: true } }
+        - ok: { output: { updated: true } }
+    nativeHooks:
+      gate:
+        # $sFlag: first run, then the edited call
+        - result: escalate
+          reasonCode: test.hook.review
+        - result: continue
+        # $sClear: first run, then the edited call
+        - result: escalate
+          reasonCode: test.hook.review
+        - result: continue
+script:
+  - action: run
+    bind: $sFlag
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $eFlag1, payload.escalation.pendingActions.0.id: $actFlag1 }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $sFlag
+    reviewer: r1
+    decisions:
+      - decisionId: "01900000-0000-7000-8000-000000000721"
+        pendingActionId: $actFlag1
+        type: edit
+        replacement: { key: k1, value: v-flagged }
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.id: $eFlag2, payload.escalation.pendingActions.0.id: $actFlag2 }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $sFlag
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000722", pendingActionId: $actFlag2, type: approve }
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sClear
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k2 to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $actClear }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $sClear
+    reviewer: r1
+    decisions:
+      - decisionId: "01900000-0000-7000-8000-000000000723"
+        pendingActionId: $actClear
+        type: edit
+        replacement: { key: k2, value: v2 }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sFlag:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            runId: $rFlag1
+            payload:
+              escalation:
+                id: $eFlag1
+                sources: [hook]
+                pendingActions:
+                  - { id: $actFlag1, source: hook, hook: gate@1, arguments: { key: k1, value: v1 } }
+          - { type: run.ended, runId: $rFlag1, payload: { reason: escalated } }
+          - { type: escalation.resolved, runId: $rFlag2, payload: { escalationId: $eFlag1 } }
+          - type: escalation.raised
+            runId: $rFlag2
+            payload:
+              escalation:
+                id: { $all: [$eFlag2, { $not: $eFlag1 }] }
+                sources: [approval]
+                reasonCodes: [agentry.approval.rule]
+                pendingActions:
+                  - id: { $all: [$actFlag2, { $not: $actFlag1 }] }
+                    kind: tool_call
+                    source: approval
+                    reasonCode: agentry.approval.rule
+                    hook: { $absent: true }
+                    callId: c1
+                    arguments: { key: k1, value: v-flagged }
+          - { type: run.ended, runId: $rFlag2, payload: { reason: escalated } }
+          - { type: escalation.resolved, runId: $rFlag3, payload: { escalationId: $eFlag2 } }
+          - type: tool.call
+            runId: $rFlag3
+            provenances: [reviewer]
+            payload: { callId: c1, arguments: { key: k1, value: v-flagged } }
+          - { type: run.ended, runId: $rFlag3, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call, runId: $rFlag1 }
+        - { type: tool.call, runId: $rFlag2 }
+    $sClear:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            runId: $rClear1
+            payload:
+              escalation:
+                sources: [hook]
+                pendingActions:
+                  - { id: $actClear, source: hook, arguments: { key: k2, value: v1 } }
+          - { type: run.ended, runId: $rClear1, payload: { reason: escalated } }
+          - type: tool.call
+            runId: $rClear2
+            provenances: [reviewer]
+            payload: { callId: c1, arguments: { key: k2, value: v2 } }
+          - { type: run.ended, runId: $rClear2, payload: { reason: responded } }
+  stubCalls:
+    gate: { count: 4 }
+    update_record:
+      - arguments: { key: k1, value: v-flagged }
+      - arguments: { key: k2, value: v2 }
+  ports:
+    eventLog:
+      t1:
+        $sFlag:
+          $count: { of: { type: escalation.raised }, equals: 2 }
+        $sClear:
+          $count: { of: { type: escalation.raised }, equals: 1 }

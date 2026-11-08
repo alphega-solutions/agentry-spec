@@ -1,11 +1,14 @@
 schemaVersion: "0.1.0"
 id: hitl.edit-arguments-hooks-rerun
-title: Edited tool arguments carry reviewer provenance and the replaced labels, run every beforeToolCall hook again, and count as approval at stage 7
+title: Edited tool arguments carry reviewer provenance and the replaced labels, and run every beforeToolCall hook again
 description: >-
   The bundle requires three beforeToolCall hooks, in order: observer
   (native, continues), tagger (rule, annotates pii on every part it sees),
   and gate (native: escalates the first time, continues the second).
-  update_record has `approval: always`.
+  update_record has the baseline's default `approval: never`, so stage 7
+  continues; what stage 7 does after an edit of a `hook` action is covered
+  by hitl.edit-hook-escalation-reaches-approval (HITL-061 as amended
+  2026-11-07).
 
 
   First run: observer sees the model's tool_call part (no pii yet), tagger
@@ -20,8 +23,7 @@ description: >-
   arguments, provenance `reviewer`, and the pii label kept from the
   arguments it replaced (observer runs before tagger, so the label cannot
   come from tagger's second annotation); gate is invoked a second time on
-  the replacement and continues. Stage 7 treats the edit as approval: no
-  second escalation, although `approval` is `always`. The call is
+  the replacement and continues. The call is
   dispatched once, with the replacement, which is also what `tool.call`
   records. The `tool.call` event carries the provenances and labels of its
   arguments (CORE-151; HITL-061 as amended 2026-11-01): `provenances:
@@ -39,20 +41,6 @@ setup:
   config:
     base: baseline
     artifacts:
-      - kind: Tool
-        id: update_record
-        version: 1
-        schemaVersion: "0.1.0"
-        description: Update a record.
-        input:
-          type: object
-          additionalProperties: false
-          required: [key, value]
-          properties: { key: { type: string }, value: { type: string } }
-        effect: mutating
-        idempotent: false
-        approval: always
-        binding: { kind: native, handler: test.update_record }
       - kind: Hook
         id: observer
         version: 1
