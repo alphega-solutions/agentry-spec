@@ -88,13 +88,13 @@ Results permitted at each point:
 
 ### 6.2 Streamed delivery
 
-- **HOOK-040** In a profile with `deliveryMode: streamed`, `beforeResponse` hooks run on the complete response after it has been delivered, and are advisory. Because streamed text cannot be recalled, a profile in which any `afterModelCall` or `beforeResponse` hook declares `rewrite`, `block`, or `escalate` cannot use `streamed`. *(Extends CFG-042, which covered only `block` at output.)*
+- **HOOK-040** In a profile with `deliveryMode: streamed`, `beforeResponse` hooks run on the complete response after it has been delivered, and are advisory. Because streamed text cannot be recalled, a profile in which any `afterModelCall` or `beforeResponse` hook declares `rewrite`, `block`, or `escalate`, or is `failClosed` (its failure is a block, HOOK-053), cannot use `streamed`. *(Extends CFG-042, which covered only `block` at output.)*
 
 ### 6.3 Failure
 
 - **HOOK-050** A hook that errors, times out, or returns an undeclared or malformed result has **failed**.
 - **HOOK-051** A failed `failClosed` hook **MUST** be treated as `block`. A failed `failOpen` hook **MUST** be treated as `continue`. In both cases an `error` event **MUST** be emitted.
-- **HOOK-053** `failClosed` applies only to hooks that declare `block` or `escalate`. A hook that declares neither is treated as `continue` when it fails, whatever its failure mode.
+- **HOOK-053** A failed `failClosed` hook **MUST** be treated as `block` whatever results it declares, so a guardrail that only labels (`annotate`) or redacts (`rewrite`) never lets content through unlabelled or unredacted when it fails. A hook that should continue on failure declares `failureMode: failOpen`.
 - **HOOK-054** A required hook that cannot receive the content it needs — for example, because a sensitivity policy forbids sending it to the hook's endpoint or model — has failed (HOOK-050). It is never silently skipped.
 - **HOOK-052** At `onError` and `sessionEnd`, a failed hook is always treated as `continue`, whatever its failure mode, and **MUST NOT** trigger further `onError` hooks.
 
@@ -234,8 +234,8 @@ The taint rule is a deterministic policy check in the harness. It is not a hook 
 | One hook at two points evaluated at each | HOOK-004 |
 | Rewrite cannot drop labels; inserted part is least-trusted | HOOK-021 |
 | Hook escalation approved → chain resumes at the next hook | HOOK-033, 034 |
-| Streamed profile with blocking/rewriting `afterModelCall` or `beforeResponse` hook → rejected at load | HOOK-040 |
-| Annotate-only `failClosed` hook fails → continue | HOOK-053 |
+| Streamed profile with blocking/rewriting or `failClosed` `afterModelCall` or `beforeResponse` hook → rejected at load | HOOK-040 |
+| Annotate-only or rewrite-only `failClosed` hook fails → block; `failOpen` → continue | HOOK-053 |
 | Required remote hook barred by sensitivity policy → failure, fail-closed block | HOOK-054 |
 | Persona tries to replace or re-version a bundle hook → rejected; omitting it does not remove it | HOOK-070, 071 |
 | Implementation supports all four source kinds | HOOK-081 |
@@ -259,9 +259,9 @@ The taint rule is a deterministic policy check in the harness. It is not a hook 
 | HOOK-023 | Block and escalate carry a reason code, never shown to the model or principal |
 | HOOK-034 | After an approved hook escalation, the chain resumes at the next hook |
 | HOOK-030 | Hook order across layers: bundles, then persona, then profile |
-| HOOK-040 | **Streamed mode is rejected if any `afterModelCall` or `beforeResponse` hook can rewrite, block, or escalate** (extends CFG-042) |
+| HOOK-040 | **Streamed mode is rejected if any `afterModelCall` or `beforeResponse` hook can rewrite, block, or escalate, or is `failClosed`** (extends CFG-042) |
 | HOOK-051 | A failed hook emits an `error` event |
-| HOOK-053 | Fail-closed applies only to hooks that can block or escalate |
+| HOOK-053 | A failed `failClosed` hook blocks whatever results it declares |
 | HOOK-054 | A required hook barred from its content by sensitivity policy counts as failed |
 | HOOK-052 | Failures at `onError`/`sessionEnd` never block and never recurse |
 | HOOK-062 | Decisions record an input hash for replay |
@@ -340,3 +340,18 @@ Schemas: `schemas/config/v1/hook.yaml` (`HookDefinition`); `schemas/core/v1/hook
 
 - **HOOK-060**: a `hook.decision` with result `rewrite` carries `replacementRef`, a BlobStore reference to the content as rewritten (a JSON array of parts with the provenance and labels the harness assigned, HOOK-021), so the rewrite can be reproduced from events and reused when replaying decisions (EVAL-063). The audit record's `details`, being the payload, carries the same reference. See the Area 11 amendment 2026-11-02.
 - **HOOK-062**: `inputHash` also excludes `principal.tenant`, which always equals the excluded `tenant`; identical views in different tenants therefore hash identically, so decisions recorded in one tenant are reused when replayed into an eval tenant (EVAL-040, EVAL-063).
+
+## Amendment 2026-11-07 — failed guardrails that only label or redact (post-Phase 4 review)
+
+Requirement text above has been edited where noted.
+
+- **HOOK-053** (text above replaced). A failed `failClosed` hook is a `block` whatever results it declares. Previously `failClosed` applied only to hooks declaring `block` or `escalate`, so a guardrail that only labelled or redacted was treated as `continue` when it failed, even with `failureMode: failClosed` written explicitly. Its content then went on unlabelled or unredacted. Every label-driven control passed vacuously: provider routing (PROV-050, PROV-053), approval by label (TOOL-035), the egress taint condition (HOOK-122), and redaction. HOOK-054 made a classifier barred from its content fail open the same way. Principal-typed text has no labels unless a hook adds them (CORE-123 covers attachments only), so for that text a failed classifier was no control at all.
+- **The block** is the ordinary block at the hook's point (CORE-180): at `beforeModelCall` the run ends `blocked` with the fallback message; at `afterToolCall` the result is withheld and the model receives a `policy` error. As for any failed `failClosed` hook, the failure emits its `error` event and a `hook.decision` `{result: block, reasonCode}` with the failure's code (HOOK-051 as amended 2026-11-01). HOOK-052 is unchanged: at `onError` and `sessionEnd` a failure is always `continue`.
+- **Opting out.** A hook whose failure should not stop the run declares `failureMode: failOpen`. Telemetry hooks default to `failOpen` (HOOK-001) and are unaffected unless they set `failClosed` explicitly. HOOK-101 and HOOK-104 are unchanged: "declares `block`" and "able to `block`" there mean the declared results, not the failure mode.
+- **HOOK-040, CFG-042** (text above edited). Streamed text cannot be recalled, so a `failClosed` hook at `afterModelCall` or `beforeResponse`, whose failure would now be a block, makes a `streamed` profile invalid, like a hook declaring `block`. Such a hook must declare `failureMode: failOpen` to be used with `streamed`. The check applies to each persona with each profile in its `allowedProfiles` (CFG-042 as amended).
+- **Fixtures.**
+  - `hook.fail-annotate-only-blocks` replaces `hook.fail-annotate-only-continues`.
+  - `hook.fail-closed-redactor-classifier` is new: a rewrite-only redactor that errors, and an annotate-only classifier barred by a sensitivity policy, both at `afterToolCall`.
+  - `hook.result-annotate-unmapped-label`: its annotate-only session now blocks.
+  - `cfg.semantic-streamed-output-hooks` gains `failClosed` annotate-only cases, rejected on `streamed`.
+  - Output hooks used with personas that allow `streamed@1`, and that never fail in their fixture, now declare `failureMode: failOpen`.

@@ -3,7 +3,8 @@ id: hook.exec-streamed-before-response-advisory
 title: In a streamed profile an annotate-only `beforeResponse` hook runs on the complete, already delivered response and is advisory
 description: >-
   The streamed profile requires advisor, a remote annotate-only
-  beforeResponse hook (allowed in streamed delivery, HOOK-040). The model
+  beforeResponse hook declared failOpen (allowed in streamed delivery;
+  failClosed would not be, HOOK-040 as amended 2026-11-07). The model
   streams its answer in three deltas. The principal receives every delta
   and the full text; the hook receives the complete response (the
   concatenation of the deltas) as one text part, and its annotation is
@@ -48,6 +49,7 @@ setup:
         schemaVersion: "0.1.0"
         points: [beforeResponse]
         results: [annotate]
+        failureMode: failOpen
         timeoutMs: 1000
         source: { kind: remote, endpoint: advisor }
       - kind: HarnessProfile

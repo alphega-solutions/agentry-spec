@@ -10,7 +10,8 @@ description: >-
     → continue; shows the $sGuard block comes from the default.
   - $sTele: tele-default, purpose telemetry with no failureMode → failOpen
     → continue. (A telemetry hook can declare only continue and annotate,
-    HOOK-002, so HOOK-053 would also make it continue.)
+    HOOK-002; it continues here because its default failure mode is
+    failOpen.)
   Every failure emits an `error` event with source hook, retryable false,
   code agentry.hook.failed and category unavailable (HOOK-051 as amended
   2026-11-01); the endpoint's own code test.hook.down is never passed

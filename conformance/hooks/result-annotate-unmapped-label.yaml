@@ -16,10 +16,11 @@ description: >-
   - $sUnmappedBlock: guard-ann annotates part 2 (the principal's input; parts 0 and 1 are the system parts, Area 7 amendment 2026-11-01, CTX-011) with test.example:unmapped
     → failure → block (HOOK-051): hook.decision {result: block,
     reasonCode: agentry.hook.invalid_result}, no model call, fallback.
-  - $sUnmappedContinue: ann-only annotates part 2 with
-    test.example:unmapped → failure → continue, since it declares neither
-    block nor escalate (HOOK-053): no hook.decision, and the model is
-    called with the input unlabelled.
+  - $sUnmappedAnnotateOnly: ann-only annotates part 2 with
+    test.example:unmapped → failure → block, although it declares neither
+    block nor escalate (HOOK-053 as amended 2026-11-07): hook.decision
+    {result: block, reasonCode: agentry.hook.invalid_result}, no model
+    call, fallback. The input is never sent unlabelled.
   - $sOutOfRange: guard-ann annotates part 5 (the content has three parts)
     with pii → failure → block, as in $sUnmappedBlock.
   - $sMapped (control): guard-ann annotates part 2 with pii → applied:
@@ -97,8 +98,6 @@ setup:
   providers:
     scripted-a:
       responses:
-        - parts: [{ type: text, text: "Annotate-only answer." }]
-          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
         - parts: [{ type: text, text: "Mapped answer." }]
           usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
     scripted-b: { responses: [] }
@@ -123,12 +122,12 @@ script:
     input: [{ type: text, text: "SYN-CASE-G unmapped" }]
     expect: { ok: true, endReason: blocked }
   - action: run
-    bind: $sUnmappedContinue
+    bind: $sUnmappedAnnotateOnly
     tenant: t1
     principal: p1
     persona: assistant@1
     input: [{ type: text, text: "SYN-CASE-A unmapped" }]
-    expect: { ok: true, endReason: responded }
+    expect: { ok: true, endReason: blocked }
   - action: run
     bind: $sOutOfRange
     tenant: t1
@@ -153,13 +152,14 @@ expect:
           - { type: run.ended, payload: { reason: blocked } }
       absentEvents:
         - { type: model.request }
-    $sUnmappedContinue:
+    $sUnmappedAnnotateOnly:
       events:
         mode: subsequence
         items:
           - { type: error, payload: { error: { code: agentry.hook.invalid_result, category: fatal, retryable: false, source: hook } } }
-          - { type: model.request }
-          - { type: run.ended, payload: { reason: responded } }
+          - { type: run.ended, payload: { reason: blocked } }
+      absentEvents:
+        - { type: model.request }
     $sOutOfRange:
       events:
         mode: subsequence
@@ -184,8 +184,10 @@ expect:
           $all:
             - $count: { of: { type: hook.decision }, equals: 1 }
             - $count: { of: { type: hook.decision, payload: { hook: guard-ann@1, point: beforeModelCall, result: block, reasonCode: agentry.hook.invalid_result } }, equals: 1 }
-        $sUnmappedContinue:
-          $count: { of: { type: hook.decision }, equals: 0 }
+        $sUnmappedAnnotateOnly:
+          $all:
+            - $count: { of: { type: hook.decision }, equals: 1 }
+            - $count: { of: { type: hook.decision, payload: { hook: ann-only@1, point: beforeModelCall, result: block, reasonCode: agentry.hook.invalid_result } }, equals: 1 }
         $sOutOfRange:
           $all:
             - $count: { of: { type: hook.decision }, equals: 1 }
@@ -201,15 +203,10 @@ expect:
           $contains:
             - role: principal
               parts:
-                - { type: text, text: "SYN-CASE-A unmapped", labels: [] }
-      - messages:
-          $contains:
-            - role: principal
-              parts:
                 - { type: text, text: "SYN-CASE-G mapped", labels: [pii] }
     scripted-b: { count: 0 }
   delivered:
     $sUnmappedBlock: { text: "This request was blocked.", fallback: true }
-    $sUnmappedContinue: { text: "Annotate-only answer.", fallback: false }
+    $sUnmappedAnnotateOnly: { text: "This request was blocked.", fallback: true }
     $sOutOfRange: { text: "This request was blocked.", fallback: true }
     $sMapped: { text: "Mapped answer.", fallback: false }
