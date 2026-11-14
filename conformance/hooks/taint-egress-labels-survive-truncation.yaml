@@ -1,0 +1,242 @@
+schemaVersion: "0.1.0"
+id: hook.taint-egress-labels-survive-truncation
+title: A tainted egress call is blocked when labelled content entered the session, even after truncation dropped it from context
+description: >-
+  Both candidate models declare contextLimit 120 and maxOutputTokens 20:
+  available space 100, compaction above 90 (default triggerPercent). The
+  profile is the baseline `default@1`, which leaves compaction at its
+  default mode, `truncate`. Non-text parts count 10 (default). System
+  content is 8 tokens ("Follow organisational policy." 3 + "You are a test
+  assistant." 5). `read_contact` returns results labelled `pii` and is
+  trusted, so it labels without tainting; `fetch_external` is untrusted
+  and unlabelled; `send_note` is an egress read tool with the default
+  `onTaintedEgress` (block).
+
+  - $sBoth: turn 1 ("Fetch k1 and read contact k1", 6) calls
+    fetch_external (c1, taints) and read_contact (c2, `pii`), then replies
+    in 10 words: turn 1 is 6 + 20 + 20 + 10 = 56. Turn 2's text is 30
+    words: 8 + 56 + 30 = 94 > 90, so truncation drops turn 1 (one unit),
+    leaving 38. The model calls send_note (c3). No part in context carries
+    a label, but the session is still tainted (HOOK-121) and its label set
+    is `[pii]` (HOOK-127), so the egress condition holds: taint decision
+    `block`, listing provenances and labels; send_note is not dispatched
+    and the model receives a `policy` error (38 + 20 = 58), then responds.
+  - $sLater: the labelled content arrives before the taint. Turn 1 ("Read
+    contact k1", 3) calls read_contact (c1, `pii`); the model copies the
+    contact into a 20-word reply (unlabelled, CORE-127): turn 1 is 3 + 20
+    + 20 = 43. Turn 2's text is 40 words: 8 + 43 + 40 = 91 > 90, so
+    truncation drops turn 1, leaving 48. The model calls fetch_external
+    (c2, taints; 68), then send_note (c3) with the copied contact. Same
+    outcome as $sBoth: block, with labels `[pii]` (68 + 20 = 88).
+
+  Turn 2's first request in each session is asserted exactly: the
+  `system` message and turn 2's principal message only, so the labelled
+  result is shown to be gone from context. Before this rule (Area 5
+  amendment 2026-11-13) both send_note calls were dispatched.
+requirements: [HOOK-121, HOOK-122, HOOK-127, PORT-030]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        trustedTools: [read_contact@1]
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+      - kind: Tool
+        id: fetch_external
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Fetch a record from an external source.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        binding: { kind: native, handler: test.fetch_external }
+      - kind: Tool
+        id: read_contact
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Read a contact.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        sensitivity: [pii]
+        binding: { kind: native, handler: test.read_contact }
+      - kind: Tool
+        id: send_note
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Send a note to an external address.
+        input:
+          type: object
+          additionalProperties: false
+          required: [text]
+          properties: { text: { type: string } }
+        effect: read
+        egress: true
+        binding: { kind: native, handler: test.send_note }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [fetch_external@1, read_contact@1, send_note@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { contextLimit: 120, maxOutputTokens: 20 }
+      responses:
+        # $sBoth turn 1
+        - parts: [{ type: tool_call, callId: c1, tool: fetch_external, arguments: { key: k1 } }]
+          usage: { inputTokens: 14, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: read_contact, arguments: { key: k1 } }]
+          usage: { inputTokens: 34, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "SYN-BR-01 SYN-BR-02 SYN-BR-03 SYN-BR-04 SYN-BR-05 SYN-BR-06 SYN-BR-07 SYN-BR-08 SYN-BR-09 SYN-BR-10" }]
+          usage: { inputTokens: 54, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sBoth turn 2
+        - parts: [{ type: tool_call, callId: c3, tool: send_note, arguments: { text: "SYN-CONTACT-0001" } }]
+          usage: { inputTokens: 38, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "The note could not be sent." }]
+          usage: { inputTokens: 58, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sLater turn 1
+        - parts: [{ type: tool_call, callId: c1, tool: read_contact, arguments: { key: k1 } }]
+          usage: { inputTokens: 11, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "SYN-CONTACT-0001 SYN-LR-01 SYN-LR-02 SYN-LR-03 SYN-LR-04 SYN-LR-05 SYN-LR-06 SYN-LR-07 SYN-LR-08 SYN-LR-09 SYN-LR-10 SYN-LR-11 SYN-LR-12 SYN-LR-13 SYN-LR-14 SYN-LR-15 SYN-LR-16 SYN-LR-17 SYN-LR-18 SYN-LR-19" }]
+          usage: { inputTokens: 31, outputTokens: 20, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sLater turn 2
+        - parts: [{ type: tool_call, callId: c2, tool: fetch_external, arguments: { key: k1 } }]
+          usage: { inputTokens: 48, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c3, tool: send_note, arguments: { text: "SYN-CONTACT-0001" } }]
+          usage: { inputTokens: 68, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "The note could not be sent." }]
+          usage: { inputTokens: 88, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      capabilities: { contextLimit: 120, maxOutputTokens: 20 }
+      responses: []
+  stubs:
+    tools:
+      fetch_external:
+        - ok: { output: { value: "SYN-UNTRUSTED-0001" } }
+        - ok: { output: { value: "SYN-UNTRUSTED-0001" } }
+      read_contact:
+        - ok: { output: { contact: "SYN-CONTACT-0001" } }
+        - ok: { output: { contact: "SYN-CONTACT-0001" } }
+      send_note: []
+script:
+  - action: run
+    bind: $sBoth
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Fetch k1 and read contact k1" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $sBoth
+    principal: p1
+    input: [{ type: text, text: "SYN-BQ-01 SYN-BQ-02 SYN-BQ-03 SYN-BQ-04 SYN-BQ-05 SYN-BQ-06 SYN-BQ-07 SYN-BQ-08 SYN-BQ-09 SYN-BQ-10 SYN-BQ-11 SYN-BQ-12 SYN-BQ-13 SYN-BQ-14 SYN-BQ-15 SYN-BQ-16 SYN-BQ-17 SYN-BQ-18 SYN-BQ-19 SYN-BQ-20 SYN-BQ-21 SYN-BQ-22 SYN-BQ-23 SYN-BQ-24 SYN-BQ-25 SYN-BQ-26 SYN-BQ-27 SYN-BQ-28 SYN-BQ-29 SYN-BQ-30" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sLater
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Read contact k1" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $sLater
+    principal: p1
+    input: [{ type: text, text: "SYN-LQ-01 SYN-LQ-02 SYN-LQ-03 SYN-LQ-04 SYN-LQ-05 SYN-LQ-06 SYN-LQ-07 SYN-LQ-08 SYN-LQ-09 SYN-LQ-10 SYN-LQ-11 SYN-LQ-12 SYN-LQ-13 SYN-LQ-14 SYN-LQ-15 SYN-LQ-16 SYN-LQ-17 SYN-LQ-18 SYN-LQ-19 SYN-LQ-20 SYN-LQ-21 SYN-LQ-22 SYN-LQ-23 SYN-LQ-24 SYN-LQ-25 SYN-LQ-26 SYN-LQ-27 SYN-LQ-28 SYN-LQ-29 SYN-LQ-30 SYN-LQ-31 SYN-LQ-32 SYN-LQ-33 SYN-LQ-34 SYN-LQ-35 SYN-LQ-36 SYN-LQ-37 SYN-LQ-38 SYN-LQ-39 SYN-LQ-40" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sBoth:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: c1, tool: fetch_external } }
+          - { type: tool.result, payload: { callId: c2, tool: read_contact } }
+          - { type: context.compacted, turn: 2, step: 1, payload: { mode: truncate, units: [{ turn: 1 }] } }
+          - { type: policy.decision, turn: 2, payload: { kind: taint, outcome: block, callId: c3, tool: send_note, provenances: ["tool:fetch_external"], labels: [pii] } }
+          - { type: tool.result, payload: { callId: c3, result: { error: { category: policy } } } }
+          - { type: run.ended, turn: 2, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call, payload: { callId: c3 } }
+        - { type: escalation.raised }
+      checkpoint:
+        taint: { tainted: true, provenances: ["tool:fetch_external"], labels: [pii] }
+    $sLater:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, payload: { callId: c1, tool: read_contact } }
+          - { type: context.compacted, turn: 2, step: 1, payload: { mode: truncate, units: [{ turn: 1 }] } }
+          - { type: tool.result, payload: { callId: c2, tool: fetch_external } }
+          - { type: policy.decision, turn: 2, payload: { kind: taint, outcome: block, callId: c3, tool: send_note, provenances: ["tool:fetch_external"], labels: [pii] } }
+          - { type: tool.result, payload: { callId: c3, result: { error: { category: policy } } } }
+          - { type: run.ended, turn: 2, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call, payload: { callId: c3 } }
+        - { type: escalation.raised }
+      checkpoint:
+        taint: { tainted: true, provenances: ["tool:fetch_external"], labels: [pii] }
+  providerRequests:
+    scripted-a:
+      # $sBoth
+      - {}
+      - {}
+      - {}
+      - messages:
+          - role: system
+            parts:
+              - { type: text, text: "Follow organisational policy.", provenance: system }
+              - { type: text, text: "You are a test assistant.", provenance: system }
+          - role: principal
+            parts: [{ type: text, text: "SYN-BQ-01 SYN-BQ-02 SYN-BQ-03 SYN-BQ-04 SYN-BQ-05 SYN-BQ-06 SYN-BQ-07 SYN-BQ-08 SYN-BQ-09 SYN-BQ-10 SYN-BQ-11 SYN-BQ-12 SYN-BQ-13 SYN-BQ-14 SYN-BQ-15 SYN-BQ-16 SYN-BQ-17 SYN-BQ-18 SYN-BQ-19 SYN-BQ-20 SYN-BQ-21 SYN-BQ-22 SYN-BQ-23 SYN-BQ-24 SYN-BQ-25 SYN-BQ-26 SYN-BQ-27 SYN-BQ-28 SYN-BQ-29 SYN-BQ-30", provenance: principal, labels: [] }]
+      - {}
+      # $sLater
+      - {}
+      - {}
+      - messages:
+          - role: system
+            parts:
+              - { type: text, text: "Follow organisational policy.", provenance: system }
+              - { type: text, text: "You are a test assistant.", provenance: system }
+          - role: principal
+            parts: [{ type: text, text: "SYN-LQ-01 SYN-LQ-02 SYN-LQ-03 SYN-LQ-04 SYN-LQ-05 SYN-LQ-06 SYN-LQ-07 SYN-LQ-08 SYN-LQ-09 SYN-LQ-10 SYN-LQ-11 SYN-LQ-12 SYN-LQ-13 SYN-LQ-14 SYN-LQ-15 SYN-LQ-16 SYN-LQ-17 SYN-LQ-18 SYN-LQ-19 SYN-LQ-20 SYN-LQ-21 SYN-LQ-22 SYN-LQ-23 SYN-LQ-24 SYN-LQ-25 SYN-LQ-26 SYN-LQ-27 SYN-LQ-28 SYN-LQ-29 SYN-LQ-30 SYN-LQ-31 SYN-LQ-32 SYN-LQ-33 SYN-LQ-34 SYN-LQ-35 SYN-LQ-36 SYN-LQ-37 SYN-LQ-38 SYN-LQ-39 SYN-LQ-40", provenance: principal, labels: [] }]
+      - {}
+      - {}
+    scripted-b: { count: 0 }
+  stubCalls:
+    send_note: { count: 0 }

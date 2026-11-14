@@ -51,13 +51,20 @@ $defs:
       turn: { type: integer, minimum: 0 }
       step: { type: integer, minimum: 0 }
       taint:
-        description: Taint state and every tainting provenance, in order of first entry (HOOK-121, HOOK-126).
+        description: Taint state, every tainting provenance in order of first entry, and the label set (HOOK-121, HOOK-126, HOOK-127).
         type: object
         additionalProperties: false
         required: [tainted, provenances]
         properties:
           tainted: { type: boolean }
           provenances: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/provenances" }
+          labels:
+            description: >-
+              The session's label set: every sensitivity label that has entered
+              its context, in order of first entry, tainted or not (HOOK-127).
+              Absent means none; written whenever non-empty (PORT-030 as
+              amended 2026-11-13).
+            $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/labels"
       budget:
         description: Remaining budget of the current turn (CFG-091, ORCH-041); absent fields are unlimited.
         type: object

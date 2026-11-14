@@ -304,6 +304,11 @@ $defs:
       callId: { type: string }
       tool: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/toolId" }
       provenances: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/provenances" }
+      labels:
+        description: >-
+          The session's label set at the decision (HOOK-127). Present on every
+          `taint` decision, empty when no label has entered the context.
+        $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/labels"
       reason:
         description: >-
           Why the decision was taken. Required for `scope` decisions (pipeline

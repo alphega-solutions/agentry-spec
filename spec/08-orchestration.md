@@ -27,7 +27,7 @@ As in Area 1 §2. Requirement IDs use the prefix `ORCH-`. The **parent** is the 
 ## 4. What the child sees
 
 - **ORCH-010** The child's first message has role `principal` and contains the agent tool call's arguments, as validated against the tool's `input` schema. The child does not see the parent's history; anything it needs must be in the arguments.
-- **ORCH-011** That message **MUST** carry the least-trusted provenance and the union of the labels in the parent's context at the time of the call — not provenance `principal`. *(Amends CORE-120 for child sessions.)*
+- **ORCH-011** That message **MUST** carry the least-trusted provenance and every label in the parent's label set at the time of the call (HOOK-127) — not provenance `principal`. *(Amends CORE-120 for child sessions.)*
 - **ORCH-012** If the parent is tainted, the child **MUST** start tainted and inherit the parent's tainting provenances (HOOK-121, HOOK-126).
 - **ORCH-013** The child's visible tools **MUST** be the intersection of its persona's allowlist and the parent's **visible** tools for the calling step. *(Tightens TOOL-022, which said the parent's runtime scope; a runtime scope can include tools outside the parent's allowlist, and delegation must never widen what is reachable — `domain.md` invariant 11.)*
 - **ORCH-014** The child's effective allowed providers **MUST** be the intersection of its own and the parent's (CFG-070, CFG-080).
@@ -208,3 +208,7 @@ Schemas: the `session.created` `parent` block and `tool.call` `childSessionId` i
 - ORCH-014: "every possible caller" is transitive: every persona from which the child is reachable through agent tools. PROV-023 continues to apply to each persona's own models; the intersection rule adds that at least one of them is allowed through every caller. A child that runs on a model other than its primary emits PROV-051's `policy.decision`.
 - ORCH-052, HOOK-120: every result from a tainted child — `ok` or error — taints the parent. A `{text}` output whose child response has no text parts has `text: ""`.
 - Known fixture limits: the root-to-owner order in which a resumed chain starts its runs, the ordering of a parent's `tool.call` before its child's `session.created`, and "deepest first" in ORCH-071 recovery are not observable across sessions; fixtures show only what a shared provider's request order or ordered hook calls reveal.
+
+## Amendment 2026-11-13 — labels across delegation (post-Phase 4 review)
+
+- **ORCH-011** (text above edited). The child's first message carries the parent's label set (HOOK-127), not only the labels of parts in the parent's context at the time of the call. The arguments are written by the parent's model, which may have copied labelled content that compaction has since dropped. With the old reading, a parent could lose its labels to truncation and then delegate the data to a tainted child (ORCH-012) holding an egress tool, whose egress condition (HOOK-122) would then find nothing labelled. The child's label set starts with these labels. See the Area 5 amendment 2026-11-13.
