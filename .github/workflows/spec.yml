@@ -24,6 +24,8 @@ jobs:
         run: python tools/check_golden.py
       - name: Reference expectation matcher (EVAL-004)
         run: python tools/matcher_test.py
+      - name: Shared conformance runner (ADR-0020)
+        run: python tools/runner_test.py
       - name: Build JSON
         run: python tools/build.py
       - uses: actions/upload-artifact@v6
