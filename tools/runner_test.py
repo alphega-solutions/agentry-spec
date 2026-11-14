@@ -267,6 +267,93 @@ def test_abandon_after_n_events() -> None:
         "pause on events until the abandon fires"
 
 
+class HoldClient:
+    """close() (r1) is held at after_operation_lease; decide() (r2) starts once it
+    is held and fails with a retryable conflict; then close() is released and
+    completes. `reach_hold=False` simulates an action that completes without
+    reaching its hold point."""
+
+    def __init__(self, reach_hold: bool = True):
+        self.log: list = []
+        self.reach_hold = reach_hold
+        self.state = "start"
+
+    def call(self, method, params=None):
+        self.log.append((method, params))
+        if method == "action.release":
+            self.state = "released"
+            return {}
+        if method != "settle":
+            return {}
+        started = [p["requestId"] for m, p in self.log if m == "action.start"]
+        done, waiting = [], []
+        if not self.reach_hold:
+            if self.state == "start":
+                self.state = "over"
+                done.append({"requestId": "r1", "outcome": {"ok": True}})
+            return {"now": "t", "events": [], "completed": done, "crashed": [], "waiting": waiting}
+        if self.state == "start":
+            self.state = "held"
+            waiting.append({"requestId": "r1", "on": "held", "point": "after_operation_lease"})
+        elif self.state == "held":
+            waiting.append({"requestId": "r1", "on": "held", "point": "after_operation_lease"})
+            if "r2" in started and not any(m == "decided" for m, _ in self.log):
+                self.log.append(("decided", None))
+                done.append({"requestId": "r2", "outcome": {"ok": False, "error": {"category": "conflict", "retryable": True}}})
+        elif self.state == "released":
+            self.state = "over"
+            done.append({"requestId": "r1", "outcome": {"ok": True}})
+        return {"now": "t", "events": [], "completed": done, "crashed": [], "waiting": waiting}
+
+
+def test_hold_at_opens_a_window_for_siblings() -> None:
+    client = HoldClient()
+    fr = FixtureRun(client, {"id": "t", "script": []})
+    fr.env["$s"] = "s1"
+    outs = fr.run_actions([
+        {"action": "close", "session": "$s", "holdAt": "after_operation_lease", "expect": {"ok": True}},
+        {"action": "decide", "session": "$s", "decisions": [],
+         "expect": {"ok": False, "error": {"category": "conflict", "retryable": True}}},
+    ], "script[0]", separate=True)
+    assert outs[0]["ok"] and not outs[1]["ok"]
+    methods = [m for m, _ in client.log]
+    starts = [p["requestId"] for m, p in client.log if m == "action.start"]
+    assert starts == ["r1", "r2"]
+    first_held_settle = methods.index("settle")
+    assert methods.index("action.start", first_held_settle) > first_held_settle, "decide starts only once close is held"
+    assert methods.index("action.release") > methods.index("decided"), "release only after the sibling completed"
+    assert client.log[0][1].get("holdAt") == "after_operation_lease"
+
+
+def test_hold_point_never_reached_is_unmet() -> None:
+    fr = FixtureRun(HoldClient(reach_hold=False), {"id": "t", "script": []})
+    fr.env["$s"] = "s1"
+    try:
+        fr.run_actions([{"action": "close", "session": "$s", "holdAt": "after_operation_lease"},
+                        {"action": "decide", "session": "$s", "decisions": []}], "script[0]", separate=True)
+    except Unmet as exc:
+        assert "without reaching holdAt" in str(exc), str(exc)
+    else:
+        raise AssertionError("an action that never reaches its hold point must be unmet")
+
+
+class ObserveClient:
+    def call(self, method, params=None):
+        return {"delivered": {}} if method == "observe" else {}
+
+
+def test_no_returned_content() -> None:
+    fr = FixtureRun(ObserveClient(), {"id": "t", "script": []})
+    fr.outcomes = [{"ok": True, "view": {"actions": [{"arguments": {"note": "SYN-SECRET-0001"}}]}}]
+    try:
+        fr.check_expect({"noReturnedContent": ["SYN-SECRET-0001"]})
+    except Unmet as exc:
+        assert "returned to the host" in str(exc)
+    else:
+        raise AssertionError("a secret in a returned view must be unmet")
+    fr.check_expect({"noReturnedContent": ["SYN-OTHER"]})
+
+
 def main() -> int:
     tests = [v for k, v in globals().items() if k.startswith("test_") and callable(v)]
     failed = 0

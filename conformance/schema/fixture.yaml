@@ -262,9 +262,23 @@ $defs:
           tenant, using the record shapes given under `expect.ports`.
         type: object
       secrets:
-        description: Synthetic secret values served by the in-memory secrets provider, keyed by secret reference.
+        description: >-
+          Synthetic secret values served by the in-memory secrets provider,
+          keyed by secret reference. A value is a string (the same for every
+          principal), or `{byPrincipal: {<principal id>: value}, default?}`
+          for a reference resolved per principal (`credentialMode:
+          principal`, CFG-062, TOOL-012); a principal with no entry and no
+          `default` gets `not_found`.
         type: object
-        additionalProperties: { type: string }
+        additionalProperties:
+          oneOf:
+            - type: string
+            - type: object
+              additionalProperties: false
+              required: [byPrincipal]
+              properties:
+                byPrincipal: { type: object, additionalProperties: { type: string } }
+                default: { type: string }
       limits:
         description: Implementation limits the runner configures for this fixture.
         type: object
@@ -581,6 +595,17 @@ $defs:
           matching this pattern has been persisted. Evaluated before any
           automatic clock advance (see the virtual clock rule above).
         type: object
+      holdAt:
+        description: >-
+          Inside `concurrently` only, and not on the last action — hold this
+          action when it reaches the named point (the crash point names)
+          until every later sibling has completed; the later siblings start
+          once it is held. This lets a fixture act while the held action
+          holds a lease, e.g. `decide()` while `close()` holds its operation
+          lease (`after_operation_lease`, HITL-093), even though `decide()`
+          emits no event for `startAfter`. If the action completes without
+          reaching the point, the fixture fails.
+        enum: [after_started_record, after_dispatch, after_outcome_recorded, after_event_append, after_model_request, after_operation_lease, after_operation_events]
       expect:
         description: Not checked, and may be omitted, when an earlier `crash` step armed a crash for this action.
         $ref: "#/$defs/stepOutcome"
@@ -733,8 +758,8 @@ $defs:
         required: [at]
         properties:
           at:
-            description: Named crash points (EVAL-035).
-            enum: [after_started_record, after_dispatch, after_outcome_recorded, after_event_append, after_model_request]
+            description: Named crash points (EVAL-035); `after_operation_lease` and `after_operation_events` apply to writes outside a run (HITL-093).
+            enum: [after_started_record, after_dispatch, after_outcome_recorded, after_event_append, after_model_request, after_operation_lease, after_operation_events]
           session: { $ref: "#/$defs/placeholder" }
 
   retentionStep:
@@ -952,9 +977,11 @@ $defs:
           hook stubs (registered native hooks are recorded whether or not
           they have a `stubs.nativeHooks` entry). A tool call record is `{ arguments,
           context: { sessionId, runId, principal, idempotencyKey, deadline,
-          traceContext }, cancelled, completed }`: `arguments` are the
+          traceContext }, credential?, cancelled, completed }`: `arguments` are the
           tool's arguments (for HTTP endpoint stubs too, not an HTTP
-          request); `context` is the tool context (TOOL-040), with
+          request); `credential` (when the binding resolved one) names the
+          credential the call received, as `{reference, principal?}`, never
+          its value; `context` is the tool context (TOOL-040), with
           `principal` the principal as the host supplied it and `deadline` a
           UTC timestamp; `cancelled` is whether the cancellation signal was
           received; `completed` is whether the stub's result reached the
@@ -1030,6 +1057,15 @@ $defs:
           deployment's telemetry binding (PORT-101). Applies to fixtures
           whose deployment binds `telemetry`; the runner captures exported
           spans with an in-memory exporter.
+        type: array
+        items: { type: string }
+      noReturnedContent:
+        description: >-
+          Strings that must not appear in anything a host operation returned
+          to the host: step outcomes (errors, reviewer views, escalation
+          lists, exported bundles, conversion drafts, eval reports) and
+          delivered output. Use it for secrets and redacted content that
+          must not reach the host (HITL-032, EVAL-082, CFG-063).
         type: array
         items: { type: string }
       noTransmittedContent:

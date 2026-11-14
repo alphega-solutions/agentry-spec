@@ -47,7 +47,7 @@ Event patterns (`expect.sessions.<s>.events`, EVAL-004) have a `mode`: `sequence
 
 **Reference matcher.** [`tools/matcher.py`](../tools/matcher.py) implements these matching rules executably: partial objects, matchers, placeholders, assignment search with canonical bindings, and the event-pattern modes. [`tools/matcher_test.py`](../tools/matcher_test.py) pins each rule, and runs the replay fixtures' patterns against the golden bundles they replay. The shared runner uses it; any development-time runner should agree with it. Where they differ, this README governs and the reference is fixed.
 
-Matchers: `{"$any": true}`, `{"$absent": true}`, `{"$regex": "..."}`, `{"$len": n}`, `{"$contains": [...]}` (each item matches a distinct element), `{"$not": m}`, `{"$every": m}`, `{"$gte": n}`, `{"$lte": n}`, `{"$all": [m1, m2]}`, and `{"$count": {"of": m, "equals"|"gte"|"lte": n}}`, which counts the array elements matching `m`. In adapter cases only, `{"$selfProvider": true}` stands for the adapter's declared provider ID. Write "no element matches" and "exactly one matches" with `$count`, never as `$not` around `$contains`. `{"$not": m}` matches whenever `m` does not, including when the field is absent; `{"$absent": true}` matches only an absent field. Matcher names are reserved and are never placeholders; any other `$`-key must be a placeholder.
+Matchers: `{"$any": true}`, `{"$absent": true}`, `{"$regex": "..."}`, `{"$len": n}`, `{"$contains": [...]}` (each item matches a distinct element), `{"$not": m}`, `{"$every": m}`, `{"$gte": n}`, `{"$lte": n}`, `{"$gt": n}`, `{"$lt": n}` (where `n` may be a bound placeholder, to compare two observed values), `{"$all": [m1, m2]}`, and `{"$count": {"of": m, "equals"|"gte"|"lte": n}}`, which counts the array elements matching `m`. In adapter cases only, `{"$selfProvider": true}` stands for the adapter's declared provider ID. Write "no element matches" and "exactly one matches" with `$count`, never as `$not` around `$contains`. `{"$not": m}` matches whenever `m` does not, including when the field is absent; `{"$absent": true}` matches only an absent field. Matcher names are reserved and are never placeholders; any other `$`-key must be a placeholder.
 
 ### Execution model
 
@@ -75,6 +75,10 @@ Matchers: `{"$any": true}`, `{"$absent": true}`, `{"$regex": "..."}`, `{"$len": 
   - `after_outcome_recorded` — outcome in the idempotency store, before `tool.result` is appended;
   - `after_event_append` — immediately after the event-log append that contains the next `tool.call` event; checkpoint not saved.
   - `after_model_request` — immediately after the next `model.request` is appended, before the provider answers; no response consumed, no tool call in flight.
+  - `after_operation_lease` — a write outside a run (`decide()`, `close()`, `cancel()` of a non-active session, expiry processing) has acquired its operation lease and fenced the ports; nothing is written yet (HITL-093 step 1).
+  - `after_operation_events` — that write has appended its events; its audit records and final checkpoint save are not done (HITL-093 step 3).
+
+  **Holding an action.** Inside `concurrently`, an action may carry `holdAt: <point>` (the same names). It is held when it reaches the point, the later siblings start, and it continues once they have completed. Fixtures use this to act while a lease is held, for example `decide()` while `close()` holds its operation lease, since `decide()` persists no event for `startAfter`.
 
   The crashed action must be followed, later in the script, by a `restart` step before the next action step.
 - **Recovery** (HITL-091 as amended 2026-11-01): an orphaned run that continues keeps its `runId` and emits no new `run.started`. The host call that triggered recovery then runs its own run and receives its own outcome, which its step's `expect` matches.
@@ -84,7 +88,7 @@ Matchers: `{"$any": true}`, `{"$absent": true}`, `{"$regex": "..."}`, `{"$len": 
 
 ### Record shapes
 
-- **Stub calls** (`expect.stubCalls`), keyed by native tool ID, `<serverId>/<toolName>`, `<endpointId>/<operationId>`, or remote hook ID: `{ arguments, context: { sessionId, runId, principal, idempotencyKey, deadline, traceContext }, cancelled, completed }`; `arguments` are the tool's arguments (HTTP stubs included), and `completed` is whether the stub's result reached the implementation. Remote and native hook invocations record `{ arguments }`, the `HookRequest` (`schemas/core/v1/hook.yaml`), keyed by remote hook ID or hook ID.
+- **Stub calls** (`expect.stubCalls`), keyed by native tool ID, `<serverId>/<toolName>`, `<endpointId>/<operationId>`, or remote hook ID: `{ arguments, context: { sessionId, runId, principal, idempotencyKey, deadline, traceContext }, credential?, cancelled, completed }`; `arguments` are the tool's arguments (HTTP stubs included), `credential` names the credential the call received as `{reference, principal?}` (never its value), and `completed` is whether the stub's result reached the implementation. Remote and native hook invocations record `{ arguments }`, the `HookRequest` (`schemas/core/v1/hook.yaml`), keyed by remote hook ID or hook ID.
 - **Vector store queries** (`expect.stubCalls.vectorStore/<sourceId>`): `{ arguments: { tenant, principal: { subject, tenant, roles }, text, limit } }`.
 - **Provider requests** (`expect.providerRequests`): `{ provider, model, messages, tools: [{ name, description, input }], outputSchema, params, singleToolCall }`; a tool's `name` is its tool ID. A step's tool results are sent as ONE message with role `tool` holding all its `tool_result` parts in request order (TOOL-032).
 - **Ports** (`expect.ports`, keyed by port name, then tenant; record shapes normative in `schemas/ports/v1/records.yaml`):

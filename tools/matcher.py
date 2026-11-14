@@ -8,7 +8,8 @@ runner should agree with it:
   match, unlisted keys of the actual value are ignored. Arrays written out
   match element by element and must have the same length.
 - Matchers: $any, $absent, $regex, $len, $contains, $not, $every, $gte, $lte,
-  $all, $count (and $selfProvider in adapter cases, given a value).
+  $gt, $lt (whose argument may be a bound placeholder), $all, $count (and
+  $selfProvider in adapter cases, given a value).
 - Placeholders (`$name`) bind the whole value at their first match and must
   equal it exactly (deep equality) wherever they occur later. A placeholder
   may be a map key; it then binds to a key of the actual map.
@@ -33,7 +34,7 @@ from typing import Any, Iterator
 
 PLACEHOLDER = re.compile(r"^\$[A-Za-z_][A-Za-z0-9_]*$")
 MATCHERS = {"$any", "$absent", "$regex", "$len", "$contains", "$not", "$every",
-            "$gte", "$lte", "$all", "$count", "$selfProvider"}
+            "$gte", "$lte", "$gt", "$lt", "$all", "$count", "$selfProvider"}
 _MISSING = object()
 
 Env = dict[str, Any]
@@ -202,11 +203,16 @@ class Matcher:
         elif name == "$len":
             if present and isinstance(actual, (list, str, dict)) and len(actual) == arg:
                 yield env
-        elif name == "$gte":
-            if present and _num(actual) and actual >= arg - NUMBER_TOLERANCE:
-                yield env
-        elif name == "$lte":
-            if present and _num(actual) and actual <= arg + NUMBER_TOLERANCE:
+        elif name in ("$gte", "$lte", "$gt", "$lt"):
+            if is_placeholder(arg):  # compare with an observed value bound earlier
+                if arg not in env:
+                    raise UnboundPlaceholder(f"{arg} in {name} must already be bound")
+                arg = env[arg]
+            if present and _num(actual) and _num(arg) and (
+                    (name == "$gte" and actual >= arg - NUMBER_TOLERANCE)
+                    or (name == "$lte" and actual <= arg + NUMBER_TOLERANCE)
+                    or (name == "$gt" and actual > arg + NUMBER_TOLERANCE)
+                    or (name == "$lt" and actual < arg - NUMBER_TOLERANCE)):
                 yield env
         elif name == "$contains":
             if present and isinstance(actual, list):

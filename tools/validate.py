@@ -607,7 +607,7 @@ def check_handlers(doc: dict) -> list[str]:
 
 
 MATCHERS = {"$any", "$absent", "$regex", "$len", "$contains", "$not", "$every",
-            "$gte", "$lte", "$all", "$count", "$selfProvider"}
+            "$gte", "$lte", "$gt", "$lt", "$all", "$count", "$selfProvider"}
 
 
 HOOK_OPS = {"describe", "records", "failNext"}
@@ -679,10 +679,12 @@ def _pattern_sites(doc: dict):
 
 def _near_matcher(key: str) -> str | None:
     """The matcher `key` differs from by one substituted letter or one swap of
-    adjacent letters (same length, case-insensitive), e.g. `$contians`."""
+    adjacent letters (same length, case-insensitive), e.g. `$contians`. Only
+    matcher names of five or more characters are considered: for `$gt` or
+    `$lt`, one letter's difference is too likely to be a real placeholder."""
     k = key.lower()
     for m in sorted(MATCHERS):
-        if len(m) != len(k) or k == m:
+        if len(m) < 5 or len(m) != len(k) or k == m:
             continue
         diff = [i for i, (a, b) in enumerate(zip(k, m)) if a != b]
         if len(diff) == 1 or (len(diff) == 2 and diff[1] == diff[0] + 1
@@ -891,6 +893,16 @@ def check_crashes(doc: dict) -> list[str]:
 
     def targets(st: dict, target) -> bool:
         return "action" in st and (target is None or target in (st.get("session"), st.get("bind")))
+
+    for i, step in enumerate(script):  # holdAt: inside `concurrently` only, never on the last action
+        if not isinstance(step, dict):
+            continue
+        if "holdAt" in step:
+            problems.append(f"script[{i}]: holdAt is allowed only inside `concurrently`")
+        subs = step.get("concurrently") or []
+        for k, sub in enumerate(subs):
+            if isinstance(sub, dict) and "holdAt" in sub and k == len(subs) - 1:
+                problems.append(f"script[{i}].concurrently[{k}]: holdAt on the last action holds nothing open")
 
     for i, step in enumerate(script):
         if "crash" not in step:

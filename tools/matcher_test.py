@@ -152,6 +152,21 @@ def _without_absent(value):
     return value
 
 
+def test_comparisons_with_bound_values() -> None:
+    """$gt/$lt and $gte/$lte may compare with a value bound earlier (e.g. a new
+    lease token strictly greater than the crashed run's)."""
+    assert M.matches({"old": "$t", "new": {"$gt": "$t"}}, {"old": 1, "new": 2})
+    assert not M.matches({"old": "$t", "new": {"$gt": "$t"}}, {"old": 2, "new": 2})
+    assert M.matches({"old": "$t", "new": {"$gte": "$t"}}, {"old": 2, "new": 2})
+    assert M.matches({"n": {"$lt": 3, "$gt": 1}}, {"n": 2})
+    try:
+        M.matches({"n": {"$gt": "$unbound"}}, {"n": 2})
+    except UnboundPlaceholder:
+        pass
+    else:
+        raise AssertionError("an unbound placeholder in $gt must be an error")
+
+
 def test_golden_replays_match_their_bundles() -> None:
     """Each replay fixture's pattern for the replayed session should match the
     golden bundle it replays, except for what differs by design between a
