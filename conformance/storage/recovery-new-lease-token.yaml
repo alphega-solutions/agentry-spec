@@ -20,12 +20,11 @@ description: >-
 
   The recovering lease's fencing token is strictly greater than the
   crashed run's (PORT-031, PORT-020; `lease.token` in
-  `schemas/ports/v1/records.yaml`). The crashed run's token is at least
-  1, so the recovered token is at least 2, which is what the fixture
-  asserts. Format limit: no event carries the lease, so the crashed run's
-  token cannot be captured, and matchers cannot compare two bound values
-  (`$gte` takes a number), so "strictly greater than the crashed run's
-  token" is checked only through this lower bound.
+  `schemas/ports/v1/records.yaml`). Every `checkpoint.saved` carries the
+  checkpoint's `fencingToken` (Area 10 reading settled with the coverage
+  fixtures, 2026-11-14). The event log's earliest `checkpoint.saved` that
+  carries a token belongs to the crashed run, so `$t1` binds that token.
+  The final checkpoint's lease token must be strictly greater (`$gt`).
 
   Also: $r1 continues under its own `runId` with a single `run.started`;
   c1 has exactly one `tool.call` and one `tool.result` and is dispatched
@@ -88,15 +87,18 @@ expect:
         - { type: run.ended }
       checkpoint:
         state: active
-        lease: { token: { $gte: 2 } }
   ports:
     eventLog:
       t1:
         $s:
           $all:
+            - $contains: [{ type: checkpoint.saved, payload: { fencingToken: $t1 } }]
             - $count: { of: { type: run.started }, equals: 1 }
             - $count: { of: { type: tool.call, payload: { callId: c1 } }, equals: 1 }
             - $count: { of: { type: tool.result, payload: { callId: c1 } }, equals: 1 }
+    checkpointStore:
+      t1:
+        $s: { lease: { token: { $gt: $t1 } } }
   stubCalls:
     lookup:
       - { arguments: { key: k1 }, completed: true, context: { sessionId: $s, runId: $r1 } }

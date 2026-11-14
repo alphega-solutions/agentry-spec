@@ -65,7 +65,7 @@ Matchers: `{"$any": true}`, `{"$absent": true}`, `{"$regex": "..."}`, `{"$len": 
 - **Token counting** — scripted adapters count context tokens deterministically (PROV-045): one per word of a text part, `tokenCounting.nonTextPart` (default 10) per other part, nothing for messages, roles or tool definitions. With `capabilities.contextLimit` and `maxOutputTokens`, this makes compaction and overflow exact. Unless set, `contextLimit` is 1,000,000 and `maxOutputTokens` 4,096.
 - **Model hooks** call their model through the scripted provider of their `source.model.provider`, consuming that provider's responses in order like any other call to it; give a model hook its own provider so its responses do not interleave with the session's. The model's answer is a `structured` part whose `value` is the `HookResult`, or a single text part holding it as JSON. These calls appear in `expect.providerRequests`.
 - **Behaviours** — exactly one of `ok`, `error` or `hang: true`; `ok` and `error` may take `delayMs`. A delayed or hanging stub honours cancellation (stops without its scripted result, records `cancelled: true`) unless `ignoreCancel: true`.
-- **`limits`** — `inlinePayloadBytes` (blob threshold, TOOL-072) and `leaseTtl` (run lease, ISO 8601, default `PT5M`).
+- **`limits`** — `inlinePayloadBytes` (blob threshold, TOOL-072) and `leaseTtl` (run and operation leases, HITL-093; ISO 8601, default `PT5M`).
 
 ### Steps
 
@@ -88,7 +88,7 @@ Matchers: `{"$any": true}`, `{"$absent": true}`, `{"$regex": "..."}`, `{"$len": 
 
 ### Record shapes
 
-- **Stub calls** (`expect.stubCalls`), keyed by native tool ID, `<serverId>/<toolName>`, `<endpointId>/<operationId>`, or remote hook ID: `{ arguments, context: { sessionId, runId, principal, idempotencyKey, deadline, traceContext }, credential?, cancelled, completed }`; `arguments` are the tool's arguments (HTTP stubs included), `credential` names the credential the call received as `{reference, principal?}` (never its value), and `completed` is whether the stub's result reached the implementation. Remote and native hook invocations record `{ arguments }`, the `HookRequest` (`schemas/core/v1/hook.yaml`), keyed by remote hook ID or hook ID.
+- **Stub calls** (`expect.stubCalls`), keyed by native tool ID, `<serverId>/<toolName>`, `<endpointId>/<operationId>`, or remote hook ID: `{ arguments, context: { sessionId, runId, principal, idempotencyKey, deadline, traceContext }, credential?, cancelled, completed }`; `arguments` are the tool's arguments (HTTP stubs included), `credential` names the credential the call received as `{reference, principal?}`, `principal` being the principal's subject (never the value), and `completed` is whether the stub's result reached the implementation. Remote and native hook invocations record `{ arguments }`, the `HookRequest` (`schemas/core/v1/hook.yaml`), keyed by remote hook ID or hook ID.
 - **Vector store queries** (`expect.stubCalls.vectorStore/<sourceId>`): `{ arguments: { tenant, principal: { subject, tenant, roles }, text, limit } }`.
 - **Provider requests** (`expect.providerRequests`): `{ provider, model, messages, tools: [{ name, description, input }], outputSchema, params, singleToolCall }`; a tool's `name` is its tool ID. A step's tool results are sent as ONE message with role `tool` holding all its `tool_result` parts in request order (TOOL-032).
 - **Ports** (`expect.ports`, keyed by port name, then tenant; record shapes normative in `schemas/ports/v1/records.yaml`):

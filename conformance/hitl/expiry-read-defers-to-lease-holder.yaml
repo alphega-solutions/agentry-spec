@@ -1,0 +1,110 @@
+schemaVersion: "0.1.0"
+id: hitl.expiry-read-defers-to-lease-holder
+title: A read that finds expiry processing due while another holder's operation lease is current does not perform it; the holder processes the expiry once
+description: >-
+  default@1 (baseline) has the default onExpiry `close` and suspendedTtl
+  PT72H. update_record is `approval: always`, so $s escalates at 00:00
+  with one undecided action and is `suspended`; the escalation expires at
+  2026-01-04T00:00:00Z. The clock is set exactly to that expiry, so
+  expiry processing is due: closing $s `expired` (HITL-082).
+
+  Two processes sharing the same ports then act. Process A calls close()
+  on $s, a write outside a run that takes an operation lease (HITL-090,
+  HITL-093); A is held at `after_operation_lease`, having acquired and
+  fenced its lease but written nothing, not even the expiry processing it
+  will do on re-reading the session (HITL-093 step 2). While A's lease is
+  current, process B calls listPendingEscalations for t1, which would
+  normally first perform the expiry processing that is due (HITL-100).
+  HITL-093: "A read that finds expiry processing due while another
+  holder's lease is current MUST NOT perform it". So B persists no event
+  (`newEvents: 0`); with onExpiry `close` the expiry processing would have
+  appended `session.closed`, so this observes that B did not perform it.
+  B still succeeds, and returns no escalations, since HITL-100 excludes an
+  escalation whose suspendedTtl has elapsed.
+
+  A is then released. It re-reads $s, finds the expiry due and performs
+  it: $s closes `expired`, with `session.closed` timestamped with the
+  expiry time and no `runId`. A's own close() then no longer applies
+  (HITL-093 step 2), so no second `session.closed` and no `cancelled`
+  close follow. A's outcome is not asserted: HITL-093 does not say
+  whether an operation that no longer applies reports success or a
+  conflict. Expiry is processed exactly once: one `session.closed`, and
+  update_record is never dispatched.
+requirements: [HITL-093, HITL-082]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.update_record }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: SYN-k1, value: SYN-v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record: []
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set SYN-k1 to SYN-v1" }]
+    expect: { ok: true, endReason: escalated }
+  # Exactly the escalation's expiry (00:00 + PT72H).
+  - clock: { set: "2026-01-04T00:00:00Z" }
+  - separateProcesses: true
+    concurrently:
+      - action: close
+        session: $s
+        holdAt: after_operation_lease
+        # After release it re-reads the session (HITL-093 step 2), processes
+        # the due expiry, and no longer applies: `conflict` (CORE-022).
+        expect: { ok: false, error: { category: conflict }, newEvents: 1 }
+      - action: listPendingEscalations
+        tenant: t1
+        expect: { ok: true, newEvents: 0, escalations: [] }
+expect:
+  sessions:
+    $s:
+      state: closed
+      closeReason: expired
+      events:
+        mode: subsequence
+        items:
+          - { type: escalation.raised, payload: { escalation: { expiresAt: { $regex: "^2026-01-04T00:00:00" } } } }
+          - { type: run.ended, payload: { reason: escalated } }
+          - { type: session.closed, runId: { $absent: true }, timestamp: { $regex: "^2026-01-04T00:00:00" }, payload: { reason: expired } }
+      absentEvents:
+        - { type: session.closed, payload: { reason: cancelled } }
+        - { type: escalation.resolved }
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $count: { of: { type: session.closed }, equals: 1 }
+  stubCalls:
+    update_record: { count: 0 }
+  providerRequests:
+    scripted-a: { count: 1 }

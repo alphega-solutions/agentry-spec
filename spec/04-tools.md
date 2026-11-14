@@ -305,3 +305,9 @@ Requirement text above has been edited where noted.
 Requirement text above has been edited where noted.
 
 - **TOOL-051** (text above edited). The timeout's error source is `harness`: the harness enforces the timeout, and the tool reports nothing. Fixtures had used `tool`; the code registry fixes it (CORE-192 as amended 2026-11-14).
+
+## Amendment 2026-11-14 — readings settled with the coverage fixtures (post-Phase 4 review)
+
+- **TOOL-071, TOOL-073: withheld results.** The `policy` error that replaces a withheld result has provenance `tool:<id>` and **no** labels. It holds none of the tool's data, so neither the tool's declared labels nor any reported labels apply, and none enter the session label set (HOOK-127).
+- **TOOL-055: late results.** A result a tool produces after its timeout is discarded: neither recorded nor delivered. In fixtures, its stub-call record has `completed: false`.
+- **TOOL-012: unresolvable credentials.** When a `credentialMode: principal` binding's credential cannot be resolved for the session's principal, the call is not made. It produces a tool result error `unauthorized` (`agentry.tool.credential_unavailable`, not retryable), which is delivered to the model, and the run continues. The call is never made with another principal's credential or with none.

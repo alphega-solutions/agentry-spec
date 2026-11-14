@@ -128,7 +128,7 @@ As in Area 1 §2. Requirement IDs use the prefix `HITL-`. The schemas `Escalatio
   3. append its events, then its audit records;
   4. release the lease with its final checkpoint save.
 
-  While a session holds a current lease of either kind, `run()`, `resume()`, `decide()`, `close()` and `cancel()` of a non-active session **MUST** fail with `conflict` (`retryable: true`) and change nothing. (`cancel()` of an active run is the run's own path, CORE-070.) A read that finds expiry processing due while another holder's lease is current **MUST NOT** perform it, and reports the session as the holder leaves it. A lapsed operation lease is superseded by the next lease: there is no run to recover, and the next holder rebuilds state from the event log (PORT-034).
+  While a session holds a current lease of either kind, `run()`, `resume()`, `decide()`, `close()` and `cancel()` of a non-active session **MUST** fail with `conflict` (`agentry.session.busy`, `retryable: true`) and change nothing. (`cancel()` of an active run is the run's own path, CORE-070.) A read that finds expiry processing due while another holder's lease is current **MUST NOT** perform it, and reports the session as the holder leaves it. A lapsed operation lease is superseded by the next lease: there is no run to recover, and the next holder rebuilds state from the event log (PORT-034).
 
 ## 11. Finding pending escalations
 
@@ -324,3 +324,10 @@ Requirement text above has been edited where noted.
   Yet this is the decision that permanently fixes what the system believes a non-idempotent side effect did.
 - **Now** confirmations count like approvals, toward the outcome each states. The action is decided when the required number of distinct reviewers agree on the same outcome, compared as RFC 8785 canonical JSON of `{outcome, output}`. Disagreement leaves the action undecided. There is no `reject` for recovery, so an action that never reaches agreement expires and closes the session `expired` (HITL-082). Distinct reviewers (HITL-024), no self-approval for `recovery` (HITL-023), and the refusal of a second decision from the same reviewer (`agentry.hitl.duplicate_reviewer`) are unchanged.
 - **Fixtures.** New: `hitl.decide-confirm-quorum`.
+
+## Amendment 2026-11-14 — readings settled with the coverage fixtures (post-Phase 4 review)
+
+- **HITL-093** (text above edited): the contention error's code is `agentry.session.busy` (`conflict`, retryable).
+- **HITL-093, reads.** A read (`getReviewerView`, `listPendingEscalations`) never waits for a lease. It returns the session as stored and performs nothing. "Reports the session as the holder leaves it" means the read does not do the holder's work, not that it blocks until the holder finishes.
+- **HITL-093, an operation that no longer applies.** After acquiring its lease, an operation that finds it no longer applies returns what it would have returned had it run after the other writer. Step 2 still applies first: an operation that finds expiry processing due performs it. For example, a `close()` on a suspended session whose TTL has elapsed processes the expiry (the session closes `expired`), then no longer applies and fails with `conflict` (CORE-022). It writes nothing beyond that expiry processing.
+- **HITL-093, lease lifetime.** Operation leases use the same `leaseTtl` as run leases (fixture format `limits.leaseTtl`).

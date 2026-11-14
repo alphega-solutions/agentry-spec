@@ -1,0 +1,204 @@
+schemaVersion: "0.1.0"
+id: hook.taint-labels-withheld-not-recorded
+title: A withheld result's labels never enter the label set; a delivered labelled result is recorded even in an untainted session
+description: >-
+  The bundle trusts `read_contact@1` and `read_profile@1`, which both
+  declare sensitivity `pii`, so their results label without tainting.
+  `fetch_external` is untrusted and unlabelled. `send_note` is an egress
+  read tool with the default `onTaintedEgress` (block). The rule hook
+  `withhold-contact` (afterToolCall, required by the persona) blocks
+  read_contact's result and continues for every other tool.
+
+  - $sWithheld: step 1 calls read_contact (c1). Its `pii` result is
+    withheld at stage 10: the model receives a `policy` error and the
+    result never enters context, so its labels are not recorded (HOOK-127
+    reading: "A withheld result never enters context, so its labels are
+    not recorded"). Step 2 calls fetch_external (c2), whose untrusted
+    result taints the session. Step 3 calls send_note (c3): the session is
+    tainted but its label set is empty, so the egress condition does not
+    hold and, with no other condition holding, no taint decision is
+    emitted (HOOK-124); send_note is dispatched. The checkpoint's
+    `taint.labels` is absent or empty (PORT-030: absent means none).
+  - $sUntainted: step 1 calls read_profile (c1), whose `pii` result is
+    delivered. Nothing untrusted enters context, so the session is not
+    tainted, but the label set is recorded whether or not the session is
+    tainted (HOOK-127), and the checkpoint holds it because it is not
+    empty (PORT-030 as amended 2026-11-13): `taint: { tainted: false,
+    labels: [pii] }`.
+requirements: [HOOK-127, PORT-030]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        trustedTools: [read_contact@1, read_profile@1]
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+      - kind: Hook
+        id: withhold-contact
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [afterToolCall]
+        results: [block]
+        timeoutMs: 1000
+        source: { kind: rule, when: "tool.id == 'read_contact'", then: { result: block, reasonCode: test.guard.withheld } }
+      - kind: Tool
+        id: read_contact
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Read a contact.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        sensitivity: [pii]
+        binding: { kind: native, handler: test.read_contact }
+      - kind: Tool
+        id: read_profile
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Read a profile.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        sensitivity: [pii]
+        binding: { kind: native, handler: test.read_profile }
+      - kind: Tool
+        id: fetch_external
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Fetch a record from an external source.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        binding: { kind: native, handler: test.fetch_external }
+      - kind: Tool
+        id: send_note
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Send a note to an external address.
+        input:
+          type: object
+          additionalProperties: false
+          required: [text]
+          properties: { text: { type: string } }
+        effect: read
+        egress: true
+        binding: { kind: native, handler: test.send_note }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [read_contact@1, read_profile@1, fetch_external@1, send_note@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [withhold-contact@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # $sWithheld
+        - parts: [{ type: tool_call, callId: c1, tool: read_contact, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c2, tool: fetch_external, arguments: { key: k1 } }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c3, tool: send_note, arguments: { text: "SYN-NOTE-0001" } }]
+          usage: { inputTokens: 40, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Sent." }]
+          usage: { inputTokens: 50, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sUntainted
+        - parts: [{ type: tool_call, callId: c1, tool: read_profile, arguments: { key: k2 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Read." }]
+          usage: { inputTokens: 30, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      read_contact:
+        - ok: { output: { contact: "SYN-CONTACT-0001" } }
+      read_profile:
+        - ok: { output: { profile: "SYN-PROFILE-0002" } }
+      fetch_external:
+        - ok: { output: { value: "SYN-UNTRUSTED-0001" } }
+      send_note:
+        - ok: { output: { sent: true } }
+script:
+  - action: run
+    bind: $sWithheld
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Read contact k1, fetch k1, then send a note" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sUntainted
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Read profile k2" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sWithheld:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: hook.decision, payload: { hook: withhold-contact@1, point: afterToolCall, result: block } }
+          - { type: tool.result, provenances: ["tool:read_contact"], labels: [], payload: { callId: c1, tool: read_contact, result: { error: { category: policy } } } }
+          - { type: tool.result, payload: { callId: c2, tool: fetch_external } }
+          - { type: tool.call, payload: { callId: c3, tool: send_note } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: policy.decision, payload: { kind: taint } }
+      checkpoint:
+        taint:
+          tainted: true
+          provenances: ["tool:fetch_external"]
+          # absent or empty: not (present and non-empty)
+          labels: { $not: { $all: [{ $any: true }, { $not: { $len: 0 } }] } }
+    $sUntainted:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, labels: [pii], payload: { callId: c1, tool: read_profile } }
+          - { type: run.ended, payload: { reason: responded } }
+      checkpoint:
+        taint: { tainted: false, labels: [pii] }
+  stubCalls:
+    read_contact: { count: 1 }
+    read_profile: { count: 1 }
+    fetch_external: { count: 1 }
+    send_note: [{ arguments: { text: "SYN-NOTE-0001" } }]

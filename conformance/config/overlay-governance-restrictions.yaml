@@ -1,0 +1,160 @@
+schemaVersion: "0.1.0"
+id: cfg.overlay-governance-restrictions
+title: An environment overlay may only append policy bundles, add legal holds and lengthen retention; it may not remove a hold, shorten retention, or reorder or insert into the bundle stack
+description: >-
+  The deployment stacks org@1 then dept@1, holds tenant t1 under one legal
+  hold, and keeps events, checkpoints, idempotency records, blobs and
+  snapshots for P30D and audit records for P365D. extra@1 is a policy
+  bundle in the configuration but not in the stack. An overlay may change
+  deployment fields, but must not loosen deployment governance (CFG-021;
+  CFG-112 as amended 2026-11-01: it may only append policy bundles, only
+  add legal holds, and only lengthen retention periods). Each of these
+  `prod` overlays is therefore rejected with a `configuration` error whose
+  details name the Deployment, the deployment field, and the overlay layer:
+
+  - removing the legal hold (`legalHolds: []`), which would let retention
+    delete held data;
+  - shortening `retention.events` from P30D to P7D (the other periods
+    restated unchanged);
+  - reordering the stack to [dept@1, org@1], which changes which bundle
+    tightens which (CFG-070, CFG-072);
+  - inserting extra@1 between org@1 and dept@1, which places it above
+    dept@1 rather than below it.
+
+  A control overlay appends extra@1 at the end of the stack, adds a second
+  legal hold, and lengthens `retention.events` to P60D. It loads, and the
+  next session is pinned to its snapshot ($hCtl), whose stored Deployment
+  carries the appended stack, both holds and the longer period, since the
+  snapshot is the validated configuration after overlays (CFG-050). The
+  rejected overlays left the previous snapshot in force, so none of their
+  values reaches the stored snapshot.
+requirements: [CFG-021, CFG-112]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1, dept@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+        legalHolds:
+          - { tenant: t1, reason: "SYN-HOLD-0001" }
+      - kind: PolicyBundle
+        id: dept
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow department policy."
+      - kind: PolicyBundle
+        id: extra
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow the extra policy."
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  # Removing a legal hold.
+  - load:
+      overlay:
+        environment: prod
+        deployment:
+          legalHolds: []
+    expect:
+      ok: false
+      error:
+        category: configuration
+        details: { artifact: test@1, field: /legalHolds, layer: overlay }
+  # Shortening a retention period.
+  - load:
+      overlay:
+        environment: prod
+        deployment:
+          retention: { events: P7D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+    expect:
+      ok: false
+      error:
+        category: configuration
+        details: { artifact: test@1, field: /retention/events, layer: overlay }
+  # Reordering the policy bundle stack.
+  - load:
+      overlay:
+        environment: prod
+        deployment:
+          policyBundles: [dept@1, org@1]
+    expect:
+      ok: false
+      error:
+        category: configuration
+        details: { artifact: test@1, field: /policyBundles, layer: overlay }
+  # Inserting a bundle into the stack rather than appending it.
+  - load:
+      overlay:
+        environment: prod
+        deployment:
+          policyBundles: [org@1, extra@1, dept@1]
+    expect:
+      ok: false
+      error:
+        category: configuration
+        details: { artifact: test@1, field: /policyBundles, layer: overlay }
+  # Control: append a bundle, add a hold, lengthen a period.
+  - load:
+      overlay:
+        environment: prod
+        deployment:
+          policyBundles: [org@1, dept@1, extra@1]
+          legalHolds:
+            - { tenant: t1, reason: "SYN-HOLD-0001" }
+            - { tenant: t1, reason: "SYN-HOLD-0002" }
+          retention: { events: P60D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+    bind: $hCtl
+    expect: { ok: true }
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: contains
+        items:
+          - { type: session.created, snapshotHash: $hCtl }
+  ports:
+    snapshotStore:
+      t1:
+        $hCtl:
+          artifacts:
+            Deployment:
+              - policyBundles: [org@1, dept@1, extra@1]
+                legalHolds:
+                  - { tenant: t1, reason: "SYN-HOLD-0001" }
+                  - { tenant: t1, reason: "SYN-HOLD-0002" }
+                retention: { events: P60D, audit: P365D }

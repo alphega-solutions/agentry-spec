@@ -1,0 +1,175 @@
+schemaVersion: "0.1.0"
+id: tool.exec-timeout-late-result
+title: A result a timed-out non-idempotent mutating call produces after its timeout is neither recorded nor delivered; confirming `failed` delivers `agentry.hitl.confirmed_failed`
+description: >-
+  update_record (mutating, not idempotent) declares timeoutMs 1000; the
+  profile's timeouts.tool is PT30S. Each stub behaviour ignores
+  cancellation and completes `ok` after 10 s on the virtual clock, so the
+  tool produces a result 9 s after its call has timed out.
+
+  - $late: c1 is dispatched at 00:00:00 and times out at 00:00:01. Its
+    outcome is unknown (TOOL-055, amendment 2026-11-14): an `error` event
+    carries `agentry.tool.timeout` (source `harness`), a `recovery` action
+    with `agentry.recovery.unknown_outcome` is raised, and the run ends
+    `escalated`, leaving the session `suspended`. The clock is then
+    advanced one minute, so the stub's late `ok` result (key SYN-k1) is
+    produced at 00:00:10. TOOL-055: "A result the tool produces after its
+    timeout is neither recorded nor delivered." So c1 gets no
+    `tool.result`, the model is not called again, and the idempotency
+    record for c1's key stays `started` with no outcome.
+  - $confirmed: the same timeout at 00:01:01 raises a recovery action
+    $act; the late `ok` result (key SYN-k2) arrives at 00:01:10 and is
+    ignored. At 00:02:01 reviewer r1 resumes with `confirm`, outcome
+    `failed` (HITL-060). The call's one `tool.result`, emitted after
+    `escalation.resolved`, is the error `{category: unavailable, code:
+    agentry.hitl.confirmed_failed, retryable: false}`, not the late `ok`
+    result. The model receives that error in its next request and the
+    turn continues to a response. The idempotency record is `completed`
+    with the confirmed failure as its outcome.
+
+  Each call is dispatched exactly once and receives the cancellation
+  signal. Each late result is discarded, so its stub-call record has
+  `completed: false` (Area 4 reading settled with the coverage fixtures,
+  2026-11-14).
+requirements: [TOOL-055, HITL-060]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        timeoutMs: 1000
+        binding: { kind: native, handler: test.update_record }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        # $late
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: SYN-k1, value: SYN-v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $confirmed
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: SYN-k2, value: SYN-v2 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "The update of SYN-k2 failed." }]
+          usage: { inputTokens: 30, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - { ok: { output: { updated: true, key: SYN-k1 } }, delayMs: 10000, ignoreCancel: true }
+        - { ok: { output: { updated: true, key: SYN-k2 } }, delayMs: 10000, ignoreCancel: true }
+script:
+  - action: run
+    bind: $late
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set SYN-k1 to SYN-v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.idempotencyKey: $kLate }
+    expect: { ok: true, endReason: escalated }
+  # Past the late result (00:00:10).
+  - clock: { advance: PT1M }
+  - action: run
+    bind: $confirmed
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set SYN-k2 to SYN-v2" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $act, payload.escalation.pendingActions.0.idempotencyKey: $kConfirmed }
+    expect: { ok: true, endReason: escalated }
+  # Past the late result (00:01:10).
+  - clock: { advance: PT1M }
+  - action: resume
+    session: $confirmed
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000555", pendingActionId: $act, type: confirm, outcome: failed }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $late:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: update_record } }
+          - { type: error, payload: { error: { category: unavailable, code: agentry.tool.timeout, retryable: true, source: harness } } }
+          - type: escalation.raised
+            payload:
+              escalation:
+                sources: [recovery]
+                pendingActions: [{ kind: recovery, reasonCode: agentry.recovery.unknown_outcome, callId: c1, idempotencyKey: $kLate }]
+          - { type: run.ended, payload: { reason: escalated } }
+      absentEvents:
+        - { type: tool.result }
+        - { type: model.request, step: 2 }
+        - { type: session.closed }
+    $confirmed:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: update_record } }
+          - { type: error, payload: { error: { category: unavailable, code: agentry.tool.timeout, source: harness } } }
+          - type: escalation.raised
+            payload:
+              escalation:
+                sources: [recovery]
+                pendingActions: [{ id: $act, kind: recovery, callId: c1, idempotencyKey: $kConfirmed }]
+          - { type: run.ended, payload: { reason: escalated } }
+          - { type: escalation.resolved }
+          - type: tool.result
+            payload:
+              callId: c1
+              tool: update_record
+              result: { error: { category: unavailable, code: agentry.hitl.confirmed_failed, retryable: false } }
+          - { type: model.request }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.result, payload: { result: { ok: { $any: true } } } }
+  stubCalls:
+    update_record:
+      - { arguments: { key: SYN-k1, value: SYN-v1 }, cancelled: true, completed: false, context: { sessionId: $late, idempotencyKey: $kLate } }
+      - { arguments: { key: SYN-k2, value: SYN-v2 }, cancelled: true, completed: false, context: { sessionId: $confirmed, idempotencyKey: $kConfirmed } }
+  ports:
+    eventLog:
+      t1:
+        $confirmed:
+          $count: { of: { type: tool.result, payload: { callId: c1 } }, equals: 1 }
+    idempotencyStore:
+      t1:
+        $kLate: { state: started, outcome: { $absent: true } }
+        $kConfirmed:
+          state: completed
+          outcome: { error: { category: unavailable, code: agentry.hitl.confirmed_failed, retryable: false } }
+  providerRequests:
+    scripted-a:
+      - {}
+      - {}
+      - messages:
+          $all:
+            - $contains:
+                - role: tool
+                  parts: [{ type: tool_result, callId: c1, result: { error: { category: unavailable, code: agentry.hitl.confirmed_failed, retryable: false } } }]
+            - $count: { of: { role: tool, parts: { $contains: [{ type: tool_result, result: { ok: { $any: true } } }] } }, equals: 0 }

@@ -1,0 +1,207 @@
+schemaVersion: "0.1.0"
+id: hook.taint-labels-survive-restart
+title: The session label set survives a crash and restart, and still drives the egress condition after truncation drops the labelled part
+description: >-
+  The bundle trusts `read_contact@1`, which declares sensitivity `pii`, so
+  its result labels the session without tainting it. `fetch_external` is
+  untrusted and unlabelled. `send_note` is an egress read tool with the
+  default `onTaintedEgress` (block). Both candidate models declare
+  contextLimit 120 and maxOutputTokens 20: available space 100, compaction
+  above 90 (default triggerPercent), mode `truncate` (baseline
+  `default@1`). Non-text parts count 10. System content is 8 tokens.
+
+  - Turn 1 ($r1): "Read contact k1" (3) calls read_contact (c1, `pii`;
+    10 + 10) and replies "Read." (1): turn 1 is 24 tokens. The run
+    responds; the session is untainted, its label set is `[pii]`, and it
+    is checkpointed idle.
+  - Turn 2 ($r2): the model calls fetch_external (c2). The implementation
+    is crashed at `after_dispatch`, so all in-process state is lost. After
+    a restart and a clock advance past the run lease, the next run()
+    performs recovery first (HITL-091 as amended 2026-11-01): the read call
+    is re-dispatched, its untrusted result taints the session, and the
+    orphaned run responds "Fetched." (1): turn 2 is 2 + 20 + 1 = 23.
+  - Turn 3 ($r3): the text is 36 words: 8 + 24 + 23 + 36 = 91 > 90, so
+    truncation drops turn 1 (one unit), leaving 67. No part in context now
+    carries a label, so the label set can only come from state restored
+    after the restart. The model calls send_note (c3): the session is
+    tainted and its label set is `[pii]` (HOOK-127), so the egress
+    condition holds (HOOK-122): taint decision `block` with provenances
+    `[tool:fetch_external]` and labels `[pii]`; send_note is not
+    dispatched and the model receives a `policy` error (67 + 20 = 87, no
+    further compaction), then responds.
+
+  The checkpoint records `taint.labels: [pii]` (PORT-030, written whenever
+  the label set is non-empty). Every part of turn 3's first request is
+  asserted to carry no `pii` label, showing the labelled result is gone
+  from context.
+requirements: [HOOK-127, HOOK-122, PORT-030]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        trustedTools: [read_contact@1]
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+      - kind: Tool
+        id: fetch_external
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Fetch a record from an external source.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        binding: { kind: native, handler: test.fetch_external }
+      - kind: Tool
+        id: read_contact
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Read a contact.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        sensitivity: [pii]
+        binding: { kind: native, handler: test.read_contact }
+      - kind: Tool
+        id: send_note
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Send a note to an external address.
+        input:
+          type: object
+          additionalProperties: false
+          required: [text]
+          properties: { text: { type: string } }
+        effect: read
+        egress: true
+        binding: { kind: native, handler: test.send_note }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [fetch_external@1, read_contact@1, send_note@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { contextLimit: 120, maxOutputTokens: 20 }
+      responses:
+        # Turn 1
+        - parts: [{ type: tool_call, callId: c1, tool: read_contact, arguments: { key: k1 } }]
+          usage: { inputTokens: 11, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Read." }]
+          usage: { inputTokens: 31, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+        # Turn 2 (crashed, then recovered)
+        - parts: [{ type: tool_call, callId: c2, tool: fetch_external, arguments: { key: k1 } }]
+          usage: { inputTokens: 34, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Fetched." }]
+          usage: { inputTokens: 54, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+        # Turn 3
+        - parts: [{ type: tool_call, callId: c3, tool: send_note, arguments: { text: "SYN-CONTACT-0001" } }]
+          usage: { inputTokens: 67, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "The note could not be sent." }]
+          usage: { inputTokens: 87, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      capabilities: { contextLimit: 120, maxOutputTokens: 20 }
+      responses: []
+  stubs:
+    tools:
+      read_contact:
+        - ok: { output: { contact: "SYN-CONTACT-0001" } }
+      fetch_external:
+        - ok: { output: { value: "SYN-UNTRUSTED-0001" } }
+        - ok: { output: { value: "SYN-UNTRUSTED-0001" } }
+      send_note: []
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Read contact k1" }]
+    expect: { ok: true, endReason: responded }
+  - crash: { at: after_dispatch, session: $s }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Fetch k1" }]
+  - restart: {}
+  - clock: { advance: PT1H }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "SYN-RQ-01 SYN-RQ-02 SYN-RQ-03 SYN-RQ-04 SYN-RQ-05 SYN-RQ-06 SYN-RQ-07 SYN-RQ-08 SYN-RQ-09 SYN-RQ-10 SYN-RQ-11 SYN-RQ-12 SYN-RQ-13 SYN-RQ-14 SYN-RQ-15 SYN-RQ-16 SYN-RQ-17 SYN-RQ-18 SYN-RQ-19 SYN-RQ-20 SYN-RQ-21 SYN-RQ-22 SYN-RQ-23 SYN-RQ-24 SYN-RQ-25 SYN-RQ-26 SYN-RQ-27 SYN-RQ-28 SYN-RQ-29 SYN-RQ-30 SYN-RQ-31 SYN-RQ-32 SYN-RQ-33 SYN-RQ-34 SYN-RQ-35 SYN-RQ-36" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, runId: $r1, labels: [pii], payload: { callId: c1, tool: read_contact } }
+          - { type: run.ended, runId: $r1, payload: { reason: responded } }
+          - { type: tool.call, runId: $r2, turn: 2, payload: { callId: c2, tool: fetch_external } }
+          - { type: tool.result, runId: $r2, turn: 2, payload: { callId: c2, tool: fetch_external } }
+          - { type: run.ended, runId: $r2, payload: { reason: responded } }
+          - { type: run.started, runId: { $all: [$r3, { $not: $r2 }] }, payload: { kind: run } }
+          - { type: context.compacted, runId: $r3, turn: 3, step: 1, payload: { mode: truncate, units: [{ turn: 1 }] } }
+          - { type: policy.decision, runId: $r3, turn: 3, payload: { kind: taint, outcome: block, callId: c3, tool: send_note, provenances: ["tool:fetch_external"], labels: [pii] } }
+          - { type: tool.result, runId: $r3, payload: { callId: c3, result: { error: { category: policy } } } }
+          - { type: run.ended, runId: $r3, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.call, payload: { callId: c3 } }
+        - { type: escalation.raised }
+      checkpoint:
+        taint: { tainted: true, provenances: ["tool:fetch_external"], labels: [pii] }
+  stubCalls:
+    read_contact: { count: 1 }
+    fetch_external:
+      - { arguments: { key: k1 }, completed: false }
+      - { arguments: { key: k1 }, completed: true }
+    send_note: { count: 0 }
+  providerRequests:
+    scripted-a:
+      # Turn 1
+      - {}
+      - {}
+      # Turn 2 (the first request was made before the crash)
+      - {}
+      - {}
+      # Turn 3, step 1: no part in context carries pii
+      - messages:
+          $every:
+            parts: { $count: { of: { labels: { $contains: [pii] } }, equals: 0 } }
+      - {}
+    scripted-b: { count: 0 }

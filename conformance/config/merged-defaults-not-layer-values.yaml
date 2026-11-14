@@ -29,6 +29,25 @@ description: >-
     40 + 45 = 93, which is above 90 but not above 95. So no compaction
     happens, and turn 2's request still carries turn 1's principal
     message.
+
+  - context.compaction.mode (`stricter`, order none → truncate → summarize,
+    default truncate, a mid-order default). A load replaces org@1's
+    `context` with `{compaction: {triggerPercent: 95}, retrieval: {source:
+    kb}}`: a compaction block that sets no `mode`, and a retrieval block
+    that sets no `limit`. default@1 now sets `context: {compaction: {mode:
+    summarize}, retrieval: {auto: true, limit: 8}}`, and the Deployment
+    adds the vector store source `kb`. Had org@1's block been filled with
+    `mode: truncate`, the profile's `summarize` would loosen it and the
+    load would fail; it loads. $sSum: retrieval returns nothing on either
+    turn. Turn 1 is 20 + 20 = 40 words. Turn 2's text is 50 words: 8 + 40
+    + 50 = 98, above 95, so turn 1 is compacted, by summarization: the
+    summarizer (the session's model, scripted-a) returns a 4-word summary,
+    giving 8 + 4 + 50 = 62. Turn 2's request carries the summary and not
+    turn 1's principal message.
+
+  - context.retrieval.limit (`min`, default 5). In the same configuration,
+    org@1's retrieval block sets no `limit`. A filled default would cap the
+    profile's 8 at 5; each automatic retrieval query in $sSum asks for 8.
 requirements: [CFG-050, HOOK-133]
 contract: ">=0.1.0 <1.0.0"
 features: []
@@ -139,6 +158,13 @@ setup:
           usage: { inputTokens: 28, outputTokens: 20, cachedInputTokens: 0, reasoningTokens: 0 }
         - parts: [{ type: text, text: "Done." }]
           usage: { inputTokens: 93, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sSum: turn 1, the summarizer, turn 2
+        - parts: [{ type: text, text: "SYN-NR-01 SYN-NR-02 SYN-NR-03 SYN-NR-04 SYN-NR-05 SYN-NR-06 SYN-NR-07 SYN-NR-08 SYN-NR-09 SYN-NR-10 SYN-NR-11 SYN-NR-12 SYN-NR-13 SYN-NR-14 SYN-NR-15 SYN-NR-16 SYN-NR-17 SYN-NR-18 SYN-NR-19 SYN-NR-20" }]
+          usage: { inputTokens: 28, outputTokens: 20, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "SYN-SUMMARY-N-0001 SYN-SUMMARY-N-0002 SYN-SUMMARY-N-0003 SYN-SUMMARY-N-0004" }]
+          usage: { inputTokens: 40, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Done." }]
+          usage: { inputTokens: 62, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
     scripted-b:
       capabilities: { contextLimit: 120, maxOutputTokens: 20 }
       responses: []
@@ -146,6 +172,10 @@ setup:
     tools:
       notify:
         - ok: { output: { sent: true } }
+    vectorStores:
+      kb:
+        - results: []
+        - results: []
 script:
   - action: run
     bind: $sCont
@@ -191,6 +221,75 @@ script:
     principal: p1
     input: [{ type: text, text: "SYN-MB-01 SYN-MB-02 SYN-MB-03 SYN-MB-04 SYN-MB-05 SYN-MB-06 SYN-MB-07 SYN-MB-08 SYN-MB-09 SYN-MB-10 SYN-MB-11 SYN-MB-12 SYN-MB-13 SYN-MB-14 SYN-MB-15 SYN-MB-16 SYN-MB-17 SYN-MB-18 SYN-MB-19 SYN-MB-20 SYN-MB-21 SYN-MB-22 SYN-MB-23 SYN-MB-24 SYN-MB-25 SYN-MB-26 SYN-MB-27 SYN-MB-28 SYN-MB-29 SYN-MB-30 SYN-MB-31 SYN-MB-32 SYN-MB-33 SYN-MB-34 SYN-MB-35 SYN-MB-36 SYN-MB-37 SYN-MB-38 SYN-MB-39 SYN-MB-40 SYN-MB-41 SYN-MB-42 SYN-MB-43 SYN-MB-44 SYN-MB-45" }]
     expect: { ok: true, endReason: responded }
+  - load:
+      artifacts:
+        - kind: Deployment
+          id: test
+          version: 1
+          schemaVersion: "0.1.0"
+          environment: test
+          policyBundles: [org@1, lower@1]
+          attachmentSources: [upload, email]
+          providers:
+            - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+            - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          ports:
+            eventLog: { adapter: memory, region: test-region }
+            checkpointStore: { adapter: memory, region: test-region }
+            idempotencyStore: { adapter: memory, region: test-region }
+            snapshotStore: { adapter: memory, region: test-region }
+            blobStore: { adapter: memory, region: test-region }
+            auditLog: { adapter: memory, region: test-region }
+            secrets: { adapter: memory, region: test-region }
+            vectorStore: { adapter: memory, region: test-region, sources: [kb] }
+          retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+        - kind: PolicyBundle
+          id: org
+          version: 1
+          schemaVersion: "0.1.0"
+          policyInstructions: "Follow organisational policy."
+          defaultFallbackMessage: "I can't help with that request."
+          approvalDefault: escalate
+          sensitivityPolicies:
+            pii:
+              allowedProviders: [scripted-a, scripted-b]
+              redaction: [{ mode: mask }]
+            phi:
+              allowedProviders: [scripted-a]
+              redaction: [{ mode: mask }]
+          context:
+            compaction: { triggerPercent: 95 }
+            retrieval: { source: kb }
+        - kind: HarnessProfile
+          id: default
+          version: 1
+          schemaVersion: "0.1.0"
+          idleTtl: PT24H
+          suspendedTtl: PT72H
+          stepLimit: 8
+          deliveryMode: buffered
+          budget: { tokens: 100000 }
+          timeouts: { run: PT5M, tool: PT30S }
+          retry: { unavailable: 2 }
+          outputRetryLimit: 2
+          limits: { partSize: 1048576, sessionSize: 10485760 }
+          defaultAttachmentLabels: []
+          context:
+            compaction: { mode: summarize }
+            retrieval: { auto: true, limit: 8 }
+    expect: { ok: true }
+  - action: run
+    bind: $sSum
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "SYN-NA-01 SYN-NA-02 SYN-NA-03 SYN-NA-04 SYN-NA-05 SYN-NA-06 SYN-NA-07 SYN-NA-08 SYN-NA-09 SYN-NA-10 SYN-NA-11 SYN-NA-12 SYN-NA-13 SYN-NA-14 SYN-NA-15 SYN-NA-16 SYN-NA-17 SYN-NA-18 SYN-NA-19 SYN-NA-20" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $sSum
+    principal: p1
+    input: [{ type: text, text: "SYN-NB-01 SYN-NB-02 SYN-NB-03 SYN-NB-04 SYN-NB-05 SYN-NB-06 SYN-NB-07 SYN-NB-08 SYN-NB-09 SYN-NB-10 SYN-NB-11 SYN-NB-12 SYN-NB-13 SYN-NB-14 SYN-NB-15 SYN-NB-16 SYN-NB-17 SYN-NB-18 SYN-NB-19 SYN-NB-20 SYN-NB-21 SYN-NB-22 SYN-NB-23 SYN-NB-24 SYN-NB-25 SYN-NB-26 SYN-NB-27 SYN-NB-28 SYN-NB-29 SYN-NB-30 SYN-NB-31 SYN-NB-32 SYN-NB-33 SYN-NB-34 SYN-NB-35 SYN-NB-36 SYN-NB-37 SYN-NB-38 SYN-NB-39 SYN-NB-40 SYN-NB-41 SYN-NB-42 SYN-NB-43 SYN-NB-44 SYN-NB-45 SYN-NB-46 SYN-NB-47 SYN-NB-48 SYN-NB-49 SYN-NB-50" }]
+    expect: { ok: true, endReason: responded }
 expect:
   sessions:
     $sCont:
@@ -224,6 +323,15 @@ expect:
           - { type: run.ended, turn: 2, payload: { reason: responded } }
       absentEvents:
         - { type: context.compacted }
+    $sSum:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, turn: 1, step: 1 }
+          - { type: context.compacted, turn: 2, step: 1, payload: { mode: summarize, units: [{ turn: 1 }] } }
+          - { type: model.request, turn: 2, step: 1 }
+          - { type: run.ended, turn: 2, payload: { reason: responded } }
   providerRequests:
     scripted-a:
       - {}
@@ -236,6 +344,18 @@ expect:
               parts: [{ type: text, text: "SYN-MA-01 SYN-MA-02 SYN-MA-03 SYN-MA-04 SYN-MA-05 SYN-MA-06 SYN-MA-07 SYN-MA-08 SYN-MA-09 SYN-MA-10 SYN-MA-11 SYN-MA-12 SYN-MA-13 SYN-MA-14 SYN-MA-15 SYN-MA-16 SYN-MA-17 SYN-MA-18 SYN-MA-19 SYN-MA-20" }]
             - role: principal
               parts: [{ type: text, text: "SYN-MB-01 SYN-MB-02 SYN-MB-03 SYN-MB-04 SYN-MB-05 SYN-MB-06 SYN-MB-07 SYN-MB-08 SYN-MB-09 SYN-MB-10 SYN-MB-11 SYN-MB-12 SYN-MB-13 SYN-MB-14 SYN-MB-15 SYN-MB-16 SYN-MB-17 SYN-MB-18 SYN-MB-19 SYN-MB-20 SYN-MB-21 SYN-MB-22 SYN-MB-23 SYN-MB-24 SYN-MB-25 SYN-MB-26 SYN-MB-27 SYN-MB-28 SYN-MB-29 SYN-MB-30 SYN-MB-31 SYN-MB-32 SYN-MB-33 SYN-MB-34 SYN-MB-35 SYN-MB-36 SYN-MB-37 SYN-MB-38 SYN-MB-39 SYN-MB-40 SYN-MB-41 SYN-MB-42 SYN-MB-43 SYN-MB-44 SYN-MB-45" }]
+      - {}
+      - tools: []
+      - messages:
+          $all:
+            - $contains:
+                - parts: [{ type: text, text: "SYN-SUMMARY-N-0001 SYN-SUMMARY-N-0002 SYN-SUMMARY-N-0003 SYN-SUMMARY-N-0004" }]
+                - role: principal
+                  parts: [{ type: text, text: "SYN-NB-01 SYN-NB-02 SYN-NB-03 SYN-NB-04 SYN-NB-05 SYN-NB-06 SYN-NB-07 SYN-NB-08 SYN-NB-09 SYN-NB-10 SYN-NB-11 SYN-NB-12 SYN-NB-13 SYN-NB-14 SYN-NB-15 SYN-NB-16 SYN-NB-17 SYN-NB-18 SYN-NB-19 SYN-NB-20 SYN-NB-21 SYN-NB-22 SYN-NB-23 SYN-NB-24 SYN-NB-25 SYN-NB-26 SYN-NB-27 SYN-NB-28 SYN-NB-29 SYN-NB-30 SYN-NB-31 SYN-NB-32 SYN-NB-33 SYN-NB-34 SYN-NB-35 SYN-NB-36 SYN-NB-37 SYN-NB-38 SYN-NB-39 SYN-NB-40 SYN-NB-41 SYN-NB-42 SYN-NB-43 SYN-NB-44 SYN-NB-45 SYN-NB-46 SYN-NB-47 SYN-NB-48 SYN-NB-49 SYN-NB-50" }]
+            - $count: { of: { parts: { $contains: [{ text: "SYN-NA-01 SYN-NA-02 SYN-NA-03 SYN-NA-04 SYN-NA-05 SYN-NA-06 SYN-NA-07 SYN-NA-08 SYN-NA-09 SYN-NA-10 SYN-NA-11 SYN-NA-12 SYN-NA-13 SYN-NA-14 SYN-NA-15 SYN-NA-16 SYN-NA-17 SYN-NA-18 SYN-NA-19 SYN-NA-20" }] } }, equals: 0 }
     scripted-b: { count: 0 }
   stubCalls:
     notify: [{ arguments: { text: "SYN-NOTE-0001" } }]
+    vectorStore/kb:
+      - arguments: { limit: 8 }
+      - arguments: { limit: 8 }
