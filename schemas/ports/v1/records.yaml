@@ -12,7 +12,9 @@ description: >-
 $defs:
   lease:
     description: >-
-      A run lease (HITL-090). `holder` identifies the process or run holding
+      A session lease: a run lease (HITL-090), or an operation lease taken
+      by a write outside a run (HITL-093); it is a run lease when the
+      session is `active`. `holder` identifies the process or run holding
       it. `token` is a fencing token, strictly greater for each new lease of
       the session (a renewal keeps it): a port that takes a lease rejects,
       with `conflict`, a write whose token is lower than the highest it has
@@ -101,6 +103,14 @@ $defs:
         type: array
         items: { $ref: "https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/toolResultPart" }
       lease: { $ref: "#/$defs/lease" }
+      fencingToken:
+        description: >-
+          The highest fencing token issued for the session, kept after its
+          lease is released; a new lease takes `fencingToken` + 1 (PORT-030,
+          HITL-093, as amended 2026-11-14). Absent: the recorded lease's
+          token, or 0 if none.
+        type: integer
+        minimum: 1
       expiresAt:
         description: >-
           When the session's current TTL elapses: last activity plus

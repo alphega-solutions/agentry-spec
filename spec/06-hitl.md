@@ -115,12 +115,19 @@ As in Area 1 §2. Requirement IDs use the prefix `HITL-`. The schemas `Escalatio
 
 ## 10. Recovery of interrupted runs
 
-- **HITL-090** An active run **MUST** hold a renewable lease recorded with its checkpoint. A run whose lease lapses (for example, after a process crash) is **orphaned**.
+- **HITL-090** An active run **MUST** hold a renewable lease recorded with its checkpoint. A run whose lease lapses (for example, after a process crash) is **orphaned**. Every other write to a session's event log, checkpoint, idempotency records or audit log **MUST** be made under an operation lease (HITL-093). This covers `decide()`, `close()` and `cancel()` of an idle or suspended session, and expiry processing.
 - **HITL-091** An implementation **MUST** detect orphaned runs, at the latest when the session is next accessed, and end them:
   - if a non-idempotent mutating call has a started record and no outcome (TOOL-062): raise a `recovery` escalation and end the run `escalated`;
   - if an idempotent mutating call was in flight: re-dispatch it with the same idempotency key, then continue the run;
   - otherwise: end the run `failed`.
 - **HITL-092** While a run is orphaned but not yet ended, `run()` and `resume()` **MUST** first perform HITL-091 rather than failing with `conflict`.
+- **HITL-093** An **operation lease** is a session lease that belongs to no run. It uses the same lease record and the same sequence of fencing tokens as a run lease. Acquiring it does not change the session's state. An operation holding one **MUST**:
+  1. acquire it with a checkpoint save that issues a new fencing token, and fence the event log and idempotency store with it;
+  2. re-read the session (PORT-034), perform any expiry processing that is due, and stop without further writes if the operation no longer applies;
+  3. append its events, then its audit records;
+  4. release the lease with its final checkpoint save.
+
+  While a session holds a current lease of either kind, `run()`, `resume()`, `decide()`, `close()` and `cancel()` of a non-active session **MUST** fail with `conflict` (`retryable: true`) and change nothing. (`cancel()` of an active run is the run's own path, CORE-070.) A read that finds expiry processing due while another holder's lease is current **MUST NOT** perform it, and reports the session as the holder leaves it. A lapsed operation lease is superseded by the next lease: there is no run to recover, and the next holder rebuilds state from the event log (PORT-034).
 
 ## 11. Finding pending escalations
 
@@ -169,6 +176,8 @@ As in Area 1 §2. Requirement IDs use the prefix `HITL-`. The schemas `Escalatio
 | Crash mid non-idempotent call → orphaned run ends `escalated` with recovery action | HITL-090, 091 |
 | Crash mid idempotent call → re-dispatched with same key | HITL-091 |
 | `run()` on an orphaned session triggers recovery instead of `conflict` | HITL-092 |
+| Expiry detected by two processes at once → processed once | HITL-093 |
+| `run()` while `close()` holds an operation lease → `conflict`, nothing written | HITL-093 |
 | `listPendingEscalations` returns only one tenant and excludes elapsed TTLs | HITL-100 |
 | Implementation operates with no notification transport configured | HITL-101 |
 
@@ -195,6 +204,7 @@ As in Area 1 §2. Requirement IDs use the prefix `HITL-`. The schemas `Escalatio
 | HITL-081 | `onExpiry` field and strictness order (extends CFG-090) |
 | HITL-082 | **Amends Area 1 CORE-020:** with `onExpiry: reject`, an expired suspended session stays `suspended` (fully decided) until `resume()`, then closes after a further `idleTtl` if none arrives |
 | HITL-090–092 | **Amends Area 1:** run leases, orphaned-run detection, and recovery on next access |
+| HITL-093 | Operation leases for writes outside a run (amendment 2026-11-14) |
 | HITL-100 | `listPendingEscalations` excludes sessions whose TTL has elapsed |
 | HITL-101 | Implementations must not require a notification transport |
 
@@ -274,3 +284,25 @@ Requirement text above has been edited where noted.
 - **Why.** Before this change every edit counted as approval, so `edit` was a stronger decision than `approve` but got weaker checks. A reviewer who satisfied only the `taint` or `hook` reviewer rules could dispatch a call that needed approval-source review: bypassing that source's rules and `requiredApprovals`, self-approving where `allowSelfApproval` allowed it only for `hook`, and skipping approval rules on arguments the edit changed. A replacement equal to the original arguments was enough.
 - **The new escalation.** An escalation raised at stage 7 after an edit is a new record in the resume run, raised after `escalation.resolved` (HITL-002, HITL-072). Its one action has source `approval`, no `hook`, and the edited arguments, with provenance `reviewer` and the labels HITL-061 requires. Its reviewer requirements are those of source `approval`. A reviewer who satisfies the rules of both sources still decides twice, as after an `approve`.
 - **Fixtures.** `hitl.edit-hook-escalation-reaches-approval` (rules per source, plus the `approval`-source control), `hitl.edit-taint-unchanged-reaches-approval` (a replacement equal to the original), `hitl.edit-approval-rules-on-replacement` (`approval: policy`), `hitl.edit-self-approval-per-source` (HITL-023). `hitl.edit-arguments-hooks-rerun` no longer asserts the stage 7 shortcut; its tool now has the default `approval: never`.
+
+## Amendment 2026-11-14 — writes outside a run (post-Phase 4 review)
+
+Requirement text above has been edited where noted.
+
+- **HITL-090** (text above edited) **and new HITL-093.** Every port write takes a lease (PORT-020, PORT-031, PORT-040), but leases were defined only for active runs. Several operations write while no run is active:
+  - `decide()`: the checkpoint and audit records;
+  - `close()` and `cancel()` of an idle or suspended session: `session.closed`, `sessionEnd` hook events and the checkpoint;
+  - expiry processing, including the lazy processing done by `getReviewerView` and `listPendingEscalations`: expiry rejections, audit records and `session.closed`.
+
+  None of these said which lease it passes. This left several failures open:
+  - A `close()` racing a `run()` could append `session.closed` after the run had fenced the ports, or while the checkpoint said `active`.
+  - Two processes detecting the same expiry each wrote expiry rejections. The audit log rejects only a repeated record `id`, so the same expiry was recorded twice.
+
+  These operations now take an operation lease. Because the operation re-reads the session after acquiring it, a duplicate operation is settled at acquisition, before anything is written.
+- **Contention.** A held lease of either kind makes the other host operations fail with `conflict`, `retryable: true`, and change nothing. This is what CORE-031 already gives `run()` and `resume()` on an active session. Recovery (HITL-091, HITL-092) applies only to lapsed **run** leases. A checkpoint's lease is a run lease when the session is `active`, and an operation lease otherwise.
+- **Fencing tokens.** A new lease's token is one more than the checkpoint's `fencingToken`, which records the highest token issued for the session and is kept after the lease is released (PORT-030, Area 10 amendment 2026-11-14). Before this change, a checkpoint saved at the end of a run recorded no lease, so the next lease had no record of the token it had to exceed.
+- **Not changed.** A crash after an operation appends audit records but before its final save can leave those records without the checkpoint change. A retry then validates against the checkpoint and may append them again. Audit records stay append-only (PORT-070).
+- **Fixtures.**
+  - New: `hitl.expiry-detected-twice-processed-once`.
+  - New: `core.run-during-close-operation-lease`.
+  - `port.checkpoint.version-lease-conflict` records `fencingToken`.

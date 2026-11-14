@@ -47,7 +47,7 @@ As in Area 1 §2. Requirement IDs use the prefix `PORT-`. Operation names are il
   - reasoning parts required for continuation (CORE-140);
   - the open escalation (HITL-012) with its full, unredacted pending content for reviewer views, recorded decisions, and partial multi-reviewer approvals (HITL-051);
   - results held while suspended (HITL-072, TOOL-033);
-  - the run lease (HITL-090);
+  - the current run or operation lease (HITL-090, HITL-093), and the highest fencing token issued for the session;
   - parent session ID and child session IDs for delegation chains (ORCH-004, ORCH-071).
 - **PORT-031** `save(tenant, session, checkpoint, expectedVersion, lease)` **MUST** fail with `conflict` if the stored version differs or the lease is not current. This enforces one active run per session (CORE-032). Lease renewal is itself a versioned save.
 - **PORT-032** The checkpoint store **MUST** support, per tenant:
@@ -232,3 +232,8 @@ Schemas: stored records in `schemas/ports/v1/records.yaml` (checkpoint, idempote
 ## Amendment 2026-11-13 — label set in the checkpoint (post-Phase 4 review)
 
 - **PORT-030** (text above edited). The checkpoint holds the session's label set (HOOK-127) as `taint.labels`, in order of first entry. The field is optional in the record so that earlier 0.x checkpoints stay readable (PORT-120); an absent `labels` means no label has entered the session's context. An implementation **MUST** write it whenever the set is not empty. See the Area 5 amendment 2026-11-13.
+
+## Amendment 2026-11-14 — leases outside a run (post-Phase 4 review)
+
+- **PORT-020, PORT-031, PORT-040.** "The session's current run lease" means its current lease of either kind: a run lease or an operation lease (HITL-093). Every write outside a run takes one, and the fencing rules are unchanged.
+- **PORT-030** (text above edited). The checkpoint records `fencingToken`, the highest token issued for the session. A save that acquires a new lease sets it to that lease's token. It is kept when the lease is released, so the next lease takes `fencingToken + 1`. The field is optional so that earlier 0.x checkpoints stay readable (PORT-120). When it is absent, it is the recorded lease's token if there is one, otherwise 0. See the Area 6 amendment 2026-11-14.

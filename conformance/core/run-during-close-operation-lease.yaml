@@ -1,0 +1,68 @@
+schemaVersion: "0.1.0"
+id: core.run-during-close-operation-lease
+title: A run() that arrives while close() holds its operation lease fails with a retryable conflict and writes nothing
+description: >-
+  $s has one completed turn and is idle. Two processes sharing the same
+  ports then act on it: process A calls close(), and process B calls run()
+  once A's `session.closed` has been persisted (`startAfter`), which is
+  before A releases its lease or completes. close() of an idle session is a
+  write outside a run, so it holds an operation lease (HITL-093, amendment
+  2026-11-14) from before it appends `session.closed` until its final
+  checkpoint save.
+
+  B finds either A's lease still current, or the session closed. Either
+  way run() fails with `conflict` and appends nothing. The fixture asserts
+  the category and that nothing was appended, not the code or
+  retryability, since those differ between the two cases (CORE-022 for a
+  closed session, HITL-093 for a held lease). A's close() succeeds. The
+  session ends `closed` (`completed`) with exactly one `session.closed`,
+  which has no `runId` and comes after turn 1's run. No turn 2 starts, and the
+  provider receives no second request.
+requirements: [HITL-093, CORE-031]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - separateProcesses: true
+    concurrently:
+      - action: close
+        session: $s
+        expect: { ok: true }
+      - action: run
+        session: $s
+        principal: p1
+        input: [{ type: text, text: "Too late" }]
+        startAfter: { type: session.closed }
+        expect: { ok: false, error: { category: conflict }, newEvents: 0 }
+expect:
+  sessions:
+    $s:
+      state: closed
+      closeReason: completed
+      events:
+        mode: subsequence
+        items:
+          - { type: run.ended, payload: { reason: responded } }
+          - { type: session.closed, runId: { $absent: true }, payload: { reason: completed } }
+      absentEvents:
+        - { type: turn.started, turn: 2 }
+  providerRequests:
+    scripted-a: { count: 1 }
