@@ -69,6 +69,15 @@ allOf:
   - if:
       properties: { type: { not: { enum: [session.created, session.closed, hook.decision, error] } } }
     then: { required: [runId] }
+  - description: >-
+      An `error` event may omit `runId` only for a hook failure at
+      `sessionEnd` when the session closes outside a run (HOOK-052, CORE-150
+      as amended 2026-11-14).
+    if:
+      properties: { type: { const: error } }
+      required: [type]
+      not: { required: [runId] }
+    then: { properties: { payload: { properties: { error: { properties: { source: { const: hook } } } } } } }
   - if:
       required: [type, payload]
       properties: { type: { const: hook.decision }, payload: { not: { properties: { point: { const: sessionEnd } }, required: [point] } } }
@@ -131,6 +140,43 @@ allOf:
 $defs:
   empty: { type: object, additionalProperties: false, properties: {} }
 
+  runScopedOverrides:
+    description: The run-scoped profile fields a run request may tighten (CFG-101 as amended 2026-11-14), at their profile field paths.
+    type: object
+    additionalProperties: false
+    properties:
+      stepLimit: {}
+      budget: { type: object, additionalProperties: false, properties: { tokens: {}, cost: {} } }
+      timeouts: { type: object, additionalProperties: false, properties: { run: {}, tool: {} } }
+      retry: { type: object, additionalProperties: false, properties: { unavailable: {} } }
+      outputRetryLimit: {}
+      deliveryMode: {}
+      checkpoint: {}
+      trace: { type: object, additionalProperties: false, properties: { includeReasoning: {} } }
+      limits: { type: object, additionalProperties: false, properties: { partSize: {} } }
+      model:
+        type: object
+        additionalProperties: false
+        properties: { params: { type: object, additionalProperties: false, properties: { maxOutputTokens: {} } } }
+      context:
+        type: object
+        additionalProperties: false
+        properties:
+          reserveOutputTokens: {}
+          compaction: { type: object, additionalProperties: false, properties: { mode: {}, triggerPercent: {} } }
+          retrieval: { type: object, additionalProperties: false, properties: { auto: {}, limit: {} } }
+
+  sessionScopedOverrides:
+    description: The session-scoped profile fields only the session-creating run request may tighten (CFG-101 as amended 2026-11-14).
+    type: object
+    additionalProperties: false
+    properties:
+      idleTtl: {}
+      suspendedTtl: {}
+      onExpiry: {}
+      limits: { type: object, additionalProperties: false, properties: { sessionSize: {} } }
+      delegation: { type: object, additionalProperties: false, properties: { maxDepth: {} } }
+
   sessionCreated:
     type: object
     additionalProperties: false
@@ -140,7 +186,7 @@ $defs:
       profile: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/artifactRef" }
       overrides:
         description: Session-scoped values tightened by the session-creating run request (CFG-101, CFG-102 as amended 2026-11-14).
-        type: object
+        $ref: "#/$defs/sessionScopedOverrides"
       parent:
         description: Present for child sessions (ORCH-004).
         type: object
@@ -152,6 +198,13 @@ $defs:
           callId: { type: string, minLength: 1 }
           tool: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/toolId" }
           depth: { type: integer, minimum: 1 }
+          taintProvenances:
+            description: >-
+              Present when the parent was tainted at the call: the parent's
+              tainting provenances, which the child inherits and starts
+              tainted with (ORCH-012), so the child's taint can be rebuilt from
+              its events (PORT-034).
+            $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/provenances"
       replay:
         description: >-
           Present for a session created by replay (EVAL-060 as amended
@@ -198,7 +251,7 @@ $defs:
       kind: { enum: [run, resume] }
       overrides:
         description: Run-request values that tightened run-scoped profile fields (CFG-102 as amended 2026-11-14); session-scoped values are on `session.created`.
-        type: object
+        $ref: "#/$defs/runScopedOverrides"
 
   runEnded:
     type: object
@@ -208,7 +261,11 @@ $defs:
       reason: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/runEndReason" }
       error: { $ref: "https://alphega.io/agentry/schemas/core/error/v1.json" }
       unrecordedUsage:
-        description: Usage of model calls in this run that no other event records, such as a summarizer call during which the budget ran out (CTX-084 as amended).
+        description: >-
+          Usage of model calls in this run that no other event records: a
+          summarizer call during which the budget ran out (CTX-084 as
+          amended), and model hook calls whose result was `continue`, which
+          emit no `hook.decision` (HOOK-102, PROV-074 as amended 2026-11-14).
         $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/usage"
       unrecordedCost:
         description: Cost of the calls counted in `unrecordedUsage`, when priced (PROV-074 as amended).
@@ -282,7 +339,9 @@ $defs:
       point: { enum: [sessionStart, beforeModelCall, afterModelCall, beforeToolCall, afterToolCall, beforeResponse, onError, sessionEnd] }
       result: { enum: [annotate, rewrite, block, escalate] }
       reasonCode: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/errorCode" }
-      labelsAdded: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/labels" }
+      labelsAdded:
+        description: For `annotate`, the union of the labels the decision added across all parts, for audit queries (HOOK-022, HOOK-060).
+        $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/labels"
       replacementRef:
         description: >-
           For `rewrite`, the content as rewritten — a JSON array of parts,
@@ -303,6 +362,8 @@ $defs:
         then: { required: [reasonCode] }
       - if: { properties: { result: { const: rewrite } } }
         then: { required: [replacementRef] }
+      - if: { properties: { result: { const: annotate } } }
+        then: { required: [annotations] }
       - if: { properties: { point: { enum: [onError, sessionEnd] } } }
         then: { properties: { result: { const: annotate } } }
 
@@ -337,6 +398,15 @@ $defs:
     then:
       required: [reason]
       properties: { reason: { enum: [unknown, out_of_scope, delegation] } }
+    allOf:
+      - if: { properties: { kind: { const: taint } } }
+        then:
+          required: [provenances, labels]
+          properties: { outcome: { enum: [allow, escalate, block] } }
+      - if: { properties: { kind: { enum: [assurance, scope, depth, summarizer] } } }
+        then: { properties: { outcome: { const: block } } }
+      - if: { properties: { kind: { const: routing } } }
+        then: { properties: { outcome: { enum: [switch, block] } } }
 
   checkpointSaved:
     type: object

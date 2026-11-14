@@ -109,7 +109,7 @@ Every tool call the model requests passes through these stages, in order. A stag
 ### 7.2 Errors, timeouts, and retries
 
 - **TOOL-050** A tool returns either `ok` with output or an error in the Area 1 error shape (CORE-190).
-- **TOOL-051** A call exceeding its timeout **MUST** be cancelled and produce `unavailable` (`agentry.tool.timeout`, `retryable: true`).
+- **TOOL-051** A call exceeding its timeout **MUST** be cancelled and produce `unavailable` (`agentry.tool.timeout`, `retryable: true`, source `harness`, since the harness enforces the timeout). *(Source stated 2026-11-14.)*
 - **TOOL-052** The implementation **MAY** retry an error marked `retryable`, up to the profile's `retry.unavailable`, **only** if the tool's `effect` is `read` or the tool is `idempotent`.
 - **TOOL-053** When retries are exhausted, or a retryable error occurs on a call that may not be retried, the error is treated as `fatal` (CORE-191): the run ends `failed`. The exception is a timeout of a non-idempotent mutating call, which follows TOOL-055.
 - **TOOL-055** A timeout (TOOL-051) of a mutating call that is not `idempotent` leaves its outcome unknown: the tool may have acted. The implementation **MUST NOT** record an outcome for the call, and **MUST NOT** deliver the timeout to the model. It **MUST** emit an `error` event carrying the timeout error, and raise a `recovery` pending action for the call with reason `agentry.recovery.unknown_outcome` (TOOL-062, HITL-001). The step's other calls are processed (TOOL-033), and the run ends `escalated`. The call's one `tool.result` (TOOL-034) is the outcome a reviewer confirms (HITL-060), delivered when the session resumes. A result the tool produces after its timeout is neither recorded nor delivered.
@@ -299,3 +299,9 @@ Requirement text above has been edited where noted.
   - **MCP and HTTP** results have no label field in 1.0. A deployment that needs labels on them adds them with an `afterToolCall` `annotate` hook.
 - **Not changed.** Approval by label (TOOL-035) still uses the declared labels, because it is decided before dispatch, when the result's labels are not yet known. Reported labels take effect from stage 9: `afterToolCall` hooks see them, and so do context assembly, provider routing, redaction and the session label set.
 - **Fixtures.** New: `tool.result-reported-labels`.
+
+## Amendment 2026-11-14 — fresh-review fixes (post-Phase 4 review)
+
+Requirement text above has been edited where noted.
+
+- **TOOL-051** (text above edited). The timeout's error source is `harness`: the harness enforces the timeout, and the tool reports nothing. Fixtures had used `tool`; the code registry fixes it (CORE-192 as amended 2026-11-14).

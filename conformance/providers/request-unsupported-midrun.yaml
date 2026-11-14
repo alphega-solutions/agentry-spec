@@ -19,7 +19,8 @@ description: >-
     `fallbackReason: capability` and no `policy.decision`.
   - $sFail (persona assistant: primary scripted-a, fallback scripted-b):
     no capable model exists, so no call is made and the run ends `failed`
-    with a `fatal` error agentry.provider.unsupported_content; a failed run
+    with a `fatal` error agentry.provider.no_capable_model (PROV-042 as
+    amended 2026-11-14); a failed run
     closes the session (CORE-020).
 
   converter is invoked once per session (sessionStart), in session order.
@@ -203,7 +204,7 @@ expect:
           - type: run.ended
             payload:
               reason: failed
-              error: { category: fatal, code: agentry.provider.unsupported_content }
+              error: { category: fatal, code: agentry.provider.no_capable_model }
       absentEvents:
         - { type: model.request }
   stubCalls:

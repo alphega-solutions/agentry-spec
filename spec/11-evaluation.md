@@ -255,3 +255,9 @@ Requirement text above has been edited where noted.
 - **Driver protocol.** `conformance/schema/driver.yaml`: JSON-RPC 2.0 over stdio. Drivers interpret nothing. Scheduling is cooperative: work advances only inside `settle`, and an action can pause after each persisted event. So the runner evaluates `startAfter` at the event's virtual time, and decides discrete-event clock advances, exactly as the fixture format defines them. Processes share one set of ports, which gives `separateProcesses` and `restart` (EVAL-035) one meaning.
 - **The claim** is the shared runner's report. It names the runner version and the driver (`schemas/eval/v1/conformance-report.yaml`). Native runners remain allowed for development, but they are not the basis of a claim.
 - **Port and adapter cases** run through the same driver (`port.call`, `adapter.call`), so production port adapters are tested by the same runner (PORT-001, PORT-009).
+
+## Amendment 2026-11-14 — fresh-review fixes (post-Phase 4 review)
+
+Requirement text above has been edited where noted.
+
+- **EVAL-043** (reading). A case that replays a trace bundle takes its persona and principal inputs from the bundle, so it need not declare them (`schemas/eval/v1/case.yaml`).

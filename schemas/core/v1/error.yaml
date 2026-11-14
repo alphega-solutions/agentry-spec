@@ -6,7 +6,15 @@ type: object
 additionalProperties: false
 required: [code, category, retryable, source, message]
 properties:
-  code: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/errorCode" }
+  code:
+    description: >-
+      A stable, namespaced code (CORE-190, CORE-192). A code in the `agentry`
+      namespace must be one the code registry lists as an error code
+      (`core/v1/codes.yaml`); other namespaces are free.
+    allOf:
+      - $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/errorCode"
+      - if: { pattern: "^agentry\\." }
+        then: { $ref: "https://alphega.io/agentry/schemas/core/codes/v1.json#/$defs/agentryErrorCode" }
   category:
     description: CORE-191.
     enum: [invalid_input, unauthorized, policy, limit, unavailable, conflict, not_found, configuration, cancelled, fatal]

@@ -216,6 +216,22 @@ def test_invalid_inline_config_rejected() -> None:
     assert validate.check_inline_config(doc, schemas, reg), "a Tool without description loaded"
 
 
+def test_unregistered_or_mismatched_code_rejected() -> None:
+    """CORE-192: an unregistered agentry.* code, or a registered error code used
+    with another category, is caught; the real repository passes."""
+    import tempfile
+    from common import ROOT
+    assert not validate.check_codes(), "the real repository should pass"
+    fx = ROOT / "conformance" / "core" / "zz-selftest-codes.yaml"
+    try:
+        fx.write_text("id: core.zz\nexpect: { e: { code: agentry.tool.no_such_code } }\n")
+        assert any("agentry.tool.no_such_code" in p for p in validate.check_codes())
+        fx.write_text("id: core.zz\nexpect: { e: { code: agentry.tool.timeout, category: fatal } }\n")
+        assert any("has category 'fatal'" in p for p in validate.check_codes())
+    finally:
+        fx.unlink(missing_ok=True)
+
+
 def main() -> int:
     tests = [test_unbound_placeholder_rejected, test_coverage_fails_when_last_fixture_removed,
              test_real_endpoint_rejected, test_invalid_example_needs_a_working_repair,
@@ -224,7 +240,8 @@ def main() -> int:
              test_matcher_misuse_rejected, test_absent_under_unbound_placeholder_key_rejected,
              test_unknown_stub_call_key_rejected, test_stub_for_non_native_tool_rejected,
              test_port_case_foreign_op_rejected, test_missing_merge_annotation_rejected,
-             test_missing_secret_marker_rejected, test_invalid_inline_config_rejected]
+             test_missing_secret_marker_rejected, test_invalid_inline_config_rejected,
+             test_unregistered_or_mismatched_code_rejected]
     failed = 0
     for t in tests:
         try:

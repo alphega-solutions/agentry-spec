@@ -12,6 +12,7 @@ schemas/<area>/v<major>/<name>.yaml
 |---|---|
 | `common/v1/defs.yaml` | Shared definitions: identifiers, timestamps, labels, provenance, usage, enums |
 | `core/v1/error.yaml` | The error shape (CORE-190) |
+| `core/v1/codes.yaml` | The code registry: every `agentry.*` error, reason and result code, with category, retryability and sources (CORE-192) |
 | `core/v1/content.yaml` | Messages, content parts, blob references, tool results (Area 1 §7–8) |
 | `core/v1/event.yaml` | Event envelope and every event payload (Area 1 §9, as amended) |
 | `config/v1/artifact.yaml` | Artifact envelope (CFG-001–003) and the merge-annotation vocabulary |
