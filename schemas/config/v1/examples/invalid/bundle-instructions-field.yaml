@@ -7,3 +7,6 @@ instance:
   version: 1
   schemaVersion: "0.1.0"
   instructions: "Follow organisational policy."
+# The smallest change that makes the instance valid, so it fails only for the reason above.
+repair:
+  - { op: remove, path: "/instructions" }

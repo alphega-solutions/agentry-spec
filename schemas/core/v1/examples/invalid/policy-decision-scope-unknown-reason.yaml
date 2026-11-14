@@ -12,3 +12,6 @@ instance:
   seq: 6
   type: policy.decision
   payload: { kind: scope, outcome: block, callId: c1, tool: archive_record, reason: not_allowed }
+# The smallest change that makes the instance valid, so it fails only for the reason above.
+repair:
+  - { op: replace, path: "/payload/reason", value: "unknown" }

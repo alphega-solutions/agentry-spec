@@ -4,6 +4,7 @@ Exit status is non-zero on any failure.
 """
 from __future__ import annotations
 
+import copy
 import re
 import sys
 
@@ -37,14 +38,32 @@ def _placeholders(value) -> set[str]:
 
 
 def check_placeholders(doc: dict) -> list[str]:
-    """A placeholder used in a step must be bound by an earlier step's bind or capture."""
+    """A placeholder used in a step must be bound by an earlier step's bind or capture.
+
+    Actions inside `concurrently` run at once, so none may use a placeholder its
+    siblings bind; their bindings are available only from the next step on. The
+    one exception is an action with `startAfter`: it starts once an event has been
+    persisted, by which time the sessions of the siblings listed before it exist,
+    so it may use their `bind` (but not their captures).
+    """
     problems: list[str] = []
     bound: set[str] = set()
 
     def visit(step: dict, idx: str) -> None:
+        nonlocal bound
         if "concurrently" in step:
-            for k, sub in enumerate(step["concurrently"]):
+            before = set(bound)
+            gained: set[str] = set()
+            earlier_binds: set[str] = set()
+            for k, sub in enumerate(step["concurrently"] or []):
+                bound = set(before)
+                if isinstance(sub, dict) and "startAfter" in sub:
+                    bound |= earlier_binds
                 visit(sub, f"{idx}.{k}")
+                gained |= bound - before
+                if isinstance(sub, dict) and isinstance(sub.get("bind"), str):
+                    earlier_binds.add(sub["bind"])
+            bound = before | gained
             return
         used = set()
         for key, val in step.items():
@@ -658,6 +677,20 @@ def _pattern_sites(doc: dict):
     yield "expect", doc.get("expect")
 
 
+def _near_matcher(key: str) -> str | None:
+    """The matcher `key` differs from by one substituted letter or one swap of
+    adjacent letters (same length, case-insensitive), e.g. `$contians`."""
+    k = key.lower()
+    for m in sorted(MATCHERS):
+        if len(m) != len(k) or k == m:
+            continue
+        diff = [i for i, (a, b) in enumerate(zip(k, m)) if a != b]
+        if len(diff) == 1 or (len(diff) == 2 and diff[1] == diff[0] + 1
+                               and k[diff[0]] == m[diff[1]] and k[diff[1]] == m[diff[0]]):
+            return m
+    return None
+
+
 def check_matchers(doc: dict) -> list[str]:
     """Matcher keys come from the known list; `$count` is well formed; `$not`
     never wraps `$contains` (use `$count`). Any other `$`-key must be a
@@ -671,6 +704,13 @@ def check_matchers(doc: dict) -> list[str]:
                         and not PLACEHOLDER.match(k)):
                     problems.append(f"{path}: {k!r} is neither a known matcher "
                                     f"({', '.join(sorted(MATCHERS))}) nor a placeholder")
+                elif isinstance(k, str) and k not in MATCHERS and PLACEHOLDER.match(k):
+                    # Any other `$`-key is a placeholder, which matches anything, so a
+                    # misspelt matcher would silently stop asserting. Reject near misses.
+                    near = _near_matcher(k)
+                    if near:
+                        problems.append(f"{path}: {k!r} looks like a misspelt matcher {near!r}; "
+                                        f"rename the placeholder if it is one")
             if "$count" in v:
                 c = v["$count"]
                 bounds = [k for k in ("equals", "gte", "lte") if isinstance(c, dict) and k in c]
@@ -840,12 +880,17 @@ def check_offline(doc) -> list[str]:
 
 def check_crashes(doc: dict) -> list[str]:
     """A crash step arms a crash for a later action step on its session, and the
-    crashed action is followed by a `restart` step before the next action step."""
+    crashed action is followed by a `restart` step before the next action step.
+    Only a standalone action can be crashed: if the next action on the session
+    is inside `concurrently`, the crash is an error (fixture.yaml `crashStep`)."""
     problems: list[str] = []
     script = doc.get("script", []) or []
 
     def is_action(st) -> bool:
         return isinstance(st, dict) and ("action" in st or "concurrently" in st)
+
+    def targets(st: dict, target) -> bool:
+        return "action" in st and (target is None or target in (st.get("session"), st.get("bind")))
 
     for i, step in enumerate(script):
         if "crash" not in step:
@@ -854,9 +899,17 @@ def check_crashes(doc: dict) -> list[str]:
         crashed = None
         for j in range(i + 1, len(script)):
             later = script[j]
-            if "action" in later and (target is None or target in (later.get("session"), later.get("bind"))):
+            if isinstance(later, dict) and "concurrently" in later and any(
+                    isinstance(sub, dict) and targets(sub, target) for sub in later["concurrently"] or []):
+                problems.append(f"script[{i}]: crash would arm an action inside `concurrently` (script[{j}]); "
+                                f"only a standalone action step can be crashed")
+                crashed = -1
+                break
+            if isinstance(later, dict) and targets(later, target):
                 crashed = j
                 break
+        if crashed == -1:
+            continue
         if crashed is None:
             problems.append(f"script[{i}]: crash has no later action step on {target or 'any session'}")
             continue
@@ -868,6 +921,75 @@ def check_crashes(doc: dict) -> list[str]:
             problems.append(f"script[{crashed}]: crashed action is followed by action script[{nxt}] "
                             f"without a `restart` step first")
     return problems
+
+
+def apply_patch(instance, ops: list):
+    """Apply JSON-Patch (RFC 6902) `add`, `remove` and `replace` operations to a copy.
+
+    Raises ValueError for any other operation or a path that does not resolve.
+    """
+    doc = copy.deepcopy(instance)
+    for op in ops:
+        kind, path = op.get("op"), op.get("path")
+        if kind not in ("add", "remove", "replace") or not isinstance(path, str):
+            raise ValueError(f"unsupported repair operation {op!r}")
+        if kind != "remove" and "value" not in op:
+            raise ValueError(f"repair operation {op!r} needs a value")
+        if path == "":
+            if kind == "remove":
+                raise ValueError("cannot remove the whole instance")
+            doc = copy.deepcopy(op["value"])
+            continue
+        if not path.startswith("/"):
+            raise ValueError(f"repair path {path!r} is not a JSON Pointer")
+        tokens = [t.replace("~1", "/").replace("~0", "~") for t in path[1:].split("/")]
+        parent = doc
+        try:
+            for t in tokens[:-1]:
+                parent = parent[int(t)] if isinstance(parent, list) else parent[t]
+        except (KeyError, IndexError, ValueError, TypeError) as exc:
+            raise ValueError(f"repair path {path!r} does not resolve") from exc
+        last = tokens[-1]
+        if isinstance(parent, list):
+            index = len(parent) if (kind == "add" and last == "-") else int(last)
+            if kind == "add":
+                if not 0 <= index <= len(parent):
+                    raise ValueError(f"repair path {path!r} is out of range")
+                parent.insert(index, copy.deepcopy(op["value"]))
+            else:
+                if not 0 <= index < len(parent):
+                    raise ValueError(f"repair path {path!r} does not resolve")
+                if kind == "remove":
+                    del parent[index]
+                else:
+                    parent[index] = copy.deepcopy(op["value"])
+        elif isinstance(parent, dict):
+            if kind in ("remove", "replace") and last not in parent:
+                raise ValueError(f"repair path {path!r} does not resolve")
+            if kind == "remove":
+                del parent[last]
+            else:
+                parent[last] = copy.deepcopy(op["value"])
+        else:
+            raise ValueError(f"repair path {path!r} does not resolve")
+    return doc
+
+
+def check_repair(doc: dict, v: Draft202012Validator) -> list[str]:
+    """An invalid example must declare `repair`: the smallest change that makes it
+    valid. Applying it must give a valid instance, which proves the example fails
+    only for the fault it documents, not for an unrelated one."""
+    ops = doc.get("repair")
+    if not isinstance(ops, list) or not ops:
+        return ["invalid example needs `repair`, a non-empty list of JSON-Patch operations"]
+    try:
+        fixed = apply_patch(doc["instance"], ops)
+    except ValueError as exc:
+        return [str(exc)]
+    errs = list(v.iter_errors(fixed))
+    if errs:
+        return [f"still invalid after `repair`, so it fails for another reason too: {describe(errs[0])}"]
+    return []
 
 
 def main() -> int:
@@ -902,6 +1024,10 @@ def main() -> int:
             errors.append(f"{ex}: expected valid, got: {describe(errs[0])}")
         if kind == "invalid" and not errs:
             errors.append(f"{ex}: expected invalid, but it validated")
+        if kind == "invalid":
+            errors.extend(f"{ex}: {p}" for p in check_repair(doc, v))
+        elif "repair" in doc:
+            errors.append(f"{ex}: `repair` belongs only in invalid examples")
 
     # 3. Fixtures validate against the fixture format and cite real requirements.
     reqs = spec_requirements()

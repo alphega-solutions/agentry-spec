@@ -10,3 +10,6 @@ instance:
   effect: mutating
   idempotent: false
   binding: { kind: agent, persona: writer@1 }
+# The smallest change that makes the instance valid, so it fails only for the reason above.
+repair:
+  - { op: replace, path: "/idempotent", value: true }

@@ -11,3 +11,6 @@ instance:
   snapshotHash: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   traceContext: { traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" }
   payload: { kind: run }
+# The smallest change that makes the instance valid, so it fails only for the reason above.
+repair:
+  - { op: add, path: "/runId", value: "0190a3c4-0000-7000-8000-000000000002" }

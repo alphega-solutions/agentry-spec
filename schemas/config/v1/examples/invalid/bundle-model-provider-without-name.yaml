@@ -6,3 +6,6 @@ instance:
   version: 1
   schemaVersion: "0.1.0"
   model: { provider: scripted-a }
+# The smallest change that makes the instance valid, so it fails only for the reason above.
+repair:
+  - { op: add, path: "/model/name", value: "model-a" }

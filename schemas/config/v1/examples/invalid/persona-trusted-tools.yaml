@@ -10,3 +10,6 @@ instance:
   trustedTools: [lookup@1]
   defaultProfile: default@1
   allowedProfiles: [default@1]
+# The smallest change that makes the instance valid, so it fails only for the reason above.
+repair:
+  - { op: remove, path: "/trustedTools" }

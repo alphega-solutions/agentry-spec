@@ -9,3 +9,6 @@ instance:
   input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }
   effect: read
   binding: { kind: native, handler: test.lookup }
+# The smallest change that makes the instance valid, so it fails only for the reason above.
+repair:
+  - { op: replace, path: "/id", value: "bad_id" }

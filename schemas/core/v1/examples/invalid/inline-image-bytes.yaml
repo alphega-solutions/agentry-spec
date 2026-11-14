@@ -6,3 +6,6 @@ instance:
   data: "iVBORw0KGgo="
   provenance: "attachment:upload"
   labels: []
+# The smallest change that makes the instance valid, so it fails only for the reason above.
+repair:
+  - { op: remove, path: "/data" }

@@ -687,7 +687,8 @@ $defs:
   crashStep:
     description: >-
       Arms a crash for the next action step on `session` (or, without
-      `session`, the next action step). That action runs until the
+      `session`, the next action step). That step must be a standalone
+      action: an action inside `concurrently` cannot be crashed. That action runs until the
       implementation first reaches the named point, where the
       implementation stops abruptly: in-process state is lost, port
       contents written so far are kept (including every event emitted
@@ -780,7 +781,12 @@ $defs:
     required: [concurrently]
     properties:
       concurrently:
-        description: Actions started in listed order, each after the previous has begun and before it completes.
+        description: >-
+          Actions started in listed order, each after the previous has begun
+          and before it completes. No action may use a placeholder its
+          siblings bind; those bindings are available from the next step.
+          The exception is an action with `startAfter`, which may use the
+          `bind` (not the captures) of siblings listed before it.
         type: array
         minItems: 2
         items: { $ref: "#/$defs/actionStep" }

@@ -8,3 +8,6 @@ instance:
   idleTtl: P1M
   suspendedTtl: PT72H
   stepLimit: 8
+# The smallest change that makes the instance valid, so it fails only for the reason above.
+repair:
+  - { op: replace, path: "/idleTtl", value: "PT24H" }

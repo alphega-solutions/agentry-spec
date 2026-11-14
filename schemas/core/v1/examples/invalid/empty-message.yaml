@@ -1,2 +1,5 @@
 schema: https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/message
 instance: { role: principal, parts: [] }
+# The smallest change that makes the instance valid, so it fails only for the reason above.
+repair:
+  - { op: add, path: "/parts/0", value: {"type": "text", "text": "Hi", "provenance": "principal", "labels": []} }

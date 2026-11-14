@@ -11,3 +11,6 @@ instance:
   egress: true
   onTaintedEgress: allow
   binding: { kind: native, handler: test.lookup }
+# The smallest change that makes the instance valid, so it fails only for the reason above.
+repair:
+  - { op: replace, path: "/onTaintedEgress", value: "escalate" }
