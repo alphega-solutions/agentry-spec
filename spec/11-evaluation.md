@@ -232,3 +232,17 @@ Requirement text above has been edited where noted.
 - **Fixtures.**
   - New: `eval.replay-recorded-current-bindings`.
   - The existing replay fixtures are unchanged. Each replays under a deployment identical to the recording's, so the composed snapshot is the recorded one and its hash is unchanged.
+
+## Amendment 2026-11-14 — matching by assignment; port shapes (post-Phase 4 review)
+
+- **EVAL-004.** The fixture format said that `unordered`, `contains` and `$contains` match items to distinct elements, but not how. A greedy runner, where each item takes the first element it matches, fails where a valid assignment exists. For example, items `{type: tool.result}` then `{type: tool.result, payload: {callId: c1}}` fail when c1's result comes first. With placeholders, `subsequence` had the same ambiguity. Two runners could disagree on the same implementation.
+  - These modes and `$contains` now succeed when any valid assignment exists, and runners must search for one.
+  - Placeholder bindings are those of the first assignment in canonical order: items in listed order, each given the earliest element that still lets the rest match.
+  - Placeholders inside `$not`, `$count`, `$every` and `absentEvents` never bind there.
+
+  See `conformance/README.md`.
+- **Port shapes.**
+  - `expect.ports.snapshotStore` is documented as `{tenant: {<hash>: snapshot record}}`.
+  - `blobStore` records include `labels`, as the Area 10 reading already shows.
+  - In harness fixtures, blob `data` is the bytes as padded standard base64, whatever the media type. Port cases keep UTF-8 text or `{base64}`.
+- **Fixtures.** New: `eval.format-matching-assignment`.
