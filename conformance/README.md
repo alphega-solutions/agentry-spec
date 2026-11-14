@@ -37,6 +37,8 @@ A step's captures are processed in order, so a capture may use `session:` with a
 
 Event patterns (`expect.sessions.<s>.events`, EVAL-004) have a `mode`: `sequence` (the session's events match the items one-to-one, in order), `unordered` (one-to-one, any order — for parallel tool calls), `subsequence` (items in order, other events in between) or `contains` (items in any order, other events allowed). In `sequence` and `unordered` mode, `checkpoint.saved` events are left out before matching unless an item names that type. `absentEvents` lists patterns no event of the session may match.
 
+**Assignments.** `unordered`, `contains`, `subsequence` and the `$contains` matcher succeed when **any** valid assignment of items to elements exists: one-to-one, to distinct elements, and order-preserving for `subsequence`. A runner **MUST** search for one. Greedy matching, where each item takes the first element it matches, is not conforming, because it can fail where an assignment exists. Placeholders bind as part of the assignment. When several assignments exist, the bindings kept are those of the first in canonical order: items in listed order, each given the earliest element (in log or array order) that still lets the remaining items match. Placeholders inside `$not`, `$count`, `$every` and `absentEvents` never bind, since those matchers have no single match to bind from. Each must already be bound when it is evaluated.
+
 Matchers: `{"$any": true}`, `{"$absent": true}`, `{"$regex": "..."}`, `{"$len": n}`, `{"$contains": [...]}` (each item matches a distinct element), `{"$not": m}`, `{"$every": m}`, `{"$gte": n}`, `{"$lte": n}`, `{"$all": [m1, m2]}`, and `{"$count": {"of": m, "equals"|"gte"|"lte": n}}`, which counts the array elements matching `m`. In adapter cases only, `{"$selfProvider": true}` stands for the adapter's declared provider ID. Write "no element matches" and "exactly one matches" with `$count`, never as `$not` around `$contains`. `{"$not": m}` matches whenever `m` does not, including when the field is absent; `{"$absent": true}` matches only an absent field. Matcher names are reserved and are never placeholders; any other `$`-key must be a placeholder.
 
 ### Execution model
@@ -81,7 +83,8 @@ Matchers: `{"$any": true}`, `{"$absent": true}`, `{"$regex": "..."}`, `{"$len": 
   - `eventLog: {t1: {<sessionId>: [events]}}`;
   - `idempotencyStore: {t1: {<key>: { state: started|completed, outcome, childSessionId? }}}`;
   - `auditLog: {t1: [{ timestamp, tenant, sessionId, principalRef, snapshotHash, type, reviewer?, eventIds, details }]}`, with `type` one of `hook_decision`, `policy_decision`, `escalation`, `decision`, `tool_call` (details `{ callId, tool, arguments, outcome }`) (PORT-071);
-  - `blobStore: {t1: [{ id, hash, mediaType, size, data }]}`;
+  - `blobStore: {t1: [{ id, hash, mediaType, size, data, labels }]}`. In `setup.ports` and `expect.ports`, `data` is the blob's bytes as a standard base64 string (RFC 4648 §4, padded), whatever the media type. Port cases use their own form, UTF-8 text or `{base64}` (`schema/port-case.yaml`);
+  - `snapshotStore: {t1: {<hash>: snapshot}}`, each a snapshot record (`schemaVersion`, `tenant`, `hash`, `createdAt`, `artifacts` grouped by kind);
   - `checkpointStore: {t1: {<sessionId>: checkpoint}}`, with the PORT-030 fields `state`, `principalRef`, `tenant`, `persona`, `snapshotHash`, `taint`, `budget`, `counters`, `reasoning`, `escalation`, `heldResults`, `lease`, `parentSessionId`, `childSessionIds` (also used by `sessions.*.checkpoint`).
 
 Rules:

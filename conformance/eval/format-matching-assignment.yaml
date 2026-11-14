@@ -1,0 +1,76 @@
+schemaVersion: "0.1.0"
+id: eval.format-matching-assignment
+title: Unordered matchers succeed when any assignment exists, not only a greedy one, and placeholders take the bindings of the first assignment in canonical order
+description: >-
+  One model response requests two lookups in one step (c1 key k1, c2 key
+  k2). The step's results reach the model as one `tool` message whose
+  `tool_result` parts are in request order, c1 then c2 (TOOL-032). That
+  order is deterministic, so the fixture can tell a greedy runner from one
+  that searches (README "Assignments", Area 11 amendment 2026-11-14).
+
+
+  - The second request's tool message is matched with `$contains`. The
+    items are a generic `{type: tool_result, callId: $x}` followed by
+    `{type: tool_result, callId: c1}`. A greedy runner gives the first
+    item c1's part, the first element, and then fails on the second. A
+    valid assignment exists: the first item takes c2's part and the
+    second takes c1's. A conforming runner finds it.
+
+  - $x binds as part of that assignment. In canonical order the first
+    item would take the earliest element that still lets the rest match.
+    c1's part does not, because the second item would be left nothing. So
+    the first item takes c2's part, and $x is `c2`. The session's events,
+    matched in `contains` mode after it, assert a `tool.call` with callId
+    $x and arguments {key: k2}.
+requirements: [EVAL-004]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { parallelToolCalls: true }
+      responses:
+        - parts:
+            - { type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }
+            - { type: tool_call, callId: c2, tool: lookup, arguments: { key: k2 } }
+          usage: { inputTokens: 10, outputTokens: 10, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "SYN-BOTH" }]
+          usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      lookup:
+        - { ok: { output: { value: "SYN-VALUE-K1" } } }
+        - { ok: { output: { value: "SYN-VALUE-K2" } } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up k1 and k2" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  providerRequests:
+    scripted-a:
+      - {}
+      - messages:
+          $contains:
+            - role: tool
+              parts:
+                $contains:
+                  - { type: tool_result, callId: $x }
+                  - { type: tool_result, callId: c1 }
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: contains
+        items:
+          - { type: tool.call, payload: { callId: $x, tool: lookup, arguments: { key: k2 } } }
+          - { type: tool.call, payload: { callId: c1, arguments: { key: k1 } } }

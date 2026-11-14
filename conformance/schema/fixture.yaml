@@ -975,7 +975,9 @@ $defs:
           `details` are `{ callId, tool, arguments, outcome }`), `reviewer`
           present for decisions, and `eventIds` the IDs of the events the
           record links to; `blobStore: {t1: [{ id, hash, mediaType, size,
-          data }]}`; `checkpointStore: {t1: {<sessionId>: checkpoint}}`,
+          data, labels }]}`, `data` the bytes as padded standard base64;
+          `snapshotStore: {t1: {<hash>: snapshot record}}`;
+          `checkpointStore: {t1: {<sessionId>: checkpoint}}`,
           using the field names in `sessions.*.checkpoint`.
         type: object
       delivered:
