@@ -51,10 +51,10 @@ As in Area 1 §2. Requirement IDs use the prefix `EVAL-`. Schemas for fixtures, 
 
 ### 4.1 The runner and the claim
 
-- **EVAL-020** Each implementation **MUST** provide a **conformance runner** that loads the published fixtures for a contract version, drives the implementation with the test doubles (§5), and checks the expectations.
-- **EVAL-021** Results **MUST** be reported per fixture — pass, fail, or skipped — with the fixture ID, its requirement IDs, and for failures the first unmet expectation, as JSON and JUnit XML.
+- **EVAL-020** Each implementation **MUST** provide a **conformance driver** that implements the driver protocol (`conformance/schema/driver.yaml`) over its harness, its in-memory port adapters and its test doubles (§5). The spec repository provides the **conformance runner** (`tools/runner/`), which loads the published fixtures for a contract version, drives an implementation through its driver, and checks the expectations (ADR-0020).
+- **EVAL-021** The runner reports results per fixture. Results **MUST** be reported per fixture — pass, fail, or skipped — with the fixture ID, its requirement IDs, and for failures the first unmet expectation, as JSON and JUnit XML.
 - **EVAL-022** A fixture **MAY** be skipped only if its `features` include an optional feature the implementation declares unsupported (e.g. `binding.langchain`, TOOL-013).
-- **EVAL-023** An implementation conforms to a contract version if, and only if, it passes every fixture it does not legitimately skip. A conformance claim **MUST** name the contract version and the declared unsupported features. Reference implementations **MUST NOT** declare any mandatory behaviour unsupported, and for contract 1.0 **MUST** pass the full suite (`intent.md` §8).
+- **EVAL-023** An implementation conforms to a contract version if, and only if, it passes every fixture it does not legitimately skip. A conformance claim is the shared runner's report for a driver, and **MUST** name the contract version, the runner version, the driver (implementation, version, protocol version) and the declared unsupported features. Reference implementations **MUST NOT** declare any mandatory behaviour unsupported, and for contract 1.0 **MUST** pass the full suite (`intent.md` §8).
 - **EVAL-024** Fixtures **MUST NOT** depend on real providers, real tools, or network access.
 
 ### 4.2 Cross-implementation traces
@@ -64,12 +64,12 @@ As in Area 1 §2. Requirement IDs use the prefix `EVAL-`. Schemas for fixtures, 
 
 ## 5. Test doubles
 
-- **EVAL-030** Every implementation **MUST** provide the following test doubles, usable by its conformance runner and in unit tests.
+- **EVAL-030** Every implementation **MUST** provide the following test doubles, usable through its conformance driver and in unit tests.
 - **EVAL-031** **Scripted providers** — provider adapters that pass PROV §11, return responses from a script (content parts, tool calls, usage, errors, capabilities), and **record every request** they receive for assertions. A fixture may declare several, as different providers, to exercise routing and failover. Summarizer, model-hook, and judge calls go to scripted providers too. A request beyond the script **MUST** fail the test.
 - **EVAL-032** **Stubs** — scripted, call-recording stand-ins for `native` tools, MCP servers (including advertised schemas, for TOOL-092), HTTP endpoints, and remote hooks.
 - **EVAL-033** **In-memory port adapters** — for every port in Area 10, each passing its adapter test kit (PORT-130).
 - **EVAL-034** **Virtual clock and ID generator** — all time-dependent behaviour (TTLs, leases, timeouts, deadlines, timestamps, and the time component of UUIDv7) **MUST** read time from an injectable clock, and IDs **MUST** come from an injectable, seedable generator. *(Requires clock and ID injection in every implementation.)*
-- **EVAL-035** **Crash injection** — the runner **MUST** be able to stop the implementation at named points — at least after a started record and before dispatch; after dispatch and before the outcome is recorded; after an event append and before the checkpoint save — and restart it against the same port contents.
+- **EVAL-035** **Crash injection** — the driver **MUST** be able to stop the implementation, when the runner arms a crash (`crash.arm`), at named points — at least after a started record and before dispatch; after dispatch and before the outcome is recorded; after an event append and before the checkpoint save — and restart it against the same port contents (`process.restart`).
 - **EVAL-036** **Recorded vendor transcripts** — each native provider adapter (Claude, OpenAI) **MUST** pass the provider adapter fixtures offline against recorded wire-level request/response transcripts published with the suite.
 
 ## 6. Evaluation
@@ -246,3 +246,12 @@ Requirement text above has been edited where noted.
   - `blobStore` records include `labels`, as the Area 10 reading already shows.
   - In harness fixtures, blob `data` is the bytes as padded standard base64, whatever the media type. Port cases keep UTF-8 text or `{base64}`.
 - **Fixtures.** New: `eval.format-matching-assignment`.
+
+## Amendment 2026-11-14 — one shared runner, a driver per implementation (ADR-0020)
+
+Requirement text above has been edited where noted.
+
+- **EVAL-020, EVAL-021, EVAL-023, EVAL-030, EVAL-035** (text above edited). The spec repository provides one conformance runner, and each implementation provides a driver for it. Before this change, three runners meant three fixture loaders, three matchers and three script engines that had to interpret the format identically. A conformance failure could come from a runner as easily as from a harness, and the review found one such divergence (greedy matching, Area 11 amendment 2026-11-14).
+- **Driver protocol.** `conformance/schema/driver.yaml`: JSON-RPC 2.0 over stdio. Drivers interpret nothing. Scheduling is cooperative: work advances only inside `settle`, and an action can pause after each persisted event. So the runner evaluates `startAfter` at the event's virtual time, and decides discrete-event clock advances, exactly as the fixture format defines them. Processes share one set of ports, which gives `separateProcesses` and `restart` (EVAL-035) one meaning.
+- **The claim** is the shared runner's report. It names the runner version and the driver (`schemas/eval/v1/conformance-report.yaml`). Native runners remain allowed for development, but they are not the basis of a claim.
+- **Port and adapter cases** run through the same driver (`port.call`, `adapter.call`), so production port adapters are tested by the same runner (PORT-001, PORT-009).

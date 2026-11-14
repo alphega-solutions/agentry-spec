@@ -30,6 +30,9 @@ def test_partial_objects_and_exact_arrays() -> None:
 
 def test_json_equality() -> None:
     assert M.matches({"n": 1}, {"n": 1.0})
+    assert M.matches({"cost": 0.3}, {"cost": 0.1 + 0.2}), "numbers compare within 1e-9"
+    assert not M.matches({"cost": 0.3}, {"cost": 0.300001})
+    assert M.matches({"cost": {"$lte": 0.3}}, {"cost": 0.1 + 0.2})
     assert not M.matches({"n": True}, {"n": 1})
     assert not M.matches({"n": 1}, {"n": True})
 

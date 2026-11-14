@@ -1,0 +1,382 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://alphega.io/agentry/schemas/conformance/driver/v1.json
+title: Conformance driver protocol
+description: >-
+  The protocol between the shared conformance runner (`tools/runner/`) and an
+  implementation's driver (ADR-0020, EVAL-020 as amended 2026-11-14).
+
+
+  Transport: JSON-RPC 2.0 over the driver's stdin and stdout, one JSON
+  object per line. The runner is the client and sends requests; the driver
+  answers each with a result or a JSON-RPC error and sends nothing else.
+  The driver writes diagnostics only to stderr. A JSON-RPC error means a
+  protocol or driver fault, never a harness outcome: harness errors (a
+  refused `run()`, a failed load) are results.
+
+
+  Division of work. The runner loads fixtures, resolves `config.base` into
+  artifacts, substitutes placeholders, evaluates `startAfter`, captures and
+  every expectation, and decides when virtual time advances. The driver
+  interprets nothing. It builds harness instances over in-memory port
+  adapters and test doubles (EVAL-030–034), executes what it is told, and
+  reports what happened.
+
+
+  Scheduling. Work runs only inside `settle`. `action.start` queues an
+  action. `settle` runs every in-flight action until each has completed,
+  crashed, is waiting on a virtual-clock timer (a stub's `delayMs`, a
+  timeout, a lease), or, when the runner asked for `pauseOnEvents`, has just
+  persisted an event. A paused action resumes at the next `settle`. This
+  gives the runner exact control of interleaving: it evaluates `startAfter`
+  after each persisted event, at that event's virtual time, before any
+  automatic clock advance (fixture.yaml, "Virtual clock"). When every
+  in-flight action waits on a timer, the runner advances the clock to the
+  earliest one with `clock.advance`.
+
+
+  Processes. Each harness instance is a named process. Every process of a
+  fixture shares one set of port adapters, so `separateProcesses` and
+  `restart` mean "another harness instance over the same port contents". A
+  process is created on its first use. The first process is `main`.
+type: object
+oneOf:
+  - $ref: "#/$defs/request"
+  - $ref: "#/$defs/response"
+
+$defs:
+  request:
+    type: object
+    required: [jsonrpc, id, method]
+    properties:
+      jsonrpc: { const: "2.0" }
+      id: { type: integer, minimum: 1 }
+      method:
+        enum: [driver.describe, fixture.begin, fixture.end, config.load, action.start, settle, crash.arm,
+               process.restart, clock.set, clock.advance, retention.run, stream.abandon, observe,
+               port.call, adapter.call]
+      params: { type: object }
+    allOf:
+      - if: { properties: { method: { const: driver.describe } } }
+        then: { properties: { params: { $ref: "#/$defs/empty" } } }
+      - if: { properties: { method: { const: fixture.begin } } }
+        then: { properties: { params: { $ref: "#/$defs/fixtureBegin" } } }
+      - if: { properties: { method: { const: config.load } } }
+        then: { properties: { params: { $ref: "#/$defs/configLoad" } } }
+      - if: { properties: { method: { const: action.start } } }
+        then: { properties: { params: { $ref: "#/$defs/actionStart" } } }
+      - if: { properties: { method: { const: settle } } }
+        then: { properties: { params: { $ref: "#/$defs/settle" } } }
+      - if: { properties: { method: { const: crash.arm } } }
+        then: { properties: { params: { $ref: "#/$defs/crashArm" } } }
+      - if: { properties: { method: { const: process.restart } } }
+        then: { properties: { params: { $ref: "#/$defs/processRef" } } }
+      - if: { properties: { method: { const: clock.set } } }
+        then: { properties: { params: { $ref: "#/$defs/clockSet" } } }
+      - if: { properties: { method: { const: clock.advance } } }
+        then: { properties: { params: { $ref: "#/$defs/clockAdvance" } } }
+      - if: { properties: { method: { const: stream.abandon } } }
+        then: { properties: { params: { $ref: "#/$defs/streamAbandon" } } }
+      - if: { properties: { method: { const: observe } } }
+        then: { properties: { params: { $ref: "#/$defs/observe" } } }
+      - if: { properties: { method: { const: port.call } } }
+        then: { properties: { params: { $ref: "#/$defs/portCall" } } }
+      - if: { properties: { method: { const: adapter.call } } }
+        then: { properties: { params: { $ref: "#/$defs/adapterCall" } } }
+
+  response:
+    type: object
+    required: [jsonrpc, id]
+    oneOf:
+      - required: [result]
+      - required: [error]
+    properties:
+      jsonrpc: { const: "2.0" }
+      id: { type: integer, minimum: 1 }
+      result: {}
+      error:
+        type: object
+        required: [code, message]
+        properties:
+          code: { type: integer }
+          message: { type: string }
+          data: {}
+
+  empty: { type: object, additionalProperties: false, properties: {} }
+
+  timestamp: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/timestamp" }
+
+  process:
+    description: A harness instance name. `main` is the first; others are created on first use.
+    type: string
+    pattern: "^[A-Za-z0-9_-]{1,64}$"
+
+  processRef:
+    type: object
+    additionalProperties: false
+    required: [process]
+    properties:
+      process: { $ref: "#/$defs/process" }
+
+  # ---- driver.describe ----------------------------------------------------
+
+  describeResult:
+    description: The result of `driver.describe`, the first request of a session with a driver.
+    type: object
+    additionalProperties: false
+    required: [protocol, contract, implementation, unsupportedFeatures, crashPoints]
+    properties:
+      protocol: { description: Driver protocol version this driver speaks., type: string, pattern: "^1\\.\\d+$" }
+      contract: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/contractVersion" }
+      implementation:
+        type: object
+        additionalProperties: false
+        required: [name, version, language]
+        properties:
+          name: { type: string, minLength: 1 }
+          version: { type: string, minLength: 1 }
+          language: { type: string, minLength: 1 }
+      unsupportedFeatures:
+        description: Optional features the implementation declares unsupported (EVAL-022).
+        type: array
+        uniqueItems: true
+        items: { type: string }
+      crashPoints:
+        description: Crash points the driver can arm (EVAL-035); must include every point fixture.yaml `crashStep` names.
+        type: array
+        uniqueItems: true
+        items: { type: string }
+      portAdapters:
+        description: Port adapters the driver can bind for port cases, by port (PORT-001, PORT-009).
+        type: object
+        additionalProperties: { type: array, items: { type: string } }
+      providerAdapters:
+        description: Provider adapters the driver can run adapter cases against (EVAL-011).
+        type: array
+        items: { type: string }
+
+  # ---- fixture lifecycle --------------------------------------------------
+
+  fixtureBegin:
+    description: >-
+      Start a fixture with fresh port adapters, doubles and clock. `setup` is
+      the fixture's `setup` with `config.base` resolved: `config` becomes
+      `{artifacts, overlay?}`, the complete artifact list. Everything else
+      (tenants, providers, stubs, secrets, handlers, ports seeding, clock,
+      idSeed, limits) is passed as fixture.yaml defines it.
+    type: object
+    additionalProperties: false
+    required: [fixtureId, setup]
+    properties:
+      fixtureId: { type: string, minLength: 1 }
+      setup:
+        type: object
+        required: [config]
+        properties:
+          config:
+            type: object
+            additionalProperties: false
+            required: [artifacts]
+            properties:
+              artifacts: { type: array, items: { type: object } }
+              overlay: { type: object }
+
+  configLoad:
+    description: >-
+      A `load` step. The runner resolves it against the configuration of the
+      last successful load (fixture.yaml `loadStep`) and sends the complete
+      resulting artifact list. Result: `loadResult`.
+    type: object
+    additionalProperties: false
+    required: [artifacts]
+    properties:
+      artifacts: { type: array, items: { type: object } }
+      overlay: { type: object }
+
+  loadResult:
+    type: object
+    additionalProperties: false
+    required: [ok]
+    properties:
+      ok: { type: boolean }
+      snapshotHash: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/sha256" }
+      error: { $ref: "https://alphega.io/agentry/schemas/core/error/v1.json" }
+
+  # ---- actions and scheduling ---------------------------------------------
+
+  actionStart:
+    description: >-
+      Queue a host action. `args` are the action step's fields from
+      fixture.yaml (`tenant`, `principal`, `persona`, `session`, `input`,
+      `decisions`, `reviewer`, `overrides`, `bundle`, `snapshot`,
+      `hookMode`, `run`, ...) with placeholders already substituted. A
+      `bundle` given by path is sent as the loaded bundle document. The
+      action makes progress only inside `settle`.
+    type: object
+    additionalProperties: false
+    required: [requestId, process, action, args]
+    properties:
+      requestId: { type: string, minLength: 1 }
+      process: { $ref: "#/$defs/process" }
+      action:
+        enum: [run, resume, decide, close, cancel, getReviewerView, listPendingEscalations,
+               exportBundle, replay, convert, evalRun]
+      args: { type: object }
+
+  settle:
+    description: >-
+      Run in-flight actions until each has completed, crashed, is waiting on
+      a timer, or (with `pauseOnEvents`) has just persisted an event. Result:
+      `settleResult`.
+    type: object
+    additionalProperties: false
+    properties:
+      pauseOnEvents: { type: boolean, default: false }
+
+  settleResult:
+    type: object
+    additionalProperties: false
+    required: [now, events, completed, crashed, waiting]
+    properties:
+      now: { $ref: "#/$defs/timestamp" }
+      events:
+        description: Events persisted during this settle, in persistence order (seq order per session).
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [process, event]
+          properties:
+            process: { $ref: "#/$defs/process" }
+            requestId: { type: string }
+            event: { $ref: "https://alphega.io/agentry/schemas/core/event/v1.json" }
+      completed:
+        description: Actions that completed, with the outcome the host received.
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [requestId, outcome]
+          properties:
+            requestId: { type: string }
+            outcome: { $ref: "#/$defs/outcome" }
+      crashed:
+        description: Actions whose process stopped at an armed crash point; their process must be restarted before it is used again.
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [requestId, point]
+          properties:
+            requestId: { type: string }
+            point: { type: string }
+      waiting:
+        description: Actions still in flight, and what each waits on.
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [requestId, "on"]
+          properties:
+            requestId: { type: string }
+            "on": { enum: [timer, paused] }
+            until:
+              description: For `timer`, when the earliest timer this action waits on fires.
+              $ref: "#/$defs/timestamp"
+
+  outcome:
+    description: >-
+      What the host received from the action, unjudged: the runner matches
+      it against the step's `expect` (fixture.yaml `stepOutcome`).
+    type: object
+    additionalProperties: false
+    required: [ok]
+    properties:
+      ok: { type: boolean }
+      error: { $ref: "https://alphega.io/agentry/schemas/core/error/v1.json" }
+      endReason: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/runEndReason" }
+      sessionId: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+      runId: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+      newEvents: { type: integer, minimum: 0 }
+      view: { type: object }
+      escalations: { type: array }
+      bundle: { type: object }
+      divergences: { type: array }
+      draft: { type: object }
+      report: { type: object }
+
+  crashArm:
+    description: Arm a crash at `point` for the next action started on `session` (or the next action at all) in `process` (fixture.yaml `crashStep`).
+    type: object
+    additionalProperties: false
+    required: [point, process]
+    properties:
+      point: { type: string, minLength: 1 }
+      process: { $ref: "#/$defs/process" }
+      session: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+
+  clockSet:
+    type: object
+    additionalProperties: false
+    required: [to]
+    properties:
+      to: { $ref: "#/$defs/timestamp" }
+
+  clockAdvance:
+    type: object
+    additionalProperties: false
+    oneOf:
+      - required: [by]
+      - required: [to]
+    properties:
+      by: { description: ISO 8601 duration., type: string, minLength: 2 }
+      to: { $ref: "#/$defs/timestamp" }
+
+  streamAbandon:
+    description: The host abandons an action's event stream (fixture.yaml `abandonStep`, CORE-071).
+    type: object
+    additionalProperties: false
+    required: [requestId]
+    properties:
+      requestId: { type: string }
+
+  # ---- observation --------------------------------------------------------
+
+  observe:
+    description: >-
+      Read what the fixture's expectations need, in the record shapes
+      fixture.yaml defines under `expect` (events per session, port
+      contents, stub calls, provider requests, delivered output). Result:
+      an object with one key per requested item. `persistedText` is every
+      string stored by any port, so the runner can check
+      `noPersistedContent`.
+    type: object
+    additionalProperties: false
+    required: [items]
+    properties:
+      items:
+        type: array
+        uniqueItems: true
+        items: { enum: [events, ports, stubCalls, providerRequests, delivered, persistedText] }
+      tenant: { type: string }
+
+  # ---- port and adapter cases ---------------------------------------------
+
+  portCall:
+    description: One step of a port case (conformance/schema/port-case.yaml), invoked directly on the named adapter of the port.
+    type: object
+    additionalProperties: false
+    required: [port, adapter, op, args]
+    properties:
+      port: { type: string }
+      adapter: { type: string }
+      op: { type: string }
+      args: { type: object }
+
+  adapterCall:
+    description: "One provider adapter case (conformance/schema/adapter-case.yaml), run against the named adapter. Result: the adapter's response and the request it sent, in agentry terms."
+    type: object
+    additionalProperties: false
+    required: [adapter, case]
+    properties:
+      adapter: { type: string }
+      case: { type: object }
