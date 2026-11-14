@@ -1,0 +1,128 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://alphega.io/agentry/schemas/core/codes/v1.json
+title: Code registry
+description: >-
+  Every `agentry.*` code the specification defines (CORE-192; registry
+  added 2026-11-14). `x-agentry-codes` maps each code to its kind and
+  handling:
+  - `error` codes appear in the error shape (`core/v1/error.yaml`), with
+    the category they always carry, whether they are retryable (`null` when
+    it depends on the situation), and the sources that may report them;
+  - `reason` codes explain escalations and decisions (Area 6 §3);
+  - `result` codes explain eval results (Area 11).
+
+  The error schema accepts an `agentry.*` code only if it is listed here.
+  Codes in other namespaces (`io.example.*`) are free (CORE-192).
+  `tools/validate.py` checks that every `agentry.*` code used in the
+  repository is listed, and that fixtures use each error code with its
+  registered category, retryability and source.
+$defs:
+  agentryErrorCode:
+    enum:
+      - agentry.config.snapshot_unavailable
+      - agentry.content.attachment_source
+      - agentry.context.overflow
+      - agentry.delegation.blocked
+      - agentry.delegation.child_session
+      - agentry.delegation.depth
+      - agentry.delegation.failed
+      - agentry.delegation.limit
+      - agentry.eval.production_binding
+      - agentry.eval.unrecorded_call
+      - agentry.eval.unrecorded_model_call
+      - agentry.eval.unredacted_content
+      - agentry.eval.unstubbed_call
+      - agentry.harness.internal
+      - agentry.hitl.already_decided
+      - agentry.hitl.confirmed_failed
+      - agentry.hitl.decision_not_allowed
+      - agentry.hitl.duplicate_reviewer
+      - agentry.hitl.invalid_edit
+      - agentry.hitl.pending
+      - agentry.hitl.rejected
+      - agentry.hitl.reviewer_refused
+      - agentry.hitl.unknown_action
+      - agentry.hook.blocked
+      - agentry.hook.content_barred
+      - agentry.hook.failed
+      - agentry.hook.invalid_result
+      - agentry.hook.rule_error
+      - agentry.hook.timeout
+      - agentry.output.schema_mismatch
+      - agentry.provider.auth
+      - agentry.provider.bad_request
+      - agentry.provider.no_capable_model
+      - agentry.provider.parallel_not_allowed
+      - agentry.provider.refused
+      - agentry.provider.unavailable
+      - agentry.provider.unsupported_content
+      - agentry.session.not_found
+      - agentry.storage.version_mismatch
+      - agentry.tool.assurance
+      - agentry.tool.invalid_arguments
+      - agentry.tool.invalid_output
+      - agentry.tool.result_too_large
+      - agentry.tool.schema_drift
+      - agentry.tool.timeout
+      - agentry.tool.unavailable
+x-agentry-codes:
+  # --- error codes: kind, category, retryable (null = situational), sources, defined by
+  agentry.config.snapshot_unavailable: { kind: error, category: not_found, retryable: false, sources: [harness], defined: CORE-055 }
+  agentry.content.attachment_source: { kind: error, category: invalid_input, retryable: false, sources: [harness], defined: CORE-121 }
+  agentry.context.overflow: { kind: error, category: limit, retryable: false, sources: [harness, provider], defined: "CTX-090, PROV-082" }
+  agentry.delegation.blocked: { kind: error, category: policy, retryable: false, sources: [harness], defined: ORCH-050 }
+  agentry.delegation.child_session: { kind: error, category: conflict, retryable: false, sources: [harness], defined: ORCH-006 }
+  agentry.delegation.depth: { kind: error, category: policy, retryable: false, sources: [harness], defined: ORCH-031 }
+  agentry.delegation.failed: { kind: error, category: unavailable, retryable: false, sources: [harness], defined: ORCH-050 }
+  agentry.delegation.limit: { kind: error, category: unavailable, retryable: false, sources: [harness], defined: ORCH-050 }
+  agentry.eval.production_binding: { kind: error, category: configuration, retryable: false, sources: [harness], defined: EVAL-040 }
+  agentry.eval.unrecorded_call: { kind: error, category: unavailable, retryable: false, sources: [harness], defined: EVAL-062 }
+  agentry.eval.unrecorded_model_call: { kind: error, category: fatal, retryable: false, sources: [harness], defined: EVAL-060 }
+  agentry.eval.unredacted_content: { kind: error, category: policy, retryable: false, sources: [harness], defined: EVAL-070 }
+  agentry.eval.unstubbed_call: { kind: error, category: unavailable, retryable: false, sources: [harness], defined: EVAL-041 }
+  agentry.harness.internal: { kind: error, category: fatal, retryable: false, sources: [harness], defined: "CORE-191 (registry, 2026-11-14)" }
+  agentry.hitl.already_decided: { kind: error, category: conflict, retryable: false, sources: [harness], defined: HITL-040 }
+  agentry.hitl.confirmed_failed: { kind: error, category: unavailable, retryable: false, sources: [harness], defined: HITL-060 }
+  agentry.hitl.decision_not_allowed: { kind: error, category: invalid_input, retryable: false, sources: [harness], defined: HITL-043 }
+  agentry.hitl.duplicate_reviewer: { kind: error, category: conflict, retryable: false, sources: [harness], defined: HITL-024 }
+  agentry.hitl.invalid_edit: { kind: error, category: invalid_input, retryable: false, sources: [harness], defined: HITL-063 }
+  agentry.hitl.pending: { kind: error, category: conflict, retryable: false, sources: [harness], defined: HITL-070 }
+  agentry.hitl.rejected: { kind: error, category: policy, retryable: false, sources: [harness], defined: HITL-060 }
+  agentry.hitl.reviewer_refused: { kind: error, category: unauthorized, retryable: false, sources: [harness], defined: HITL-022 }
+  agentry.hitl.unknown_action: { kind: error, category: not_found, retryable: false, sources: [harness], defined: HITL-043 }
+  agentry.hook.blocked: { kind: error, category: policy, retryable: false, sources: [hook], defined: HOOK-023 }
+  agentry.hook.content_barred: { kind: error, category: policy, retryable: false, sources: [hook], defined: HOOK-054 }
+  agentry.hook.failed: { kind: error, category: unavailable, retryable: false, sources: [hook], defined: HOOK-051 }
+  agentry.hook.invalid_result: { kind: error, category: fatal, retryable: false, sources: [hook], defined: HOOK-051 }
+  agentry.hook.rule_error: { kind: error, category: fatal, retryable: false, sources: [hook], defined: "HOOK-051, HOOK-113" }
+  agentry.hook.timeout: { kind: error, category: unavailable, retryable: false, sources: [hook], defined: HOOK-051 }
+  agentry.output.schema_mismatch: { kind: error, category: fatal, retryable: false, sources: [harness], defined: CORE-133 }
+  agentry.provider.auth: { kind: error, category: unavailable, retryable: false, sources: [provider], defined: PROV-080 }
+  agentry.provider.bad_request: { kind: error, category: fatal, retryable: false, sources: [provider], defined: PROV-080 }
+  agentry.provider.no_capable_model: { kind: error, category: fatal, retryable: false, sources: [harness], defined: "PROV-042 (as amended 2026-11-14)" }
+  agentry.provider.parallel_not_allowed: { kind: error, category: invalid_input, retryable: false, sources: [harness], defined: PROV-043 }
+  agentry.provider.refused: { kind: error, category: policy, retryable: false, sources: [provider], defined: PROV-081 }
+  agentry.provider.unavailable: { kind: error, category: unavailable, retryable: true, sources: [provider], defined: PROV-080 }
+  agentry.provider.unsupported_content: { kind: error, category: invalid_input, retryable: false, sources: [harness], defined: "PROV-042 (as amended 2026-11-14)" }
+  agentry.session.not_found: { kind: error, category: not_found, retryable: false, sources: [harness], defined: PORT-115 }
+  agentry.storage.version_mismatch: { kind: error, category: conflict, retryable: false, sources: [harness, port], defined: PORT-122 }
+  agentry.tool.assurance: { kind: error, category: policy, retryable: false, sources: [harness], defined: TOOL-030 }
+  agentry.tool.invalid_arguments: { kind: error, category: invalid_input, retryable: false, sources: [harness], defined: TOOL-030 }
+  agentry.tool.invalid_output: { kind: error, category: fatal, retryable: false, sources: [harness], defined: TOOL-070 }
+  agentry.tool.result_too_large: { kind: error, category: limit, retryable: false, sources: [harness], defined: TOOL-072 }
+  agentry.tool.schema_drift: { kind: error, category: unavailable, retryable: false, sources: [harness], defined: TOOL-092 }
+  agentry.tool.timeout: { kind: error, category: unavailable, retryable: true, sources: [harness], defined: "TOOL-051 (as amended 2026-11-14)" }
+  agentry.tool.unavailable: { kind: error, category: policy, retryable: false, sources: [harness], defined: TOOL-030 }
+  # --- reason codes (escalations and decisions, Area 6 §3)
+  agentry.approval.always: { kind: reason, defined: "HITL-001, TOOL-035" }
+  agentry.approval.no_match: { kind: reason, defined: HOOK-131 }
+  agentry.approval.no_rules: { kind: reason, defined: HOOK-131 }
+  agentry.approval.rewritten: { kind: reason, defined: TOOL-036 }
+  agentry.approval.rule: { kind: reason, defined: HOOK-131 }
+  agentry.approval.rule_error: { kind: reason, defined: HOOK-132 }
+  agentry.recovery.unknown_outcome: { kind: reason, defined: "TOOL-062, TOOL-055" }
+  agentry.taint.egress: { kind: reason, defined: "HOOK-122 (Area 6 reason codes)" }
+  agentry.taint.mutating: { kind: reason, defined: "HOOK-122 (Area 6 reason codes)" }
+  # --- result codes (eval results, Area 11)
+  agentry.eval.judge_not_allowed: { kind: result, defined: EVAL-051 }
+  agentry.eval.unresolved_escalation: { kind: result, defined: EVAL-044 }

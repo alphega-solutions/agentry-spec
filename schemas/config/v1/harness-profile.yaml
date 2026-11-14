@@ -78,6 +78,7 @@ properties:
     x-agentry-merge: stricter
     x-agentry-order: [tool, turn]
     enum: [tool, turn]
+    default: turn
   limits:
     type: object
     additionalProperties: false

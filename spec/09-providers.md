@@ -82,7 +82,7 @@ As in Area 1 §2. Requirement IDs use the prefix `PROV-`.
 
 - **PROV-042** `image` parts need `vision` and `file` parts need `documents`.
   - When `run()` is called with attachments that no allowed model for the persona supports, `run()` **MUST** be rejected with `invalid_input` (`agentry.provider.unsupported_content`) before a run starts.
-  - When such content enters context during a run (e.g. a tool result), the harness **MUST** use the first capable, allowed fallback (§6). If none exists, the run **MUST** end `failed` with a `fatal` error (`agentry.provider.unsupported_content`).
+  - When such content enters context during a run (e.g. a tool result), the harness **MUST** use the first capable, allowed fallback (§6). If none exists, the run **MUST** end `failed` with a `fatal` error (`agentry.provider.no_capable_model`). *(Code split 2026-11-14.)*
 - **PROV-043** A model without `parallelToolCalls` **MUST** be sent requests that permit at most one tool call per response.
 - **PROV-044** The context manager **MUST** compact to the smallest `contextLimit` among the primary model and its remaining fallbacks (CTX-050), so that a routing or failover switch never causes an overflow. *(Clarifies CTX-050.)*
 
@@ -110,7 +110,7 @@ As in Area 1 §2. Requirement IDs use the prefix `PROV-`.
 - **PROV-071** Token budgets (CFG-091) count `inputTokens + outputTokens` across every model call in the turn, including failed calls and summarization (CTX-084), and excluding model hooks (HOOK-103).
 - **PROV-072** The deployment **MAY** declare a price table: per model, prices per million tokens for uncached input, cached input, output, and reasoning output. *(Extends CFG-110.)*
 - **PROV-073** If any layer sets `budget.cost`, every model that could run for that persona — primary, fallbacks, summarizer, and model hooks — **MUST** have a price, or configuration is rejected. A run request that sets `budget.cost` (CFG-101) when any such model is unpriced **MUST** be rejected with `invalid_input`.
-- **PROV-074** Cost **MUST** be computed from normalized usage and the price table in the session's snapshot. Summarizer cost counts toward `budget.cost`; model hook cost does not (HOOK-103) but **MUST** be recorded on the hook's decision.
+- **PROV-074** Cost **MUST** be computed from normalized usage and the price table in the session's snapshot. Summarizer cost counts toward `budget.cost`; model hook cost does not (HOOK-103) but **MUST** be recorded on the hook's decision when one is emitted (HOOK-102), and otherwise, for a `continue` result, in `run.ended.unrecordedUsage` and `unrecordedCost`. *(Aligned with HOOK-102 2026-11-14.)*
 
 ## 9. Error mapping
 
@@ -250,3 +250,10 @@ Schemas: provider declarations, capability restrictions and the price table in `
 - PROV-021: a lower layer's `fallbacks` list only selects which of the pinning layer's entries remain; the pinning layer's order always applies.
 - PROV-003: an adapter delimits every `tool:`, `retrieval:`, `attachment:` and `agent:` part, whatever the trust configuration; the adapter request carries no trust information, and delimiting trusted parts too is harmless (CTX-012).
 - PROV-090: every later call on a failover model in the same turn records `role: fallback`, `fallbackReason: failover` (PROV-063).
+
+## Amendment 2026-11-14 — fresh-review fixes (post-Phase 4 review)
+
+Requirement text above has been edited where noted.
+
+- **PROV-042** (text above edited). `agentry.provider.unsupported_content` was the only code with two categories: `invalid_input` before a run, and `fatal` during one. The mid-run case is now `agentry.provider.no_capable_model` (`fatal`). `unsupported_content` keeps `invalid_input`.
+- **PROV-074** (text above edited). A model hook that returns `continue` emits no `hook.decision` (HOOK-060, HOOK-102), so its usage and cost are recorded in `run.ended.unrecordedUsage` and `unrecordedCost`.

@@ -3,3 +3,4 @@ instance: { hook: end@1, point: sessionEnd, result: block, reasonCode: test.bloc
 # The smallest change that makes the instance valid, so it fails only for the reason above.
 repair:
   - { op: replace, path: "/result", value: "annotate" }
+  - { op: add, path: "/annotations", value: [{ part: 0, labels: [pii] }] }

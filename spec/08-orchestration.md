@@ -212,3 +212,9 @@ Schemas: the `session.created` `parent` block and `tool.call` `childSessionId` i
 ## Amendment 2026-11-13 — labels across delegation (post-Phase 4 review)
 
 - **ORCH-011** (text above edited). The child's first message carries the parent's label set (HOOK-127), not only the labels of parts in the parent's context at the time of the call. The arguments are written by the parent's model, which may have copied labelled content that compaction has since dropped. With the old reading, a parent could lose its labels to truncation and then delegate the data to a tainted child (ORCH-012) holding an egress tool, whose egress condition (HOOK-122) would then find nothing labelled. The child's label set starts with these labels. See the Area 5 amendment 2026-11-13.
+
+## Amendment 2026-11-14 — fresh-review fixes (post-Phase 4 review)
+
+Requirement text above has been edited where noted.
+
+- **ORCH-012** (reading). When the parent is tainted at the call, the child's `session.created` records the inherited provenances in `parent.taintProvenances`. Before this, the checkpoint was the only record of the inherited taint, so the child's taint could not be rebuilt from its events (PORT-034).

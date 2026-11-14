@@ -923,6 +923,53 @@ def check_crashes(doc: dict) -> list[str]:
     return problems
 
 
+CODE = re.compile(r"\bagentry\.[a-z_]+\.[a-z_]+\b")
+
+
+def check_codes() -> list[str]:
+    """Every `agentry.*` code used anywhere in the spec, schemas and fixtures is
+    in the code registry (`schemas/core/v1/codes.yaml`), and fixtures use each
+    error code with its registered category, retryability and source."""
+    registry_doc = load_yaml(ROOT / "schemas" / "core" / "v1" / "codes.yaml")
+    codes = registry_doc.get("x-agentry-codes") or {}
+    enum = set(registry_doc["$defs"]["agentryErrorCode"]["enum"])
+    problems: list[str] = []
+    errors = {c for c, m in codes.items() if m.get("kind") == "error"}
+    if errors != enum:
+        problems.append(f"codes.yaml: agentryErrorCode enum and error-kind entries differ: {sorted(errors ^ enum)}")
+    files = sorted((ROOT / "spec").glob("*.md")) + sorted((ROOT / "schemas").rglob("*.yaml")) \
+        + sorted((ROOT / "conformance").rglob("*.yaml")) + [ROOT / "domain.md"]
+    for path in files:
+        if path.name == "codes.yaml":
+            continue
+        for code in sorted(set(CODE.findall(path.read_text(errors="ignore")))):
+            if code not in codes:
+                problems.append(f"{path.relative_to(ROOT)}: {code} is not in the code registry (schemas/core/v1/codes.yaml)")
+
+    def walk(v, where: str) -> None:
+        if isinstance(v, dict):
+            c = v.get("code")
+            meta = codes.get(c) if isinstance(c, str) else None
+            if meta and meta.get("kind") == "error":
+                if isinstance(v.get("category"), str) and v["category"] != meta["category"]:
+                    problems.append(f"{where}: {c} has category {v['category']!r}; the registry says {meta['category']!r}")
+                if isinstance(v.get("retryable"), bool) and meta.get("retryable") is not None \
+                        and v["retryable"] != meta["retryable"]:
+                    problems.append(f"{where}: {c} has retryable {v['retryable']}; the registry says {meta['retryable']}")
+                if isinstance(v.get("source"), str) and v["source"] not in meta.get("sources", []):
+                    problems.append(f"{where}: {c} has source {v['source']!r}; the registry allows {meta.get('sources')}")
+            for x in v.values():
+                walk(x, where)
+        elif isinstance(v, list):
+            for x in v:
+                walk(x, where)
+    for fx in sorted((ROOT / "conformance").rglob("*.yaml")):
+        if "schema" in fx.relative_to(ROOT / "conformance").parts:
+            continue
+        walk(load_yaml(fx), str(fx.relative_to(ROOT)))
+    return problems
+
+
 def apply_patch(instance, ops: list):
     """Apply JSON-Patch (RFC 6902) `add`, `remove` and `replace` operations to a copy.
 
@@ -1072,6 +1119,9 @@ def main() -> int:
     for gb in sorted((ROOT / "conformance" / "golden").glob("*.yaml")):
         for err in validator("https://alphega.io/agentry/schemas/eval/bundle/v1.json").iter_errors(load_yaml(gb)):
             errors.append(f"{gb.relative_to(ROOT)}: {describe(err)}")
+
+    # 3d. Every agentry.* code is registered and used with its registered handling (CORE-192).
+    errors += check_codes()
 
     # 4. Shared configuration artifacts validate against their kind's schema.
     errors += check_shared_config(schemas, reg)

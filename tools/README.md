@@ -4,7 +4,7 @@ Spec CI and conformance tooling. Install with `pip install -r tools/requirements
 
 | Tool | What it does |
 |---|---|
-| `validate.py` | Validates every schema and every schema example, and every fixture against its format (EVAL-001). It also runs the bespoke checks: placeholders bound before use (EVAL-002), offline URLs (EVAL-024), merge annotations and strictness orders (CFG-030, CFG-031), secret markers (CFG-060, CFG-061), inline configuration, handlers, stub keys, matchers, crashes and concurrency, and each invalid example's `repair`. |
+| `validate.py` | Validates every schema and every schema example, and every fixture against its format (EVAL-001). It also runs the bespoke checks: placeholders bound before use (EVAL-002), offline URLs (EVAL-024), merge annotations and strictness orders (CFG-030, CFG-031), secret markers (CFG-060, CFG-061), inline configuration, handlers, stub keys, matchers, crashes and concurrency, each invalid example's `repair`, and the code registry: every `agentry.*` code registered, and used in fixtures with its registered category, retryability and source (CORE-192). |
 | `coverage.py` | Requirement coverage (EVAL-010). Every normative requirement must be cited by a fixture, or be listed in `conformance/coverage.yaml` as verified elsewhere or pending. |
 | `selftest.py` | Negative tests for `validate.py` and `coverage.py`: each check is shown to reject a deliberately broken input. |
 | `check_golden.py` | Checks the golden trace bundles in `conformance/golden/` (EVAL-025, EVAL-026): sequence, hashes, blobs, snapshot and audit records. |

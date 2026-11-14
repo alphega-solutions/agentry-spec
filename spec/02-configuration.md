@@ -174,9 +174,9 @@ A harness profile declares **how** a persona runs.
 | `timeouts.tool` | `min` | Default tool timeout when a tool declares none *(Area 4)* |
 | `retry.unavailable` | `min` | Maximum retries for `unavailable` errors (Area 1, CORE-191) |
 | `outputRetryLimit` | `min` | Corrections allowed for an output schema (Area 1, CORE-132) |
-| `outputSchema` | `locked` | Output schema, if the persona declares none |
+| `outputSchema` | `locked` | Output schema, if the persona declares none. If both declare one, they must be identical: `locked` makes a differing profile value a configuration error (CFG-032) *(clarified 2026-11-14)* |
 | `deliveryMode` | `stricter` | `buffered` (default) or `streamed` (ADR-0005) |
-| `checkpoint` | `stricter` | Checkpoint granularity: `tool` → `turn` (strictest first) |
+| `checkpoint` | `stricter` | Checkpoint granularity: `tool` → `turn` (strictest first). Default `turn` *(2026-11-14)* |
 | `limits.partSize`, `limits.sessionSize` | `min` | Content size limits (Area 1, CORE-115) |
 | `defaultAttachmentLabels` | `union` | Labels applied to unscanned attachments (Area 1, CORE-123) |
 | `trace.includeReasoning` | `stricter` | `false` → `true` (strictest first) (Area 1, CORE-143) |
@@ -330,7 +330,7 @@ Writing schemas and fixtures for these areas exposed the gaps below. They are ap
 
 **Run requests**
 - **CFG-101** (as amended 2026-11-14): run requests **MAY** tighten exactly these profile fields. Every other field, and any value that is not a tightening, is `invalid_input`.
-  - **Run-scoped:** `stepLimit`, `budget.tokens`, `budget.cost`, `timeouts.run`, `timeouts.tool`, `retry.unavailable`, `outputRetryLimit`, `deliveryMode`, `checkpoint`, `trace.includeReasoning`, `limits.partSize`, `context.reserveOutputTokens`, `context.compaction.mode`, `context.compaction.triggerPercent`, `context.retrieval.auto`, `context.retrieval.limit`.
+  - **Run-scoped:** `stepLimit`, `budget.tokens`, `budget.cost`, `timeouts.run`, `timeouts.tool`, `retry.unavailable`, `outputRetryLimit`, `deliveryMode`, `checkpoint`, `trace.includeReasoning`, `limits.partSize`, `model.params.maxOutputTokens`, `context.reserveOutputTokens`, `context.compaction.mode`, `context.compaction.triggerPercent`, `context.retrieval.auto`, `context.retrieval.limit`.
   - **Session-scoped:** `idleTtl`, `suspendedTtl`, `onExpiry`, `limits.sessionSize`, `delegation.maxDepth`. Only the run request that creates the session may tighten these, and they are recorded on `session.created` (CFG-102).
 - **CFG-101**: run-request values use harness profile field paths (e.g. `{budget: {tokens: 500}}`).
 
@@ -374,3 +374,12 @@ Readings above have been edited where noted.
   The lists left out `checkpoint` and `trace.includeReasoning`, which are `stricter` and which `cfg.strictness-orders-run-request` accepts in run requests. They also named `context` whole, although it holds `locked` and `union` fields that `context.config-context-run-request` rejects.
 - **Now** the reading lists every field a run request may set, each as run-scoped or session-scoped. It is CFG-101's `min` and `stricter` profile fields, with one exception: `guardrails.requireDeterministic` is excluded because it is a load-time validity rule (HOOK-104), not run behaviour. `checkpoint` and `trace.includeReasoning` are run-scoped. `intersect` fields, including `model.fallbacks`, are not settable: a per-run narrowing of routing has no use case, and the eval matrix chooses models per cell (EVAL-044). ADR-0007 carries a note to this effect.
 - **Fixtures.** `cfg.run-request-tighten-only` gains `guardrails.requireDeterministic` and `model.fallbacks`, both rejected.
+
+## Amendment 2026-11-14 — fresh-review fixes (post-Phase 4 review)
+
+Requirement text above has been edited where noted.
+
+- **CFG-101** (reading list edited). `model.params.maxOutputTokens`, a `min` profile field, is run-scoped and settable by run requests. The 2026-11-14 list had left it out, although the field qualifies.
+- **CFG-090** (table edited).
+  - `checkpoint` defaults to `turn`. Before this, the field had no default, so behaviour was undefined when no layer set it. Checkpoint granularity affects cost, not correctness: events are persisted when emitted, and the event log is authoritative (PORT-034).
+  - `outputSchema` is `locked` in persona and profile. The profile's schema applies when the persona declares none, and a profile schema that differs from the persona's is a configuration error.

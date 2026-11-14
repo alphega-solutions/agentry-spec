@@ -90,7 +90,7 @@ expect:
         mode: subsequence
         items:
           - { type: tool.call, payload: { callId: c1, tool: update_record, arguments: { key: k1, value: v1 } } }
-          - { type: error, payload: { error: { category: unavailable, code: agentry.tool.timeout, source: tool } } }
+          - { type: error, payload: { error: { category: unavailable, code: agentry.tool.timeout, source: harness } } }
           - type: escalation.raised
             payload:
               escalation:

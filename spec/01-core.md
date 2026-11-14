@@ -185,7 +185,7 @@ The consequences of provenance and taint for tool calls are specified in Area 5.
 |---|---|
 | `schemaVersion` | Contract version of the event |
 | `eventId` | UUIDv7 |
-| `sessionId`, `runId` | `runId` absent only on `session.created` and on a `session.closed` that occurs outside a run (expiry, `close()`, or `cancel()` of an idle or suspended session) |
+| `sessionId`, `runId` | `runId` absent only on `session.created`, on a `session.closed` that occurs outside a run (expiry, `close()`, or `cancel()` of an idle or suspended session), and on the `hook.decision` and `error` events of `sessionEnd` hooks in that case (HOOK-052 reading) *(edited 2026-11-14)* |
 | `seq` | Per §9.2 |
 | `turn`, `step` | Present where applicable |
 | `type` | One of the catalog types (§9.3) |
@@ -207,7 +207,7 @@ The consequences of provenance and taint for tool calls are specified in Area 5.
 - **CORE-160** Every persisted event **MUST** have a sequence number (`seq`) that is unique, strictly increasing, and gap-free within its session, across all runs.
 - **CORE-161** Persisted events **MUST NOT** be modified.
 - **CORE-162** Ephemeral events (`model.delta`) **MUST** carry the envelope without `seq` and **MUST NOT** be persisted, traced, or checkpointed.
-- **CORE-163** If `model.delta` events are emitted for a model response, their concatenated content **MUST** equal the content of the corresponding `model.response`.
+- **CORE-163** If `model.delta` events are emitted for a model response, their concatenated text **MUST** equal the text of the corresponding `model.response`. Deltas carry text only; tool calls, structured output and reasoning are delivered only in the `model.response`. *(Edited 2026-11-14.)*
 
 ### 9.3 Catalog
 
@@ -280,7 +280,7 @@ When a hook or policy decision blocks, the effect depends on where it occurs. Ho
 | `cancelled` | Work stopped by cancellation | Run ends `cancelled` |
 | `fatal` | Unrecoverable | Run ends `failed` |
 
-- **CORE-192** Implementations **MUST** decide handling by category, never by parsing `message` or `code`.
+- **CORE-192** Implementations **MUST** decide handling by category, never by parsing `message` or `code`. Codes in the `agentry` namespace **MUST** be ones the code registry (`schemas/core/v1/codes.yaml`) lists, used with its registered category; other namespaces are free. *(Registry added 2026-11-14.)*
 - **CORE-193** Access to another tenant's resource **MUST** produce `not_found`, never a distinct authorization error.
 - **CORE-194** Provider and vendor errors **MUST** be mapped into this shape. Original vendor detail **MAY** be placed in `details`, subject to redaction.
 
@@ -416,3 +416,22 @@ Writing schemas and fixtures for this area exposed these gaps. Requirement text 
 ## Amendment 2026-11-14 — writes outside a run (post-Phase 4 review)
 
 - **CORE-031, CORE-032.** While a session holds an operation lease (HITL-093), taken by `decide()`, by `close()` or `cancel()` of a non-active session, or by expiry processing, `run()` and `resume()` fail with `conflict` (`retryable: true`) as they do on an active session. They change nothing. CORE-032's optimistic concurrency on the checkpoint version is how both kinds of lease are acquired. See the Area 6 amendment 2026-11-14.
+
+## Amendment 2026-11-14 — fresh-review fixes (post-Phase 4 review)
+
+Requirement text above has been edited where noted.
+
+- **CORE-192** (text above extended) **and the code registry.** Codes were defined only in prose, scattered across areas, and one (`agentry.harness.internal`) appeared only in a schema example. `schemas/core/v1/codes.yaml` now lists every `agentry.*` code, with its kind:
+  - **error** codes, with category, retryability and sources;
+  - **reason** codes, for escalations;
+  - **result** codes, for eval results.
+
+  The error schema accepts an `agentry.*` code only if the registry lists it. Spec CI checks that every `agentry.*` code in the repository is registered, and that fixtures use each with its registered handling. `agentry.harness.internal` (`fatal`, source `harness`) is the code for an implementation fault with no more specific code.
+- **CORE-150** (table edited). A `sessionEnd` hook failure when the session closes outside a run emits an `error` event with no `runId` (HOOK-052). The schema now allows an `error` event without `runId` only with `source: hook`. Before this change it allowed every `error` event to omit `runId`.
+- **CORE-163** (text above edited). `model.delta` carries text only (`{text}`), so the equality is over text. Other parts arrive only in `model.response`.
+- **Event payloads tightened** (`schemas/core/v1/event.yaml`). The spec already required each of these; the schema now enforces them:
+  - a taint `policy.decision` carries `provenances` and `labels` (HOOK-126, HOOK-127);
+  - `policy.decision` outcomes are tied to their kinds: `taint` → `allow`, `escalate` or `block`; `routing` → `switch` or `block`; `assurance`, `scope`, `depth` and `summarizer` → `block`;
+  - an `annotate` `hook.decision` carries `annotations`, which context rebuilding needs (CTX-001);
+  - `run.started.overrides` and `session.created.overrides` accept only the fields CFG-101 lists, by scope.
+- **Structured parts.** A `structured` part's optional `schemaRef` names the output schema it was validated against (CORE-130).

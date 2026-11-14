@@ -53,7 +53,7 @@ As in Area 1 §2. Requirement IDs use the prefix `HOOK-`. The schemas `HookDefin
 | Result | Effect |
 |---|---|
 | `continue` | No change |
-| `annotate` | Adds sensitivity labels to parts, or findings, without changing content |
+| `annotate` | Adds sensitivity labels to parts (its findings) without changing content |
 | `rewrite` | Replaces content, subject to Area 1 CORE-126 for binary parts |
 | `block` | Stops the action; outcome per CORE-180 |
 | `escalate` | Requests a human decision *(Area 6)* |
@@ -391,3 +391,10 @@ Requirement text above has been edited where noted.
 - **Fixtures.**
   - New: `hook.taint-egress-labels-survive-truncation`.
   - `hook.taint-egress-labelled-content` asserts the label set on its block decision.
+
+## Amendment 2026-11-14 — fresh-review fixes (post-Phase 4 review)
+
+Requirement text above has been edited where noted.
+
+- **Annotations.** An `annotate` result adds sensitivity labels to parts (the §5 table's "findings" are these labels). Its `hook.decision` **MUST** carry `annotations` (labels per part), which context rebuilding reapplies (CTX-001), and may carry `labelsAdded`, the union of the labels added, for audit queries. The event schema now requires `annotations`.
+- **HOOK-126, HOOK-127.** The event schema now requires `provenances` and `labels` on every taint `policy.decision`, as these requirements already said.
