@@ -111,3 +111,7 @@ Separate spec section:
 
 The tool definition gains: `egress` (sends data outside the trust boundary), `onTainted` (`escalate` | `block` | `allow`), `credentialMode` (`principal` | `service`), and an optional minimum authentication strength. `trustedOutput` can be set only in a policy bundle. Results also carry **provenance** (`tool:<name>`), untrusted by default.
 
+## Amendment 2026-11-14 — result labels and timeouts
+
+- **Labels propagate** (§2) is extended: an `ok` result may also report labels, which are added to the tool's declared ones and never remove them. A reported label without a sensitivity policy makes the result invalid output (TOOL-071 as amended). Native handlers report them. MCP and HTTP results use `annotate` hooks in 1.0.
+- **Timeouts.** A timeout of a non-idempotent mutating call is an unknown outcome: no outcome is recorded, and the call escalates for recovery instead of ending the run `failed` (TOOL-055).

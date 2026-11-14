@@ -125,3 +125,8 @@ Fixtures:
 - [ ] Snapshot hash present on trace and audit events
 - [ ] Run request tightens a budget → applied; loosens one → rejected
 - [ ] Department policy bundle loosens org bundle → load rejected
+
+## Amendment 2026-11-14 — run-request overrides and schema defaults
+
+- **C2** (narrowed by CFG-101 as amended 2026-11-14). A run request tightens only the `min` and `stricter` harness profile fields that CFG-101 lists, not `intersect` fields, and not `guardrails.requireDeterministic`. Each listed field is run-scoped or session-scoped. Session-scoped fields are settable only by the session-creating request and recorded on `session.created` (CFG-102). ADR-0007 carries a note.
+- **Schema defaults are not layer values.** The effective snapshot leaves defaults of merge-annotated fields unset, so a layer that is silent about a field imposes nothing on lower layers (CFG-050 reading, Area 2 amendment 2026-11-14).

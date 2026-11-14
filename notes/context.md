@@ -93,3 +93,9 @@ Fixtures:
 - [ ] Overflow after compaction → `context_limit`
 - [ ] Summarizer tokens counted toward the turn budget
 - [ ] Memory write tool in a tainted session → escalation
+
+## Amendment 2026-11-14 — memory beyond X1
+
+X1 stands for 1.0. Two later decisions build on it:
+- **TOOL-071 (amended 2026-11-14):** tool results may report labels, so host-provided memory returns data with the labels it was stored with.
+- **ADR-0016–0018 (accepted 2026-11-14)** decide a 1.x memory extension: a memory store port and memory references, `Skill` artifacts, and learned behaviour only through review. See `notes/memory.md`.

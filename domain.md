@@ -135,7 +135,7 @@ Read top to bottom: configuration is merged into a snapshot; a session is pinned
 | **Provenance** | Where content came from: `system`, `principal`, `tool:<name>`, `retrieval:<source>`, `agent:<persona>`, `model`. Survives transformation. |
 | **Trust level** | Whether content may influence actions freely (`trusted`) or not (`untrusted`). Assigned by configuration, never by the content. |
 | **Taint** | The state of a turn — and, in 1.0, the rest of its session — once untrusted content has entered context. |
-| **Taint rule** | The deterministic policy, evaluated before hooks, that restricts tainted turns: mutating tools escalate by default; egress with sensitive content in context is blocked. |
+| **Taint rule** | The deterministic policy, evaluated before hooks, that restricts tainted turns: mutating tools escalate by default; egress is blocked by default once any sensitivity label has entered the session (its **session label set**). *(Amended 2026-11-14, HOOK-127.)* |
 
 ## 8. Errors
 
@@ -182,7 +182,7 @@ Statements that hold everywhere. Each becomes one or more conformance fixtures.
 7. The model only sees tools in catalog ∩ persona allowlist ∩ runtime scope.
 8. A mutating tool call with a completed idempotency key is never performed again.
 9. Trust comes from configuration, never from content.
-10. A tainted turn cannot perform a mutating call without approval, nor an egress call with sensitive content in context, unless policy explicitly allows it.
+10. A tainted turn cannot perform a mutating call without approval, nor an egress call once any sensitivity label has entered the session, unless policy explicitly allows it. *(Amended 2026-11-14: the session label set, HOOK-127, replaces "sensitive content in context".)*
 11. Delegation never widens scope.
 12. A record from one tenant is never visible to another.
 13. Secret values never appear in configuration, events, traces, or audit records.
@@ -196,7 +196,7 @@ Concepts that are **not** part of agentry 1.0, recorded so reviewers don't expec
 - Third-party agent loops or memory as core concepts (per Q1).
 - Authentication of principals (host responsibility).
 - Cross-tenant operations.
-- Long-term memory across sessions — **decided out of the 1.0 core** (2026-10-31); hosts provide memory as ordinary governed tools.
+- Long-term memory across sessions — **decided out of the 1.0 core** (2026-10-31); hosts provide memory as ordinary governed tools. A 1.x extension is decided in ADR-0016–0018 (2026-11-14); see the amendment below.
 
 ## 13. Decisions from Phase 1 review (2026-10-31)
 
@@ -278,3 +278,26 @@ Provenance gains one value: **`reviewer`** — content supplied by a reviewer in
 
 Provenance gains **`attachment:<source>`** — an image or file supplied with a request, through the channel the host declares. Untrusted unless the source is listed in `trustedAttachmentSources` (CORE-121).
 
+## Amendment 2026-11-14 — from the post-Phase 4 review
+
+Definitions changed by the review's spec amendments (2026-11-07 to 2026-11-14), and terms they introduce.
+
+| Term | Definition |
+|---|---|
+| **Session label set** | Every sensitivity label that has entered a session's context, tainted or not. It only grows, survives compaction, checkpoint and resume, and drives the egress condition of the taint rule. *(HOOK-127.)* |
+| **Failure mode** *(amended)* | What happens when a hook errors or times out: `failClosed` (treated as `block`, whatever results the hook declares) or `failOpen` (treated as `continue`). A guardrail that only labels or redacts still blocks when it fails closed. *(HOOK-053.)* |
+| **Approval rule** | A CEL condition, declared by a policy bundle or persona, that escalates a call whose approval policy is `policy`. Rules only add escalations. *(HOOK-130–132.)* |
+| **Approval default** | What a `policy` call does when no approval rule is true: `escalate` (default) or `continue`. Set only in policy bundles. *(HOOK-133.)* |
+| **Schema default** *(clarified)* | A value the schema supplies when no layer sets a field. It applies after all layers merge and is never a layer value, so the snapshot leaves defaults of merge-annotated fields absent. *(CFG-050 reading.)* |
+| **Effective configuration snapshot** *(clarified)* | The immutable, validated set of artifacts after overlays, with schema defaults filled in except for merge-annotated fields. Merged views (persona × profile × run request) are computed from it. *(CFG-050.)* |
+| **Run request overrides** | Values a run request tightens. **Run-scoped** fields apply to that run and are recorded on `run.started`. **Session-scoped** fields (TTLs, `onExpiry`, `limits.sessionSize`, `delegation.maxDepth`) may be set only by the request that creates the session, and are recorded on `session.created`. CFG-101 lists every settable field. *(CFG-101, CFG-102.)* |
+| **Session lease** | The renewable lease under which every write to a session's storage happens. A **run lease** is held by an active run. An **operation lease** is held by a write outside a run (`decide()`, `close()` or `cancel()` of a non-active session, expiry processing). *(HITL-090, HITL-093.)* |
+| **Fencing token** | A number, strictly greater for each new lease of a session, by which storage ports reject writes from a superseded lease holder. The checkpoint records the highest issued. *(PORT-020, PORT-030, PORT-031, PORT-040.)* |
+| **Tool result** *(amended)* | `ok` with output, or an error. Carries the tool's provenance and the union of its declared sensitivity labels and any labels the result reports; a tool can add labels, never remove them. *(TOOL-071.)* |
+
+Further changes to existing terms:
+- **Escalation source** `recovery`: an unknown outcome of a non-idempotent mutating call, after a crash **or a timeout** (TOOL-055).
+- **Required approvals**: confirmations count toward the outcome they state, and a recovery action is decided when that many distinct reviewers confirm the same outcome (HITL-051).
+- **Trace replay** against the recorded snapshot keeps the recording's behaviour, but always uses the current deployment's providers, ports and endpoints (EVAL-060).
+
+Candidate concepts for a **1.x extension**, decided in ADR-0016–0018 and not part of 1.0: Memory store · Memory reference · Episode · Fact · Consolidation session · Skill · Skill proposal. The boundary between them and existing configuration: behaviour is configuration (reviewed, versioned, pinned); knowledge is memory (live, labelled, untrusted). See `notes/memory.md`.
