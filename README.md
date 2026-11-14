@@ -12,7 +12,7 @@ This repository is agentry's single source of truth. It defines the concepts, be
 | 1 | [`domain.md`](domain.md) — vocabulary and concept model | Approved 2026-10-31 |
 | 2 | [`adr/`](adr/) — architecture decision records | Accepted 2026-10-31 |
 | 3 | [`spec/`](spec/) — prose specs, area by area | Approved 2026-10-31 (all 11 areas) |
-| 4 | [`schemas/`](schemas/), [`conformance/`](conformance/) — schemas and fixtures, area by area | Complete 2026-11-02 (all 11 areas; EVAL-036 pending Phase 5) |
+| 4 | [`schemas/`](schemas/), [`conformance/`](conformance/) — schemas and fixtures, area by area | Complete 2026-11-02 (all 11 areas); post-Phase 4 review amendments 2026-11-07 to 2026-11-14. Pending Phase 5: EVAL-036 and the adapter requirements PROV-001–009, PROV-080, verified once native adapter transcripts ship |
 | 5 | Codegen, CI, first published release | Not started |
 
 Design notes feeding these phases live in [`notes/`](notes/). Notes are non-normative.

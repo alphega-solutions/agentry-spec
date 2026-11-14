@@ -133,3 +133,8 @@ Fixtures:
 - [ ] CEL rule fixtures: operators, each macro, integer division, null and missing fields, regex
 - [ ] Rule outside the CEL subset → configuration rejected
 - [ ] Rule that fails type-check → configuration rejected
+
+## Amendment 2026-11-14 — failure modes and approval
+
+- **`failClosed`** treats an error or timeout as `block` **whatever results the hook declares**. A guardrail that only labels or redacts therefore also blocks when it fails (HOOK-053, Area 5 amendment 2026-11-07).
+- **Approval policy `policy`** escalates when any approval rule is true. Otherwise the bundle-only `approvalDefault` decides (`escalate` by default). Adding a rule only adds escalations (HOOK-131, HOOK-133).

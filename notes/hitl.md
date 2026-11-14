@@ -90,3 +90,10 @@ Fixtures:
 - [ ] Expiry → `closed (expired)`; with `onExpiry: reject` → run continues with rejections
 - [ ] Reviewer view redacts labels the reviewer is not cleared for
 - [ ] `listPendingEscalations` returns only the caller's tenant
+
+## Amendment 2026-11-14 — recovery, confirmations and leases
+
+- **`recovery`** is also raised, within the run, when a non-idempotent mutating call **times out**, because its outcome is unknown (TOOL-055).
+- **H5** extended: with several required approvals, confirmations count toward the outcome they state, and a recovery action is decided when that many distinct reviewers confirm the same outcome (HITL-051).
+- **Edits** count as approval at stage 7 only for actions with source `approval` (HITL-061, amendment 2026-11-07).
+- **Writes outside a run** (`decide()`, `close()` or `cancel()` of a non-active session, expiry processing) take an operation lease, so concurrent writers and duplicate expiry are settled before anything is written (HITL-093).

@@ -131,3 +131,7 @@ Fixtures:
 - [ ] Model-judged hook output outside the result schema → treated as error (fail closed)
 - [ ] Principal below a tool's minimum assurance → call refused
 - [ ] Untrusted content is delimited in the provider request
+
+## Amendment 2026-11-14 — the egress rule uses the session label set
+
+The egress row of the taint table (§ "Tainted turn requests an egress tool while sensitive-labelled content is in context") and the matching checklist item now read: **any sensitivity label has entered the session** (its session label set, HOOK-127). Labels left the context when it was truncated or summarised. Model-written copies of labelled data were unlabelled. Together, these let the "read the record, then send it somewhere" defence lapse in long sessions. The label set only grows and survives compaction, checkpoint and resume. A child session's first message carries the parent's label set (ORCH-011 as amended).
