@@ -100,7 +100,7 @@ As in Area 1 §2. Requirement IDs use the prefix `EVAL-`. Schemas for fixtures, 
 
 ### 6.3 Trace replay
 
-- **EVAL-060** A case built from a trace bundle (§4.2) or a converted trace (§7) replays against a snapshot the run declares — the recorded one or a candidate — and the report states which. Either way, the replayed session **MUST** use the current deployment's providers, port bindings, secrets provider and endpoints, never the recording's.
+- **EVAL-060** A case built from a trace bundle (§4.2) or a converted trace (§7) replays against a snapshot the run declares — the recorded one or a candidate — and the report states which. Either way, the replayed session **MUST** use the current deployment's providers, port bindings, secrets provider and endpoints, never the recording's. Under `recorded`, its configuration **MUST** be the recorded snapshot with the current deployment's binding fields (amendment 2026-11-14), and a configuration that does not load **MUST** refuse the replay before any session is created.
 - **EVAL-061** On replay, summaries and automatically retrieved content are always reused from the recording (CTX-083, CTX-032).
 - **EVAL-062** Tool calls are answered from the recording. A call matches a recorded call when the tool is the same and its dispatched arguments (after hooks) are equal after canonicalization (EVAL-000); repeated identical calls match recorded occurrences in order. Agent-bound calls are answered with the recorded child result. An unmatched call receives a tool result error (`agentry.eval.unrecorded_call`, category `unavailable`, `retryable: false`, source `harness`), is reported as divergence, and — like delegation errors (ORCH-051) — **MUST NOT** by itself end the run.
 - **EVAL-063** Replay supports two hook modes (HOOK-062):
@@ -161,7 +161,7 @@ All rules here are new; this is a Tier 3 area. Rules that affect approved areas 
 | EVAL-000 | **RFC 8785 canonical JSON** for matching and hashing (clarifies HOOK-062) |
 | EVAL-001–005 | Fixture format (multi-tenant/multi-session setup, feature tags, stub scripts, audit expectations, unordered matching); CEL rule fixture format; synthetic data only |
 | EVAL-010, 011 | **Every requirement needs a fixture, enforced by spec CI**; new *(untestable)* annotation for all areas; suite contents |
-| EVAL-020–024 | Conformance runner per implementation; JSON/JUnit; skips only for declared optional features; **reference implementations skip nothing** |
+| EVAL-020–024 | Conformance runner per implementation *(since 2026-11-14: one shared runner, a driver per implementation, ADR-0020)*; JSON/JUnit; skips only for declared optional features; **reference implementations skip nothing** |
 | EVAL-025, 026 | **Portable trace bundles and golden bundles** to prove cross-implementation replay |
 | EVAL-030–036 | **Mandatory test doubles**: request-recording scripted providers, stubs for tools/MCP/HTTP/remote hooks, in-memory ports, **injectable clock and seeded ID generator** (affects every implementation), crash injection, recorded vendor transcripts for native adapters |
 | EVAL-040–042 | **Eval isolation**: dedicated tenant and bindings; every tool and remote dependency stubbed; only providers may be real |
@@ -173,7 +173,7 @@ All rules here are new; this is a Tier 3 area. Rules that affect approved areas 
 
 ## Appendix A — Tooling (informative)
 
-- **CLI first.** A command-line tool covers the scriptable needs: run conformance (`agentry test`), run evals (`agentry eval run`), compare runs (`agentry eval diff`), export and replay trace bundles, and convert traces (`agentry trace to-fixture`). It emits JSON and JUnit XML for CI. One TypeScript CLI can drive all three implementations through their conformance runners.
+- **CLI first.** A command-line tool covers the scriptable needs: run conformance (`agentry test`), run evals (`agentry eval run`), compare runs (`agentry eval diff`), export and replay trace bundles, and convert traces (`agentry trace to-fixture`). It emits JSON and JUnit XML for CI. *(Superseded for conformance by ADR-0020: the shared runner in `tools/runner/` drives each implementation through its driver; the CLI below remains a suggestion for evals and traces.)* One TypeScript CLI can drive all three implementations through their conformance runners.
 - **Static HTML reports.** The CLI can write a self-contained report per run — trace viewer, run comparison — covering most review needs without a server or authentication.
 - **Web UI later.** A hosted UI earns its place when human graders or escalation reviewers need it. It reads the event and audit logs through their ports and eval reports as files; it does not run evals or keep its own copies.
 

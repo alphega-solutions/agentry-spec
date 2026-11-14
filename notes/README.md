@@ -1,6 +1,6 @@
 # Design notes
 
-Non-normative working notes that capture design direction before it enters the binding spec. Only `domain.md`, the area specs, schemas, and conformance fixtures are normative.
+Non-normative working notes that capture design direction before it enters the binding spec. Only `domain.md`, accepted ADRs, the area specs, schemas, and conformance fixtures are normative (as `README.md` states).
 
 ## How a note progresses
 
@@ -9,7 +9,7 @@ Non-normative working notes that capture design direction before it enters the b
 3. **Record** — decisions written into the note with dates; research cited.
 4. **Settled** — the note is frozen; later changes are dated amendments. Candidate concepts feed `domain.md`.
 
-Each note is one pull request; merging it settles it.
+Each note is one pull request; merging it settles it, unless the note's status says **Draft**. A merged draft, such as a deployment guide with items still to verify, stays open for further changes until it is marked settled.
 
 ## Backlog
 

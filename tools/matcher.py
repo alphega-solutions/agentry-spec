@@ -1,7 +1,8 @@
 """Reference expectation matcher for conformance fixtures (EVAL-004).
 
-This implements the matching semantics in conformance/README.md so that every
-implementation's runner (EVAL-020) has one executable reference to agree with:
+This implements the matching semantics in conformance/README.md. The shared
+conformance runner (tools/runner, ADR-0020) uses it, and any development-time
+runner should agree with it:
 
 - Objects written out in an expectation match partially: every listed key must
   match, unlisted keys of the actual value are ignored. Arrays written out

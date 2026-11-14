@@ -24,7 +24,7 @@ As in Area 1 §2. Requirement IDs use the prefix `CTX-`.
 ## 4. Assembly
 
 - **CTX-010** For each model call, the context manager **MUST** assemble content in this order:
-  1. **System content:** policy-bundle `instructions` in stack order, then persona `instructions` (provenance `system`).
+  1. **System content:** policy-bundle `policyInstructions` in stack order, then persona `instructions` (provenance `system`).
   2. **Summaries**, oldest first (§6).
   3. **History:** messages from earlier turns not covered by a summary, oldest first.
   4. **Current turn:** the principal's message — its input and attachments, followed by any automatically retrieved content as additional parts (§5.2) — then this turn's assistant messages, tool calls, and tool results, in event order.

@@ -124,7 +124,7 @@ Results permitted at each point:
 ### 8.1 Rule and remote hooks
 
 - **HOOK-090** A rule hook declares `when` (a CEL expression returning a boolean) and `then` (one of `annotate` with labels, `block` with a reason code, or `escalate` with a reason code). If `when` is false, the result is `continue`. Rule hooks **MUST NOT** declare `rewrite`.
-- **HOOK-091** A remote hook receives a `HookRequest` (point, tenant, principal reference, session and run IDs, and the content the point sees) and returns a `HookResult`. Credentials come from secret references (CFG-060).
+- **HOOK-091** A remote hook receives a `HookRequest` (point, tenant, the principal, session and run IDs, and the content the point sees; contents per the readings below) and returns a `HookResult`. Credentials come from secret references (CFG-060).
 - **HOOK-092** Remote hook endpoints are declared in the deployment. Content sent to a remote hook is subject to the same sensitivity policies as any other processing: a sensitivity policy **MAY** restrict which remote hooks receive content with its label. *(Extends CFG-110.)*
 
 ### 8.2 Model-judged hooks
@@ -340,7 +340,7 @@ Schemas: `schemas/config/v1/hook.yaml` (`HookDefinition`); `schemas/core/v1/hook
 
 **Known fixture limits** (fixtures to follow with Area 7)
 
-- Retrieved content as a taint source (HOOK-120) needs vector-store stubs, which the fixture format does not yet have. Taint surviving compaction (HOOK-121) is covered by `hook.taint-egress-labels-survive-truncation` (amendment 2026-11-13).
+- Retrieved content as a taint source (HOOK-120) is covered now that the fixture format has vector-store stubs (`context.retrieval-taint-empty-results`, `context.retrieval-vector-store-error`). Taint surviving compaction (HOOK-121) is covered by `hook.taint-egress-labels-survive-truncation` (amendment 2026-11-13).
 
 ## Amendment 2026-11-02 — from Phase 4 (Area 11)
 

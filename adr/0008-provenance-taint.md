@@ -24,3 +24,9 @@ Models cannot reliably separate instructions from data. Tool results and retriev
 ## Alternatives considered
 - **Relying on prompt formatting and model instructions** — not a security boundary.
 - **Clearing taint on compaction** — more permissive, but harder to reason about and audit.
+
+## Note 2026-11-14
+Later specs refine this decision; the decision itself stands:
+- **Trust** is granted by listing a tool in a policy bundle's `trustedTools` (CFG-070, CFG-071). A tool definition may not declare `trustedOutput` (TOOL-004).
+- **Egress** uses its own outcome field, `onTaintedEgress` (`block` or `escalate`, never `allow`), separate from `onTainted` (TOOL-001).
+- **The egress condition** is that any sensitivity label has entered the session (its label set, HOOK-127, 2026-11-13), not that labelled content is in context now. Compaction can drop labelled content, but it cannot clear the label set.

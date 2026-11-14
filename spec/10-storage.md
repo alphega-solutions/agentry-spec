@@ -34,7 +34,7 @@ As in Area 1 §2. Requirement IDs use the prefix `PORT-`. Operation names are il
 
 ## 5. Event log
 
-- **PORT-020** The event log stores a session's persisted events. `append(tenant, session, events, expectedSeq, lease)` **MUST** succeed only if `expectedSeq` is the next sequence number in the log and `lease` is the session's current run lease; otherwise it fails with `conflict`. This enforces CORE-160 and lease fencing across processes.
+- **PORT-020** The event log stores a session's persisted events. `append(tenant, session, events, expectedSeq, lease)` **MUST** succeed only if `expectedSeq` is the next sequence number in the log and `lease` is the session's current lease (run or operation lease, HITL-093); otherwise it fails with `conflict`. This enforces CORE-160 and lease fencing across processes.
 - **PORT-021** `read(tenant, session, fromSeq, toSeq)` **MUST** return events in sequence order with no gaps.
 - **PORT-022** Persisted events **MUST NOT** be modified, and are deleted only by retention, a whole session at a time (§13).
 
@@ -49,7 +49,7 @@ As in Area 1 §2. Requirement IDs use the prefix `PORT-`. Operation names are il
   - results held while suspended (HITL-072, TOOL-033);
   - the current run or operation lease (HITL-090, HITL-093), and the highest fencing token issued for the session;
   - parent session ID and child session IDs for delegation chains (ORCH-004, ORCH-071).
-- **PORT-031** `save(tenant, session, checkpoint, expectedVersion, lease)` **MUST** fail with `conflict` if the stored version differs or the lease is not current. This enforces one active run per session (CORE-032). Lease renewal is itself a versioned save.
+- **PORT-031** `save(tenant, session, checkpoint, expectedVersion, lease)` **MUST** fail with `conflict` if the stored version differs or the lease is not current (run or operation lease, HITL-093). This enforces one active run per session (CORE-032). Lease renewal is itself a versioned save.
 - **PORT-032** The checkpoint store **MUST** support, per tenant:
   - `listPendingEscalations` — root escalations only, excluding chains whose earliest TTL has elapsed (HITL-100, ORCH-063, ORCH-065);
   - a query for sessions whose TTL has elapsed or whose lease has lapsed, for expiry (CORE-041) and recovery (HITL-091);
@@ -63,7 +63,7 @@ As in Area 1 §2. Requirement IDs use the prefix `PORT-`. Operation names are il
 
 ## 7. Idempotency store
 
-- **PORT-040** `start(tenant, key, record, lease)` **MUST** create a started record only if none exists for the key and the lease is current; otherwise it returns the existing record, or fails with `conflict` if the lease is stale.
+- **PORT-040** `start(tenant, key, record, lease)` **MUST** create a started record only if none exists for the key and the lease is current (run or operation lease, HITL-093); otherwise it returns the existing record, or fails with `conflict` if the lease is stale.
 - **PORT-041** `complete(tenant, key, outcome, lease)` **MUST** record the outcome once; a second completion with a different outcome **MUST** fail with `conflict`.
 - **PORT-042** Records **MUST** be kept at least until the session that created them closes (TOOL-061, ORCH-002), and then per retention (§13).
 
@@ -225,7 +225,7 @@ Schemas: stored records in `schemas/ports/v1/records.yaml` (checkpoint, idempote
 - PORT-112: references that keep a blob or snapshot include retained events, audit records, checkpoints (held results, escalation content) and idempotency records (outcomes), and any session that is not closed (its pinned snapshot).
 - PORT-011: a load returns the configuration as it stood when the load began; a change during the load is seen by the next load.
 - PORT-006: the encryption setting is reported by the adapter (`describe`) and its correctness is attested by the deployment, not observable by fixtures; in-memory adapters report `encryptedAtRest: false` and are exempt. It is listed under `verifiedElsewhere`.
-- PORT-001: conformance runners **MUST** be able to run the suite with every port bound to a named adapter, overriding the deployment's `adapter` values, so the same fixtures run against each adapter.
+- PORT-001: the conformance runner, through each implementation's driver (ADR-0020; `portAdapters` in `driver.describe`), **MUST** be able to run the suite with every port bound to a named adapter, overriding the deployment's `adapter` values, so the same fixtures run against each adapter.
 - Fixture expectations show `blobStore` records flattened as `{id, hash, mediaType, size, data, labels}`: the blob reference's fields, its labels, and its bytes.
 - Records seeded through a fixture's `setup.ports` are stored as if appended in the order listed. PORT-120 is exercised by fixtures for checkpoints (0.0.x read and resumed); events and audit records of earlier minor versions are read through the same record schemas and are not separately fixtured.
 

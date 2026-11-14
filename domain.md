@@ -118,7 +118,7 @@ Read top to bottom: configuration is merged into a snapshot; a session is pinned
 | **Hook decision** | The audited record of a non-`continue` hook result. |
 | **Guardrail** | A hook with a governance purpose. Fails closed by default. |
 | **Guardrail pipeline** | An ordered set of guardrails at a hook point. Rewrites chain; the first block or escalate stops the chain. |
-| **Failure mode** | What happens when a hook errors or times out: `failClosed` (treated as block) or `failOpen` (treated as continue). |
+| **Failure mode** | What happens when a hook errors or times out: `failClosed` (treated as block) or `failOpen` (treated as continue). *(Amended 2026-11-14; see the amendment below.)* |
 | **Finding** | Information a hook attaches without changing content, via `annotate`. |
 | **Rule** | A declarative hook condition with no code, written in the CEL subset. |
 | **CEL subset** | The portion of the Common Expression Language that agentry permits, so rules behave identically in all implementations. |
@@ -165,7 +165,7 @@ Read top to bottom: configuration is merged into a snapshot; a session is pinned
 | **Specification** | This repository: intent, domain, ADRs, area specs, schemas, fixtures. The single source of truth. |
 | **Conformance fixture** | A data-only test case with inputs and expected outcomes. Fixtures are the arbiter of correct behaviour. |
 | **Reference implementation** | An implementation maintained alongside the spec: TypeScript, Java/Spring AI, Python. |
-| **Conforming implementation** | Any implementation that passes the full conformance suite for its claimed contract version. |
+| **Conforming implementation** | Any implementation that passes the full conformance suite for its claimed contract version, skipping only fixtures that need an optional feature it declares unsupported (EVAL-022, EVAL-023). |
 
 ---
 
@@ -301,3 +301,11 @@ Further changes to existing terms:
 - **Trace replay** against the recorded snapshot keeps the recording's behaviour, but always uses the current deployment's providers, ports and endpoints (EVAL-060).
 
 Candidate concepts for a **1.x extension**, decided in ADR-0016–0018 and not part of 1.0: Memory store · Memory reference · Episode · Fact · Consolidation session · Skill · Skill proposal. The boundary between them and existing configuration: behaviour is configuration (reviewed, versioned, pinned); knowledge is memory (live, labelled, untrusted). See `notes/memory.md`.
+
+## Amendment 2026-11-14 — conformance tooling (ADR-0020)
+
+| Term | Definition |
+|---|---|
+| **Conformance runner** | The one runner the specification provides (`tools/runner/`). It loads the fixtures, drives an implementation through its driver, judges every expectation, and writes the report. |
+| **Driver** | What each implementation provides: a process exposing its harness, in-memory port adapters and test doubles through the driver protocol (`conformance/schema/driver.yaml`). A driver executes and reports; it never judges. |
+| **Conformance claim** | The runner's report for a full-suite run of one driver, naming the contract, runner and driver versions and the declared unsupported features. |

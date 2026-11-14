@@ -136,8 +136,9 @@ properties:
     default: escalate
   onTaintedEgress:
     description: >-
-      Taint outcome for an egress call with sensitive content in context
-      (HOOK-122). Never `allow` (TOOL-001).
+      Taint outcome for an egress call in a tainted session once any
+      sensitivity label has entered the session (its label set, HOOK-122,
+      HOOK-127). Never `allow` (TOOL-001).
     enum: [block, escalate]
     default: block
   timeoutMs:

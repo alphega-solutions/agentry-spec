@@ -36,7 +36,7 @@ A `Tool` artifact (Areas 2–3, CFG-001) holds one tool definition: the language
 | `credentialMode` | `principal`, `service` | `principal` | Whose credentials the binding uses (ADR-0014) |
 | `minAssurance` | Assurance level (§3.1) | none | Minimum principal assurance to call the tool |
 | `onTainted` | `escalate`, `block`, `allow` | `escalate` | Taint outcome for a mutating call *(Area 5)* |
-| `onTaintedEgress` | `block`, `escalate` | `block` | Taint outcome for an egress call with sensitive content in context *(Area 5)* |
+| `onTaintedEgress` | `block`, `escalate` | `block` | Taint outcome for an egress call in a tainted session whose label set is non-empty *(Area 5, HOOK-122/127)* |
 | `timeoutMs` | Integer | profile `timeouts.tool` | Per-call timeout |
 | `binding` | See §4 | — | How the tool is invoked |
 

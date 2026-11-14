@@ -18,3 +18,6 @@ Different deployments handle different kinds of sensitive data. Labels must be e
 
 ## Alternatives considered
 - **A fixed enum** — simpler, but forces every deployment into the same categories.
+
+## Note 2026-11-14
+"Tool results inherit their tool's labels" is extended by TOOL-071 as amended 2026-11-14. A result may also report labels of its own, which add to the tool's declared labels and never remove them. A reported label without a sensitivity policy makes the result invalid output, the same fail-closed rule as above.
