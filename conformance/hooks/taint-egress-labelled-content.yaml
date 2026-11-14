@@ -162,7 +162,7 @@ expect:
         mode: subsequence
         items:
           - { type: tool.result, payload: { callId: c2, tool: read_contact } }
-          - { type: policy.decision, payload: { kind: taint, outcome: block, callId: c3, tool: send_note } }
+          - { type: policy.decision, payload: { kind: taint, outcome: block, callId: c3, tool: send_note, provenances: ["tool:fetch_external"], labels: [pii] } }
           - { type: tool.result, payload: { callId: c3, result: { error: { category: policy } } } }
           - { type: run.ended, payload: { reason: responded } }
       absentEvents:

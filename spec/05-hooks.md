@@ -171,9 +171,10 @@ The taint rule is a deterministic policy check in the harness. It is not a hook 
 - **HOOK-120** A session becomes **tainted** when content that is not trusted enters the model's context: tool results not listed in `trustedTools`, attachments from sources not listed in `trustedAttachmentSources`, retrieved content, and delegated-session output that is itself untrusted (ADR-0008).
 - **HOOK-121** Taint is sticky: once tainted, a session remains tainted until it closes, including across compaction, checkpoint, and resume (ADR-0008).
 - **HOOK-126** The session **MUST** record the provenance of the content that first tainted it, and every later untrusted provenance that entered context. Each taint `policy.decision` **MUST** include them, so audits show what influenced the action.
+- **HOOK-127** The session **MUST** record its **label set**: every sensitivity label carried by any part that has entered its context, whether or not the session is tainted. This includes tool results, attachments, retrieved content, summaries, delegated-session output, and principal or model-written parts labelled by hooks. Like taint, the label set only grows: it **MUST** survive compaction, checkpoint, and resume, including when the part that carried a label has been dropped or summarized. Each taint `policy.decision` **MUST** include the label set.
 - **HOOK-122** At tool pipeline stage 5 (Area 4), for a tainted session, two conditions are checked:
   - **mutating condition** — the tool is `mutating` → outcome: effective `onTainted`;
-  - **egress condition** — the tool is `egress` **and** any part in context carries a sensitivity label → outcome: effective `onTaintedEgress`.
+  - **egress condition** — the tool is `egress` **and** the session's label set (HOOK-127) is not empty → outcome: effective `onTaintedEgress`.
 
   If both conditions hold, the stricter outcome applies; if one holds, its outcome applies; if neither holds, the call continues.
 - **HOOK-123** Effective outcomes are the stricter of the tool's own setting and any policy-bundle `toolTaintDefaults` entry (CFG-042, TOOL-003).
@@ -226,6 +227,7 @@ The taint rule is a deterministic policy check in the harness. It is not a hook 
 | Tainted + mutating → escalate by default | HOOK-122 |
 | Tainted + egress + labelled content → block by default | HOOK-122 |
 | Tainted + egress, no labelled content → continue | HOOK-122 |
+| Labelled content truncated away → later tainted egress still blocked; label set in decision and checkpoint | HOOK-122, 127 |
 | Mutating + egress → stricter outcome | HOOK-122 |
 | Bundle default stricter than tool setting → bundle applies | HOOK-123 |
 | Taint decision → `policy.decision` + audit | HOOK-124 |
@@ -279,10 +281,11 @@ The taint rule is a deterministic policy check in the harness. It is not a hook 
 | §9.1 | The set of CEL variables per point, including `session.tainted` |
 | HOOK-115 | CEL variables never expose secrets or binary content |
 | HOOK-120 | Exact sources that taint a session |
-| HOOK-122 | **"Sensitive content in context" means any part carrying any sensitivity label** |
+| HOOK-122 | **"Sensitive content in context" means any part carrying any sensitivity label** (as amended 2026-11-13: any label in the session's label set, HOOK-127) |
 | HOOK-124 | Taint decisions audited even when the outcome is `allow` |
 | HOOK-125 | Hooks cannot override the taint rule |
 | HOOK-126 | Sessions record which provenances tainted them |
+| HOOK-127 | Sessions record every sensitivity label that entered their context; the set never shrinks |
 | HOOK-130–133 | **New `approvalRules` field** for `approval: policy`; evaluation errors escalate; when no rule is true, the bundle-only `approvalDefault` decides, `escalate` unless set (extends CFG-070, CFG-080) |
 
 ## Amendment 2026-10-31 — from Area 10
@@ -328,6 +331,7 @@ Schemas: `schemas/config/v1/hook.yaml` (`HookDefinition`); `schemas/core/v1/hook
 **Taint and approval**
 
 - HOOK-126: provenances are recorded in the order they first entered context, without duplicates. Every untrusted tool result counts, including that of a mutating tool not listed in `trustedTools`.
+- HOOK-127: labels are recorded in the order they first entered context, without duplicates. A part enters context when a tool result is delivered (Area 4 stage 12), when a message is accepted, or when a hook's `annotate` adds a label to a part already there. A withheld result never enters context, so its labels are not recorded.
 - HOOK-130–132: approval rules type-check against the `beforeToolCall` variables with `call.arguments` as `map(string, dyn)`, so a missing argument is a run-time error (and escalates, HOOK-132), not a load-time one.
 
 **CEL (§9)**
@@ -336,7 +340,7 @@ Schemas: `schemas/config/v1/hook.yaml` (`HookDefinition`); `schemas/core/v1/hook
 
 **Known fixture limits** (fixtures to follow with Area 7)
 
-- Retrieved content as a taint source (HOOK-120) and taint surviving compaction (HOOK-121) need vector-store stubs and a deterministic way to force compaction, which the fixture format does not yet have.
+- Retrieved content as a taint source (HOOK-120) needs vector-store stubs, which the fixture format does not yet have. Taint surviving compaction (HOOK-121) is covered by `hook.taint-egress-labels-survive-truncation` (amendment 2026-11-13).
 
 ## Amendment 2026-11-02 — from Phase 4 (Area 11)
 
@@ -373,3 +377,17 @@ Requirement text above has been edited where noted.
   - `cfg.strictness-orders-layers` gains the field.
   - Fixtures whose unmatched `policy` calls are dispatched now set `approvalDefault: continue` in their bundle: `tool.pipeline-label-approval`, `tool.pipeline-untainted-normal-approval`, `hook.approval-rule-error-escalates`, `hook.approval-rules-union`, `hitl.edit-approval-rules-on-replacement`.
   - New invalid schema example: `persona-approval-default`.
+
+## Amendment 2026-11-13 — the egress condition survives compaction (post-Phase 4 review)
+
+Requirement text above has been edited where noted.
+
+- **HOOK-122** (text above edited) **and new HOOK-127.** The egress condition no longer asks whether a labelled part is in context now. It asks whether the session's **label set** is non-empty: every label any part has carried in its context. The label set is recorded like the tainting provenances (HOOK-126). It is kept whether or not the session is tainted, it only grows, and it survives compaction, checkpoint and resume.
+- **Why.** Taint was sticky but the egress condition was not. `truncate`, the default compaction mode, drops whole units with their labels, and CTX-060 does not protect labelled content. `summarize` keeps labels (CTX-081) but falls back to truncation when the summarizer fails or a sensitivity policy bars it (CTX-085). Model-written text is unlabelled unless a hook labels it (CORE-127). So a session could read a `pii` record, have the model repeat it in an unlabelled reply, become tainted, lose the labelled result to truncation, and then send the data through an egress tool. Stage 5 found no labelled part, so the call continued. The rule that is the main defence against "read the record, then send it somewhere" weakened as sessions grew longer. "In context" was also undefined: the last request, the context after the response, or the next request's context.
+- **Consequence.** Once a tainted session has seen any labelled content, every egress call meets the effective `onTaintedEgress` for the rest of the session. This is the same trade-off as sticky taint. A deployment that wants less friction sets `onTaintedEgress: escalate` rather than relaxing the rule.
+- **Delegation.** ORCH-011 now gives a child's first message the parent's label set rather than the labels in the parent's context at the time of the call (Area 8 amendment 2026-11-13). Otherwise a parent could lose its labels to truncation and then delegate the data to a child with an egress tool.
+- **Records.** The checkpoint's `taint` gains `labels` (PORT-030, Area 10 amendment 2026-11-13). The `policy.decision` payload gains `labels`, present on every taint decision.
+- **Not changed.** Model output that copies labelled data is still unlabelled for provider routing (PROV-050) and redaction. Labelling model output is a separate decision; the egress rule no longer depends on it.
+- **Fixtures.**
+  - New: `hook.taint-egress-labels-survive-truncation`.
+  - `hook.taint-egress-labelled-content` asserts the label set on its block decision.

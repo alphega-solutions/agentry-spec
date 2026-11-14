@@ -42,7 +42,7 @@ As in Area 1 §2. Requirement IDs use the prefix `PORT-`. Operation names are il
 
 - **PORT-030** The checkpoint store holds each session's resumable state, including at least:
   - state, pinned principal reference, tenant, persona, snapshot hash;
-  - taint state and tainting provenances (HOOK-126);
+  - taint state, tainting provenances (HOOK-126), and the session's label set (HOOK-127);
   - remaining turn budget and content-size counters (CFG-091, CORE-115, ORCH-041);
   - reasoning parts required for continuation (CORE-140);
   - the open escalation (HITL-012) with its full, unredacted pending content for reviewer views, recorded decisions, and partial multi-reviewer approvals (HITL-051);
@@ -228,3 +228,7 @@ Schemas: stored records in `schemas/ports/v1/records.yaml` (checkpoint, idempote
 - PORT-001: conformance runners **MUST** be able to run the suite with every port bound to a named adapter, overriding the deployment's `adapter` values, so the same fixtures run against each adapter.
 - Fixture expectations show `blobStore` records flattened as `{id, hash, mediaType, size, data, labels}`: the blob reference's fields, its labels, and its bytes.
 - Records seeded through a fixture's `setup.ports` are stored as if appended in the order listed. PORT-120 is exercised by fixtures for checkpoints (0.0.x read and resumed); events and audit records of earlier minor versions are read through the same record schemas and are not separately fixtured.
+
+## Amendment 2026-11-13 — label set in the checkpoint (post-Phase 4 review)
+
+- **PORT-030** (text above edited). The checkpoint holds the session's label set (HOOK-127) as `taint.labels`, in order of first entry. The field is optional in the record so that earlier 0.x checkpoints stay readable (PORT-120); an absent `labels` means no label has entered the session's context. An implementation **MUST** write it whenever the set is not empty. See the Area 5 amendment 2026-11-13.
