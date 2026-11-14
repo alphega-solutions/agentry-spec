@@ -323,7 +323,9 @@ Writing schemas and fixtures for these areas exposed the gaps below. They are ap
 - **PORT-050**: a snapshot is written to a tenant's snapshot store when the first session for that tenant is created against it.
 
 **Run requests**
-- **CFG-101**: run requests **MAY** tighten run-scoped profile fields (`stepLimit`, `budget`, `timeouts`, `retry`, `outputRetryLimit`, `deliveryMode`, `limits.partSize`, `context`). Session-scoped fields (`idleTtl`, `suspendedTtl`, `onExpiry`, `limits.sessionSize`, `delegation`) **MAY** be tightened only by the run request that creates the session, and are recorded on `session.created`.
+- **CFG-101** (as amended 2026-11-14): run requests **MAY** tighten exactly these profile fields. Every other field, and any value that is not a tightening, is `invalid_input`.
+  - **Run-scoped:** `stepLimit`, `budget.tokens`, `budget.cost`, `timeouts.run`, `timeouts.tool`, `retry.unavailable`, `outputRetryLimit`, `deliveryMode`, `checkpoint`, `trace.includeReasoning`, `limits.partSize`, `context.reserveOutputTokens`, `context.compaction.mode`, `context.compaction.triggerPercent`, `context.retrieval.auto`, `context.retrieval.limit`.
+  - **Session-scoped:** `idleTtl`, `suspendedTtl`, `onExpiry`, `limits.sessionSize`, `delegation.maxDepth`. Only the run request that creates the session may tighten these, and they are recorded on `session.created` (CFG-102).
 - **CFG-101**: run-request values use harness profile field paths (e.g. `{budget: {tokens: 500}}`).
 
 **Environment overlays** (CFG-021, CFG-112)
@@ -353,3 +355,16 @@ Readings above have been edited where noted.
 - **Now** the snapshot fills every schema default except those of fields that carry `x-agentry-merge`. Such a field stays absent when its author did not set it. Its default applies to the merged view only, after every layer including the run request. Filling still happens only within objects present in the artifact (Area 11 amendment 2026-11-02). Defaults of fields that carry no merge rule are filled as before, for example a tool's `approval` and `idempotent`, and a hook's `failureMode`.
 - **Hashes.** Snapshots that filled such defaults now hash differently. The golden bundles had `onExpiry: close` filled into every profile and `context.compaction.triggerPercent: 90` filled into one. Both were removed and the bundles re-hashed, and the replay fixtures that assert those hashes were updated.
 - **Fixtures.** New: `cfg.merged-defaults-not-layer-values`.
+
+## Amendment 2026-11-14 — the run-request field list (post-Phase 4 review)
+
+Readings above have been edited where noted.
+
+- **CFG-101** (reading above replaced). Three statements disagreed:
+  - ADR-0007 allowed run requests to tighten `min`, `stricter` and `intersect` fields;
+  - CFG-101 allowed `min` and `stricter` profile fields only;
+  - the reading listed run-scoped and session-scoped fields.
+
+  The lists left out `checkpoint` and `trace.includeReasoning`, which are `stricter` and which `cfg.strictness-orders-run-request` accepts in run requests. They also named `context` whole, although it holds `locked` and `union` fields that `context.config-context-run-request` rejects.
+- **Now** the reading lists every field a run request may set, each as run-scoped or session-scoped. It is CFG-101's `min` and `stricter` profile fields, with one exception: `guardrails.requireDeterministic` is excluded because it is a load-time validity rule (HOOK-104), not run behaviour. `checkpoint` and `trace.includeReasoning` are run-scoped. `intersect` fields, including `model.fallbacks`, are not settable: a per-run narrowing of routing has no use case, and the eval matrix chooses models per cell (EVAL-044). ADR-0007 carries a note to this effect.
+- **Fixtures.** `cfg.run-request-tighten-only` gains `guardrails.requireDeterministic` and `model.fallbacks`, both rejected.
