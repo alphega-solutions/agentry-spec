@@ -18,6 +18,10 @@ It exits 0 when no fixture failed. The report's `conforms` (the claim, EVAL-023)
 
 Expectations are matched by the reference matcher (`tools/matcher.py`).
 
-**Not yet executed:**
-- `abandon` steps: a fixture using one fails with a "not … by this runner yet" message, never a pass.
-- Port cases (`conformance/ports/`), provider adapter cases (`conformance/adapters/`) and CEL rule fixtures (`conformance/cel/`) are not discovered yet. The protocol already covers the first two with `port.call` and `adapter.call`. A conformance claim needs them, so the runner does not claim conformance until they run.
+**Case kinds.** The runner runs every kind of conformance case through the driver:
+- **Harness fixtures** (`core/`, `tools/`, `hooks/` and so on): actions, scheduling, crashes, restarts and `abandon` steps.
+- **Port cases** (`ports/`): once per port adapter the driver lists in `portAdapters` (`port.call`). It checks `$now`, binds, clock steps, and the implicit `storedRecords` check (every stored record validates against its record schema).
+- **Provider adapter cases** (`adapters/cases/`): once per adapter in `providerAdapters` (`adapter.call`), with `$selfProvider`.
+- **CEL rule fixtures** (`cel/`): via `cel.evaluate`. Results use a typed encoding, so `3` and `3.0` stay distinct.
+
+Port and adapter results are reported per adapter, as `<case id>@<adapter>`. A driver that offers no adapter for a port or provider case fails that case.

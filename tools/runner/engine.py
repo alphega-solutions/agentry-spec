@@ -38,6 +38,7 @@ class FixtureRun:
         self.outcomes: list[dict | None] = []
         self.events_by_request: dict[str, list[dict]] = {}
         self.armed_crash = False
+        self.armed_abandon: dict | None = None  # {session, afterEvents} for the next action on that session
         self._rid = 0
 
     # ---- entry point ----------------------------------------------------------
@@ -97,6 +98,10 @@ class FixtureRun:
         elif "retention" in step:
             self.c.call("retention.run", {})
             self.outcomes.append(None)
+        elif "abandon" in step:
+            ab = step["abandon"] or {}
+            self.armed_abandon = {"session": self.sub(ab["session"], where), "afterEvents": ab.get("afterEvents", 0)}
+            self.outcomes.append(None)
         else:
             raise NotSupported(f"{where}: step kind {sorted(step)} is not executed by this runner yet")
 
@@ -123,6 +128,7 @@ class FixtureRun:
         """Start the actions in listed order, each after the previous has begun,
         honouring `startAfter`, and drive them all to completion."""
         rids: list[str] = []
+        abandon: dict | None = None  # {requestId, afterEvents} once the armed abandon's action starts
         crashed_any = False
         waiting: list[tuple[int, dict]] = []
         started: dict[str, int] = {}
@@ -140,6 +146,13 @@ class FixtureRun:
             rids.append(rid)
             started[rid] = k
             self.events_by_request[rid] = []
+            nonlocal abandon
+            if self.armed_abandon and args.get("session") == self.armed_abandon["session"]:
+                abandon = {"requestId": rid, "afterEvents": self.armed_abandon["afterEvents"]}
+                self.armed_abandon = None
+                if abandon["afterEvents"] == 0:
+                    self.c.call("stream.abandon", {"requestId": rid})
+                    abandon = None
 
         for k, st in enumerate(steps):
             if "startAfter" in st and k > 0:
@@ -148,11 +161,15 @@ class FixtureRun:
                 start(k, st)
 
         for _ in range(MAX_SETTLES):
-            res = self.c.call("settle", {"pauseOnEvents": bool(waiting)})
+            res = self.c.call("settle", {"pauseOnEvents": bool(waiting) or abandon is not None})
             for ev in res.get("events") or []:
                 rid = ev.get("requestId")
                 if rid in self.events_by_request:
                     self.events_by_request[rid].append(ev["event"])
+                if abandon and rid == abandon["requestId"] \
+                        and len(self.events_by_request[rid]) == abandon["afterEvents"]:
+                    self.c.call("stream.abandon", {"requestId": rid})  # the host stops consuming here
+                    abandon = None
                 for w in list(waiting):  # startAfter: evaluated before any clock advance
                     try:
                         hit = self.m.matches(w[1]["startAfter"], ev["event"], self.env)
