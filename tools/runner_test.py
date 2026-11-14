@@ -139,6 +139,134 @@ def test_outcome_mismatch_is_unmet() -> None:
         raise AssertionError("a wrong end reason must be unmet")
 
 
+class SnapshotStoreClient:
+    """A tiny, honest in-memory snapshot store behind `port.call`, for running the
+    real snapshot port cases. `leak=True` ignores the tenant on `get` (a bug)."""
+
+    def __init__(self, leak: bool = False):
+        self.leak = leak
+        self.store: dict = {}
+
+    def call(self, method, params=None):
+        if method == "case.begin":
+            self.store = {}
+            return {}
+        if method != "port.call":
+            return {}
+        op, a = params["op"], params["args"]
+        nf = {"ok": False, "error": {"code": "agentry.storage.not_found", "category": "not_found",
+                                       "retryable": False, "source": "port", "message": "Not found."}}
+        if op == "describe":
+            return {"ok": True, "result": {"encryptedAtRest": False}}
+        if op == "put":
+            self.store[(a["tenant"], a["snapshot"]["hash"])] = a["snapshot"]
+            return {"ok": True, "result": {}}
+        if op == "get":
+            key = next((k for k in self.store if k[1] == a["hash"]), None) if self.leak else (a["tenant"], a["hash"])
+            return {"ok": True, "result": self.store[key]} if key in self.store else nf
+        if op == "delete":
+            return {"ok": True, "result": {}} if self.store.pop((a["tenant"], a["hash"]), None) else nf
+        if op == "records":
+            return {"ok": True, "result": [v for (t, _), v in self.store.items() if t == a["tenant"]]}
+        raise AssertionError(f"unexpected op {op}")
+
+
+def _snapshot_cases():
+    from common import ROOT, load_yaml
+    return [load_yaml(p) for p in sorted((ROOT / "conformance" / "ports").glob("snapshot-*.yaml"))]
+
+
+def test_real_port_cases_pass_against_an_honest_store() -> None:
+    from runner.cases import run_port_case
+    cases = _snapshot_cases()
+    assert len(cases) >= 5
+    for doc in cases:
+        run_port_case(SnapshotStoreClient(), doc, "memory")
+
+
+def test_tenant_leak_fails_a_port_case() -> None:
+    from runner.cases import run_port_case
+    doc = next(d for d in _snapshot_cases() if d["id"].endswith("other-tenant-not-found"))
+    try:
+        run_port_case(SnapshotStoreClient(leak=True), doc, "memory")
+    except Unmet:
+        return
+    raise AssertionError("a store that leaks across tenants must fail")
+
+
+class ValueClient:
+    def __init__(self, result):
+        self.result = result
+
+    def call(self, method, params=None):
+        return self.result if method in ("cel.evaluate", "adapter.call") else {}
+
+
+def test_cel_values_compare_by_type() -> None:
+    from runner.cases import run_cel_case
+    doc = {"id": "cel.t", "point": "beforeModelCall", "expression": "1 + 2", "expect": {"value": 3}}
+    run_cel_case(ValueClient({"value": {"int": 3}}), doc)
+    for wrong in ({"value": {"double": 3.0}}, {"value": {"int": 4}}, {"failure": "runtime"}):
+        try:
+            run_cel_case(ValueClient(wrong), doc)
+        except Unmet:
+            continue
+        raise AssertionError(f"{wrong} must not match the int 3")
+    run_cel_case(ValueClient({"failure": "compile"}),
+                 {"id": "cel.f", "point": "beforeModelCall", "expression": "(", "expect": {"failure": "compile"}})
+    run_cel_case(ValueClient({"value": [{"double": 1.5}, "a", None, {"k": True}]}),
+                 {"id": "cel.l", "point": "beforeModelCall", "expression": "x", "expect": {"value": [1.5, "a", None, {"k": True}]}})
+
+
+def test_adapter_case_with_self_provider() -> None:
+    from runner.cases import run_adapter_case
+    doc = {"id": "adapter.t", "condition": "ok_reasoning", "request": {"model": "m", "messages": []},
+           "expect": {"parts": [{"type": "reasoning", "provider": {"$selfProvider": True}}], "usage": None}}
+    run_adapter_case(ValueClient({"providerId": "vendor-x",
+                                  "parts": [{"type": "reasoning", "provider": "vendor-x", "data": "r"}]}), doc, "x")
+    try:
+        run_adapter_case(ValueClient({"providerId": "vendor-x",
+                                      "parts": [{"type": "reasoning", "provider": "other", "data": "r"}]}), doc, "x")
+    except Unmet:
+        return
+    raise AssertionError("$selfProvider must match only the adapter's own provider")
+
+
+class AbandonClient:
+    """One action that persists an event per settle until its stream is abandoned."""
+
+    def __init__(self):
+        self.log: list = []
+        self.n = 0
+        self.abandoned_after = None
+
+    def call(self, method, params=None):
+        self.log.append((method, params))
+        if method == "stream.abandon":
+            self.abandoned_after = self.n
+            return {}
+        if method == "settle":
+            if self.abandoned_after is not None:
+                return {"now": "t", "events": [], "crashed": [], "waiting": [],
+                        "completed": [{"requestId": "r1", "outcome": {"ok": True, "endReason": "cancelled"}}]}
+            self.n += 1
+            return {"now": "t", "events": [{"process": "main", "requestId": "r1", "event": {"type": f"e{self.n}"}}],
+                    "completed": [], "crashed": [], "waiting": [{"requestId": "r1", "on": "paused"}]}
+        return {}
+
+
+def test_abandon_after_n_events() -> None:
+    client = AbandonClient()
+    fr = FixtureRun(client, {"id": "t", "script": []})
+    fr.env["$s"] = "sess-1"
+    fr.step(0, {"abandon": {"session": "$s", "afterEvents": 2}})
+    fr.step(1, {"action": "run", "session": "$s", "expect": {"ok": True, "endReason": "cancelled"}})
+    assert client.abandoned_after == 2, client.abandoned_after
+    i_ab = next(i for i, (m, _) in enumerate(client.log) if m == "stream.abandon")
+    assert all(p == {"pauseOnEvents": True} for m, p in client.log[:i_ab] if m == "settle"), \
+        "pause on events until the abandon fires"
+
+
 def main() -> int:
     tests = [v for k, v in globals().items() if k.startswith("test_") and callable(v)]
     failed = 0

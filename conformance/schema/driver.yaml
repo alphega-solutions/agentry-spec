@@ -51,15 +51,19 @@ $defs:
       jsonrpc: { const: "2.0" }
       id: { type: integer, minimum: 1 }
       method:
-        enum: [driver.describe, fixture.begin, fixture.end, config.load, action.start, settle, crash.arm,
-               process.restart, clock.set, clock.advance, retention.run, stream.abandon, observe,
-               port.call, adapter.call]
+        enum: [driver.describe, fixture.begin, fixture.end, case.begin, config.load, action.start, settle,
+               crash.arm, process.restart, clock.set, clock.advance, retention.run, stream.abandon, observe,
+               port.call, adapter.call, cel.evaluate]
       params: { type: object }
     allOf:
       - if: { properties: { method: { const: driver.describe } } }
         then: { properties: { params: { $ref: "#/$defs/empty" } } }
       - if: { properties: { method: { const: fixture.begin } } }
         then: { properties: { params: { $ref: "#/$defs/fixtureBegin" } } }
+      - if: { properties: { method: { const: case.begin } } }
+        then: { properties: { params: { $ref: "#/$defs/caseBegin" } } }
+      - if: { properties: { method: { const: cel.evaluate } } }
+        then: { properties: { params: { $ref: "#/$defs/celEvaluate" } } }
       - if: { properties: { method: { const: config.load } } }
         then: { properties: { params: { $ref: "#/$defs/configLoad" } } }
       - if: { properties: { method: { const: action.start } } }
@@ -362,7 +366,20 @@ $defs:
         items: { enum: [events, ports, stubCalls, providerRequests, delivered, telemetrySpans, persistedText] }
       tenant: { type: string }
 
-  # ---- port and adapter cases ---------------------------------------------
+  # ---- port, adapter and CEL cases -----------------------------------------
+
+  caseBegin:
+    description: >-
+      Start a port case, adapter case or CEL fixture with fresh state: new
+      port adapters, and the virtual clock at `clock` (a port case's
+      `clock`, if it sets one).
+    type: object
+    additionalProperties: false
+    required: [caseId, kind]
+    properties:
+      caseId: { type: string, minLength: 1 }
+      kind: { enum: [port, adapter, cel] }
+      clock: { $ref: "#/$defs/timestamp" }
 
   portCall:
     description: One step of a port case (conformance/schema/port-case.yaml), invoked directly on the named adapter of the port.
@@ -375,6 +392,16 @@ $defs:
       op: { type: string }
       args: { type: object }
 
+  portCallResult:
+    description: The operation's result, or the error it failed with (Area 1 error shape, source `port`).
+    type: object
+    additionalProperties: false
+    required: [ok]
+    properties:
+      ok: { type: boolean }
+      result: {}
+      error: { $ref: "https://alphega.io/agentry/schemas/core/error/v1.json" }
+
   adapterCall:
     description: "One provider adapter case (conformance/schema/adapter-case.yaml), run against the named adapter. Result: the adapter's response and the request it sent, in agentry terms."
     type: object
@@ -383,3 +410,45 @@ $defs:
     properties:
       adapter: { type: string }
       case: { type: object }
+
+  adapterCallResult:
+    description: >-
+      What the adapter returned for the case, in agentry terms, and the
+      wire properties its transcript's matchers confirmed (adapter-case.yaml
+      `expect.wire`). `providerId` is the provider the adapter is declared
+      under, for `$selfProvider`.
+    type: object
+    additionalProperties: false
+    required: [providerId]
+    properties:
+      providerId: { type: string }
+      parts: { type: array }
+      usage: {}
+      error: { type: object }
+      wire: { type: object }
+
+  celEvaluate:
+    description: A CEL rule fixture (cel-fixture.yaml) evaluated by the implementation's rule evaluator.
+    type: object
+    additionalProperties: false
+    required: [point, expression]
+    properties:
+      point: { type: string }
+      expression: { type: string }
+      variables: { type: object }
+
+  celResult:
+    description: >-
+      The value, in a typed encoding that keeps CEL's int/double distinction
+      across languages: an `int` is `{"int": n}`, a `uint` `{"uint": n}`, a
+      `double` `{"double": x}`; strings, booleans and null are plain JSON;
+      lists and maps are JSON arrays and objects of typed values. Or the
+      stage at which evaluation failed.
+    type: object
+    additionalProperties: false
+    oneOf:
+      - required: [value]
+      - required: [failure]
+    properties:
+      value: {}
+      failure: { enum: [compile, type_check, runtime] }

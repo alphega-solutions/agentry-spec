@@ -22,12 +22,13 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from common import ROOT, load_yaml  # noqa: E402
 
+from runner.cases import run_adapter_case, run_cel_case, run_port_case  # noqa: E402
 from runner.client import DriverClient, DriverError  # noqa: E402
 from runner.engine import FixtureRun, Unmet  # noqa: E402
 
 RUNNER_VERSION = "0.1.0"
 FULL_SUITE = ["**/*.yaml"]
-NOT_YET_RUN = ["ports", "adapters", "cel"]  # fixture kinds the runner does not execute yet
+NOT_YET_RUN: list[str] = []  # fixture kinds the runner does not execute yet
 
 
 def fixture_paths(globs: list[str]) -> list[pathlib.Path]:
@@ -36,8 +37,20 @@ def fixture_paths(globs: list[str]) -> list[pathlib.Path]:
     for g in globs:
         paths += sorted(p for p in base.glob(g) if p.suffix == ".yaml")
     skip = {"schema", "shared", "golden", *NOT_YET_RUN}
-    return [p for p in dict.fromkeys(paths)
-            if len(p.relative_to(base).parts) > 1 and p.relative_to(base).parts[0] not in skip]
+
+    def wanted(p: pathlib.Path) -> bool:
+        parts = p.relative_to(base).parts
+        if len(parts) < 2 or parts[0] in skip:
+            return False
+        if parts[0] == "adapters":  # only adapters/cases/*.yaml are cases; manifests and transcripts are data
+            return len(parts) == 3 and parts[1] == "cases"
+        return True
+    return [p for p in dict.fromkeys(paths) if wanted(p)]
+
+
+def _kind(path: pathlib.Path) -> str:
+    top = path.relative_to(ROOT / "conformance").parts[0]
+    return {"ports": "port", "adapters": "adapter", "cel": "cel"}.get(top, "fixture")
 
 
 def run(driver: list[str], globs: list[str]) -> dict:
@@ -50,18 +63,39 @@ def run(driver: list[str], globs: list[str]) -> dict:
             doc = load_yaml(path)
             res = {"fixture": doc["id"], "requirements": list(doc.get("requirements") or []),
                    "features": list(doc.get("features") or [])}
-            skip_for = next((f for f in res["features"] if f in unsupported), None)
-            if skip_for:
-                res.update(status="skipped", skippedFor=skip_for)
+            kind = _kind(path)
+            if kind == "port":
+                targets = list((info.get("portAdapters") or {}).get(doc["port"]) or [])
+            elif kind == "adapter":
+                targets = list(info.get("providerAdapters") or [])
             else:
+                targets = [None]
+            if not targets:  # a driver must offer at least one adapter for every port and provider case
+                results.append({**res, "status": "fail",
+                                "firstUnmet": f"driver: no {'port' if kind == 'port' else 'provider'} adapter offered for this case"})
+                continue
+            for target in targets:
+                r = dict(res, fixture=f"{doc['id']}@{target}" if target else doc["id"])
+                skip_for = next((f for f in r["features"] if f in unsupported), None)
+                if skip_for:
+                    r.update(status="skipped", skippedFor=skip_for)
+                    results.append(r)
+                    continue
                 try:
-                    FixtureRun(client, doc).execute()
-                    res["status"] = "pass"
+                    if kind == "port":
+                        run_port_case(client, doc, target)
+                    elif kind == "adapter":
+                        run_adapter_case(client, doc, target)
+                    elif kind == "cel":
+                        run_cel_case(client, doc)
+                    else:
+                        FixtureRun(client, doc).execute()
+                    r["status"] = "pass"
                 except Unmet as exc:
-                    res.update(status="fail", firstUnmet=str(exc))
+                    r.update(status="fail", firstUnmet=str(exc))
                 except DriverError as exc:
-                    res.update(status="fail", firstUnmet=f"driver: {exc}")
-            results.append(res)
+                    r.update(status="fail", firstUnmet=f"driver: {exc}")
+                results.append(r)
     finally:
         client.close()
     impl = info.get("implementation") or {}
