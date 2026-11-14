@@ -5,12 +5,16 @@ description: >-
   Both tools declare timeoutMs 1000; the profile's timeouts.tool is PT30S,
   and each slow stub takes 10 s on the virtual clock, so only the per-call
   timeout can fire. Session 1: update_record (mutating, not idempotent)
-  times out. The stub receives the cancellation signal; the call's
-  tool.result is `unavailable`, `agentry.tool.timeout`, `retryable: true`;
-  the call may not be retried, so the run ends `failed` (TOOL-053). Session
+  times out. The stub receives the cancellation signal. The call may not
+  be retried, and its outcome is unknown (TOOL-055, amendment 2026-11-14).
+  So an `error` event carries `unavailable`, `agentry.tool.timeout`,
+  `retryable: true`, and no tool.result is emitted. A `recovery`
+  escalation (`agentry.recovery.unknown_outcome`) ends the run
+  `escalated`, leaving the session `suspended`. The idempotency record
+  stays `started`, with no outcome. Session
   2: lookup (read) times out on its first attempt; because the timeout is
   retryable it is retried, the retry succeeds, and the run responds.
-requirements: [TOOL-051]
+requirements: [TOOL-051, TOOL-055]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:
@@ -72,7 +76,7 @@ script:
     principal: p1
     persona: assistant@1
     input: [{ type: text, text: "Set k1 to v1" }]
-    expect: { ok: true, endReason: failed }
+    expect: { ok: true, endReason: escalated }
   - action: run
     bind: $s2
     tenant: t1
@@ -83,21 +87,23 @@ script:
 expect:
   sessions:
     $s1:
-      state: closed
-      closeReason: failed
+      state: suspended
       events:
         mode: subsequence
         items:
           - { type: tool.call, payload: { callId: c1, tool: update_record } }
-          - type: tool.result
+          - { type: error, payload: { error: { category: unavailable, code: agentry.tool.timeout, retryable: true, source: tool } } }
+          - type: escalation.raised
             payload:
-              callId: c1
-              tool: update_record
-              result: { error: { category: unavailable, code: agentry.tool.timeout, retryable: true } }
-          - { type: run.ended, payload: { reason: failed } }
+              escalation:
+                sources: [recovery]
+                pendingActions:
+                  - { kind: recovery, source: recovery, reasonCode: agentry.recovery.unknown_outcome, callId: c1, tool: update_record, arguments: { key: k1, value: v1 }, idempotencyKey: $k1, allowedDecisions: [confirm] }
+          - { type: run.ended, payload: { reason: escalated } }
       absentEvents:
         - { type: model.request, step: 2 }
-        - { type: tool.result, payload: { result: { ok: { $any: true } } } }
+        - { type: tool.result, payload: { callId: c1 } }
+        - { type: session.closed }
     $s2:
       state: idle
       events:
@@ -116,3 +122,7 @@ expect:
       - { arguments: { key: k1 }, cancelled: false, completed: true }
   providerRequests:
     scripted-a: { count: 3 }
+  ports:
+    idempotencyStore:
+      t1:
+        $k1: { state: started, outcome: { $absent: true } }
