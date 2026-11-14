@@ -1,6 +1,6 @@
 # ADR-0016: Memory as a port with references that keep provenance and labels
 
-**Status:** Proposed 2026-11-14 · **Date:** 2026-11-14 · **Source:** `notes/memory.md` §3–6, §10 (decisions M1–M4, M7, M8); `notes/context.md` X1
+**Status:** Accepted 2026-11-14 · **Date:** 2026-11-14 · **Source:** `notes/memory.md` §3–6, §10 (decisions M1–M4, M7, M8); `notes/context.md` X1
 
 ## Context
 Under X1 the 1.0 core has no memory concept: hosts expose memory as ordinary tools, so the tool pipeline and the taint rule govern it, and tool results may now report their labels (TOOL-071 as amended 2026-11-14). That makes host memory safe enough for 1.0. It leaves to each host:

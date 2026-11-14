@@ -1,6 +1,6 @@
 # ADR-0017: Skills are configuration artifacts, loaded on demand by the model
 
-**Status:** Proposed 2026-11-14 · **Date:** 2026-11-14 · **Source:** `notes/memory.md` §2, §6.4, §7, §8 (decisions M5, M6)
+**Status:** Accepted 2026-11-14 · **Date:** 2026-11-14 · **Source:** `notes/memory.md` §2, §6.4, §7, §8 (decisions M5, M6)
 
 ## Context
 Procedural knowledge ("how to do X") could live in persona instructions, in memory, or in a unit of its own:

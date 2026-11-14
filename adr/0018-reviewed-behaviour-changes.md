@@ -1,6 +1,6 @@
 # ADR-0018: Learned behaviour changes only through review
 
-**Status:** Proposed 2026-11-14 · **Date:** 2026-11-14 · **Source:** `notes/memory.md` §2, §6.4, §8
+**Status:** Accepted 2026-11-14 · **Date:** 2026-11-14 · **Source:** `notes/memory.md` §2, §6.4, §8
 
 ## Context
 Agents can learn procedures or standing rules from their sessions. Suppose an agent could write a skill or a persona instruction that takes effect directly: the content would be live (written at run time) and trusted (loaded as `system`). One injected turn would then become a permanent instruction for every later session. The taint rule cannot help, because once loaded, the content no longer looks untrusted.
