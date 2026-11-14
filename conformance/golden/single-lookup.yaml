@@ -3,7 +3,8 @@
 # {key: k1}); the tool answers {key: k1, value: SYN-VALUE-0001}; the model
 # responds "Record k1 holds SYN-VALUE-0001." and the run ends `responded`.
 # Snapshot: the baseline configuration (conformance/shared/baseline) with
-# schema defaults filled in; `hash` is sha256 of the RFC 8785 JSON of
+# schema defaults filled in, except those of merge-annotated fields (CFG-050
+# as amended 2026-11-14); `hash` is sha256 of the RFC 8785 JSON of
 # `artifacts` (CFG-050). turn.started carries the principal's message; each
 # model.request also references its assembled context (optional) as an
 # application/json blob carried in `blobs`.
