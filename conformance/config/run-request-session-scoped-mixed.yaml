@@ -1,0 +1,66 @@
+schemaVersion: "0.1.0"
+id: cfg.run-request-session-scoped-mixed
+title: A session-creating run request that tightens both a session-scoped and a run-scoped field records each on its own event, and the tightened idleTtl governs expiry
+description: >-
+  default@1 sets idleTtl PT24H and stepLimit 8. The run request that creates
+  $s tightens idleTtl to PT1H (session-scoped) and stepLimit to 4
+  (run-scoped) (CFG-101 as amended 2026-11-14). Each value is recorded once,
+  on the event of the scope it applies to (CFG-102 as amended 2026-11-14):
+  `session.created.payload.overrides` holds idleTtl and not stepLimit, and
+  that run's `run.started.payload.overrides` holds stepLimit and not
+  idleTtl. The run responds in one step.
+
+  The virtual clock then advances two hours: past the tightened idleTtl,
+  well within the profile's PT24H. The session-scoped value applies to the
+  session, not only to the run that set it, so the session has expired: it
+  is closed `expired` (outside any run), and a further run() is refused
+  with `conflict` and reaches no provider. Had the profile's PT24H governed,
+  the session would still be idle and the run would respond.
+requirements: [CFG-101, CFG-102]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    overrides: { idleTtl: PT1H, stepLimit: 4 }
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - clock: { advance: PT2H }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "Still there?" }]
+    expect: { ok: false, error: { category: conflict } }
+expect:
+  sessions:
+    $s:
+      state: closed
+      closeReason: expired
+      events:
+        mode: subsequence
+        items:
+          - type: session.created
+            payload: { overrides: { idleTtl: PT1H, stepLimit: { $absent: true } } }
+          - type: run.started
+            payload: { kind: run, overrides: { stepLimit: 4, idleTtl: { $absent: true } } }
+          - { type: run.ended, payload: { reason: responded } }
+          - { type: session.closed, runId: { $absent: true }, payload: { reason: expired } }
+      absentEvents:
+        - { type: turn.started, turn: 2 }
+  providerRequests:
+    scripted-a: { count: 1 }

@@ -56,9 +56,11 @@ $defs:
       - agentry.provider.refused
       - agentry.provider.unavailable
       - agentry.provider.unsupported_content
+      - agentry.session.busy
       - agentry.session.not_found
       - agentry.storage.version_mismatch
       - agentry.tool.assurance
+      - agentry.tool.credential_unavailable
       - agentry.tool.invalid_arguments
       - agentry.tool.invalid_output
       - agentry.tool.result_too_large
@@ -104,9 +106,11 @@ x-agentry-codes:
   agentry.provider.refused: { kind: error, category: policy, retryable: false, sources: [provider], defined: PROV-081 }
   agentry.provider.unavailable: { kind: error, category: unavailable, retryable: true, sources: [provider], defined: PROV-080 }
   agentry.provider.unsupported_content: { kind: error, category: invalid_input, retryable: false, sources: [harness], defined: "PROV-042 (as amended 2026-11-14)" }
+  agentry.session.busy: { kind: error, category: conflict, retryable: true, sources: [harness], defined: HITL-093 }
   agentry.session.not_found: { kind: error, category: not_found, retryable: false, sources: [harness], defined: PORT-115 }
   agentry.storage.version_mismatch: { kind: error, category: conflict, retryable: false, sources: [harness, port], defined: PORT-122 }
   agentry.tool.assurance: { kind: error, category: policy, retryable: false, sources: [harness], defined: TOOL-030 }
+  agentry.tool.credential_unavailable: { kind: error, category: unauthorized, retryable: false, sources: [harness], defined: TOOL-012 }
   agentry.tool.invalid_arguments: { kind: error, category: invalid_input, retryable: false, sources: [harness], defined: TOOL-030 }
   agentry.tool.invalid_output: { kind: error, category: fatal, retryable: false, sources: [harness], defined: TOOL-070 }
   agentry.tool.result_too_large: { kind: error, category: limit, retryable: false, sources: [harness], defined: TOOL-072 }

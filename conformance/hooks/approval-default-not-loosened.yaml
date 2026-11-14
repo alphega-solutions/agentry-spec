@@ -16,7 +16,9 @@ description: >-
     the amendment the persona's rules switched off the "no rules →
     escalate" default and the call was dispatched without review.
   - A persona that sets `approvalDefault: continue` is a configuration
-    error (HOOK-133): only policy bundles may set it.
+    error (HOOK-133): only policy bundles may set it. So is a harness
+    profile (default@1) that sets it: the field is settable in no kind but
+    `PolicyBundle`. Each failed load leaves the previous snapshot in force.
   - $sReleased (control): the bundle is reloaded with `approvalDefault:
     continue`, the governance layer's explicit choice; the same call is
     now dispatched with no escalation.
@@ -136,6 +138,25 @@ script:
             name: model-a
             fallbacks:
               - { provider: scripted-b, name: model-b }
+    expect: { ok: false, error: { category: configuration } }
+  # Nor can a harness profile.
+  - load:
+      artifacts:
+        - kind: HarnessProfile
+          id: default
+          version: 1
+          schemaVersion: "0.1.0"
+          idleTtl: PT24H
+          suspendedTtl: PT72H
+          stepLimit: 8
+          deliveryMode: buffered
+          budget: { tokens: 100000 }
+          timeouts: { run: PT5M, tool: PT30S }
+          retry: { unavailable: 2 }
+          outputRetryLimit: 2
+          limits: { partSize: 1048576, sessionSize: 10485760 }
+          defaultAttachmentLabels: []
+          approvalDefault: continue
     expect: { ok: false, error: { category: configuration } }
   # The governance layer opts in explicitly.
   - load:

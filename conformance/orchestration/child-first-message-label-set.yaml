@@ -1,0 +1,185 @@
+schemaVersion: "0.1.0"
+id: orchestration.child-first-message-label-set
+title: A child's first message carries the parent's label set, including labels whose parts truncation has dropped from the parent's context
+description: >-
+  The bundle trusts `read_contact@1`, which declares sensitivity `pii`, so
+  its result labels the parent without tainting it. `ask_helper` is an
+  agent-bound read tool for persona `helper`. Both candidate models
+  declare contextLimit 120 and maxOutputTokens 20: available space 100,
+  compaction above 90 (default triggerPercent), mode `truncate` (baseline
+  `default@1`). Non-text parts count 10. The parent's system content is 6
+  tokens ("Follow organisational policy." 3 + "You coordinate helpers." 3).
+
+  Turn 1 ("Read contact k1", 3) calls read_contact (c1, `pii`; 10 + 10)
+  and the model copies the contact into a 20-word reply (unlabelled,
+  CORE-127): turn 1 is 43. Turn 2's text is 42 words: 6 + 43 + 42 = 91 >
+  90, so truncation drops turn 1 (one unit), leaving 48. The parent's turn
+  2 request is asserted exactly (system content and turn 2's unlabelled
+  principal text only), so no part in its context carries a label at the
+  call. The parent's label set is still `[pii]` (HOOK-127).
+
+  The model then calls ask_helper (c2) with the copied contact. By ORCH-011
+  as amended 2026-11-13, the child's first message carries every label in
+  the parent's label set at the time of the call, not only the labels in
+  the parent's context: the child's `turn.started` and its first model
+  request carry the one structured part labelled exactly `[pii]`. Under the
+  old reading it would carry no label. The child's label set starts with
+  these labels, so its checkpoint records `taint.labels: [pii]`; the
+  parent was never tainted, so neither is the child. The child responds,
+  then the parent responds (48 + 20 = 68).
+
+  The provenance of the child's first message (the least-trusted in the
+  parent's context, ORCH-011) is covered by
+  `orchestration.child-first-message-arguments` and is not asserted here.
+requirements: [ORCH-011, HOOK-127]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        trustedTools: [read_contact@1]
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+      - kind: Tool
+        id: read_contact
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Read a contact.
+        input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }
+        effect: read
+        sensitivity: [pii]
+        binding: { kind: native, handler: test.read_contact }
+      - kind: Persona
+        id: helper
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You summarise records."
+        tools: [read_contact@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+      - kind: Tool
+        id: ask_helper
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Ask the helper persona to summarise a contact.
+        input:
+          type: object
+          additionalProperties: false
+          required: [task]
+          properties: { task: { type: string } }
+        effect: read
+        binding: { kind: agent, persona: helper@1 }
+      - kind: Persona
+        id: coordinator
+        version: 1
+        schemaVersion: "0.1.0"
+        instructions: "You coordinate helpers."
+        tools: [read_contact@1, ask_helper@1]
+        defaultProfile: default@1
+        allowedProfiles: [default@1]
+        model: { provider: scripted-a, name: model-a }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      capabilities: { contextLimit: 120, maxOutputTokens: 20 }
+      responses:
+        # parent, turn 1
+        - parts: [{ type: tool_call, callId: c1, tool: read_contact, arguments: { key: k1 } }]
+          usage: { inputTokens: 9, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "SYN-CONTACT-0001 SYN-CR-01 SYN-CR-02 SYN-CR-03 SYN-CR-04 SYN-CR-05 SYN-CR-06 SYN-CR-07 SYN-CR-08 SYN-CR-09 SYN-CR-10 SYN-CR-11 SYN-CR-12 SYN-CR-13 SYN-CR-14 SYN-CR-15 SYN-CR-16 SYN-CR-17 SYN-CR-18 SYN-CR-19" }]
+          usage: { inputTokens: 29, outputTokens: 20, cachedInputTokens: 0, reasoningTokens: 0 }
+        # parent, turn 2, step 1
+        - parts: [{ type: tool_call, callId: c2, tool: ask_helper, arguments: { task: "Summarise SYN-CONTACT-0001" } }]
+          usage: { inputTokens: 48, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # child, step 1
+        - parts: [{ type: text, text: "Synthetic summary." }]
+          usage: { inputTokens: 16, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # parent, turn 2, step 2
+        - parts: [{ type: text, text: "Done." }]
+          usage: { inputTokens: 68, outputTokens: 1, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      read_contact:
+        - ok: { output: { contact: "SYN-CONTACT-0001" } }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: coordinator@1
+    input: [{ type: text, text: "Read contact k1" }]
+    expect: { ok: true, endReason: responded }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "SYN-DQ-01 SYN-DQ-02 SYN-DQ-03 SYN-DQ-04 SYN-DQ-05 SYN-DQ-06 SYN-DQ-07 SYN-DQ-08 SYN-DQ-09 SYN-DQ-10 SYN-DQ-11 SYN-DQ-12 SYN-DQ-13 SYN-DQ-14 SYN-DQ-15 SYN-DQ-16 SYN-DQ-17 SYN-DQ-18 SYN-DQ-19 SYN-DQ-20 SYN-DQ-21 SYN-DQ-22 SYN-DQ-23 SYN-DQ-24 SYN-DQ-25 SYN-DQ-26 SYN-DQ-27 SYN-DQ-28 SYN-DQ-29 SYN-DQ-30 SYN-DQ-31 SYN-DQ-32 SYN-DQ-33 SYN-DQ-34 SYN-DQ-35 SYN-DQ-36 SYN-DQ-37 SYN-DQ-38 SYN-DQ-39 SYN-DQ-40 SYN-DQ-41 SYN-DQ-42" }]
+    capture:
+      - event: { type: tool.call, payload: { callId: c2, tool: ask_helper } }
+        bind: { payload.childSessionId: $child }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.result, labels: [pii], payload: { callId: c1, tool: read_contact } }
+          - { type: context.compacted, turn: 2, step: 1, payload: { mode: truncate, units: [{ turn: 1 }] } }
+          - { type: tool.call, turn: 2, payload: { callId: c2, tool: ask_helper, childSessionId: $child } }
+          - { type: run.ended, turn: 2, payload: { reason: responded } }
+      checkpoint:
+        taint: { tainted: false, labels: [pii] }
+    $child:
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, payload: { persona: helper@1, parent: { sessionId: $s, callId: c2 } } }
+          - { type: turn.started, turn: 1, labels: [pii] }
+          - { type: run.ended, payload: { reason: responded } }
+      checkpoint:
+        taint: { tainted: false, labels: [pii] }
+  stubCalls:
+    read_contact: { count: 1 }
+  providerRequests:
+    scripted-a:
+      # parent, turn 1
+      - {}
+      - {}
+      # parent, turn 2, step 1: turn 1 (and its pii result) is gone
+      - messages:
+          - role: system
+            parts:
+              - { type: text, text: "Follow organisational policy.", provenance: system }
+              - { type: text, text: "You coordinate helpers.", provenance: system }
+          - role: principal
+            parts: [{ type: text, text: "SYN-DQ-01 SYN-DQ-02 SYN-DQ-03 SYN-DQ-04 SYN-DQ-05 SYN-DQ-06 SYN-DQ-07 SYN-DQ-08 SYN-DQ-09 SYN-DQ-10 SYN-DQ-11 SYN-DQ-12 SYN-DQ-13 SYN-DQ-14 SYN-DQ-15 SYN-DQ-16 SYN-DQ-17 SYN-DQ-18 SYN-DQ-19 SYN-DQ-20 SYN-DQ-21 SYN-DQ-22 SYN-DQ-23 SYN-DQ-24 SYN-DQ-25 SYN-DQ-26 SYN-DQ-27 SYN-DQ-28 SYN-DQ-29 SYN-DQ-30 SYN-DQ-31 SYN-DQ-32 SYN-DQ-33 SYN-DQ-34 SYN-DQ-35 SYN-DQ-36 SYN-DQ-37 SYN-DQ-38 SYN-DQ-39 SYN-DQ-40 SYN-DQ-41 SYN-DQ-42", provenance: principal, labels: [] }]
+      # child, step 1: the whole context
+      - messages:
+          - role: system
+            parts:
+              - { type: text, text: "Follow organisational policy.", provenance: system }
+              - { type: text, text: "You summarise records.", provenance: system }
+          - role: principal
+            parts:
+              - type: structured
+                value: { task: "Summarise SYN-CONTACT-0001" }
+                labels: [pii]
+      # parent, turn 2, step 2
+      - {}

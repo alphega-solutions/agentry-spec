@@ -290,9 +290,10 @@ $defs:
             minimum: 1
           leaseTtl:
             description: >-
-              Length of the run lease the runner configures (HITL-090), as an
-              ISO 8601 duration. Default PT5M. A run whose lease is not renewed
-              within this time on the virtual clock is orphaned.
+              Length of the run and operation leases the runner configures
+              (HITL-090, HITL-093), as an ISO 8601 duration. Default PT5M. A
+              run whose lease is not renewed within this time on the virtual
+              clock is orphaned.
             type: string
             pattern: "^P(?!$)(\\d+D)?(T(?=\\d)(\\d+H)?(\\d+M)?(\\d+(\\.\\d+)?S)?)?$"
             default: PT5M
@@ -841,6 +842,7 @@ $defs:
         required: [category]
         properties:
           category: { type: string }
+          retryable: { type: boolean }
           code: { type: string }
           details:
             description: >-
@@ -980,13 +982,15 @@ $defs:
           traceContext }, credential?, cancelled, completed }`: `arguments` are the
           tool's arguments (for HTTP endpoint stubs too, not an HTTP
           request); `credential` (when the binding resolved one) names the
-          credential the call received, as `{reference, principal?}`, never
+          credential the call received, as `{reference, principal?}` with
+          `principal` the principal's subject, never
           its value; `context` is the tool context (TOOL-040), with
           `principal` the principal as the host supplied it and `deadline` a
           UTC timestamp; `cancelled` is whether the cancellation signal was
           received; `completed` is whether the stub's result reached the
-          implementation (`false` for a hang, a cancellation honoured, or a
-          crash at `after_dispatch`). A remote hook call record is `{
+          implementation (`false` for a hang, a cancellation honoured, a
+          result that arrived after the call's timeout and was discarded
+          (TOOL-055), or a crash at `after_dispatch`). A remote hook call record is `{
           arguments }`, holding the hook request. `{count: n}` asserts only
           the number of calls.
         type: object

@@ -1,0 +1,178 @@
+schemaVersion: "0.1.0"
+id: eval.replay-recorded-behaviour-differs
+title: A recorded-snapshot replay reproduces the recording's behaviour even after the current configuration's behaviour has changed
+description: >-
+  $s is recorded under assistant@1 with instructions "SYN-INSTR-RECORDED"
+  and the required native afterToolCall hook audit@1 (results [annotate]).
+  The model calls lookup (c1, {key: k1}), audit answers `continue`, and the
+  model responds. `exportBundle` binds the bundle as $b; $s's snapshot hash
+  is $snap.
+
+
+  - A load then changes behaviour only: assistant@1's instructions become
+    "SYN-INSTR-CURRENT" and it no longer requires audit@1 (the Hook
+    artifact stays in the configuration, unrequired). The Deployment is
+    unchanged. The new snapshot is $cur.
+  - $rp: `replay` of $b with `snapshot: recorded` and `reEvaluate`. Under
+    `recorded` the replayed configuration is the recorded snapshot with the
+    current deployment's binding fields (EVAL-060 as amended 2026-11-14),
+    not the current behaviour. The current Deployment's bound fields equal
+    the recording's, so the replayed session is pinned to exactly $snap,
+    not $cur, and its `session.created` names the recording: `replay:
+    {sessionId: $s, snapshotHash: $snap}`. The stored $snap still holds the
+    recorded persona (instructions "SYN-INSTR-RECORDED", requiredHooks
+    [audit@1]), while $cur holds the current one. audit@1, required only by
+    the recorded persona, is re-evaluated for the replayed call (its second
+    invocation, for $rp), and the recorded outcome is reproduced with no
+    divergence.
+  - $rc (contrast): `replay` of $b with `snapshot: candidate` runs on $cur,
+    so audit@1 is not invoked, and the tool call still matches the
+    recording, so no divergence is reported.
+
+
+  No provider is called during either replay: scripted-a's script holds
+  only $s's two responses. lookup's one behaviour is consumed by $s.
+requirements: [EVAL-060]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-04-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Hook
+        id: audit
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [afterToolCall]
+        results: [annotate]
+        timeoutMs: 1000
+        source: { kind: native, handler: test.hook.audit }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "SYN-INSTR-RECORDED"
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [audit@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Record k1 holds SYN-VALUE-0061." }]
+          usage: { inputTokens: 30, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b: { responses: [] }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: SYN-VALUE-0061 } }
+      update_record: []
+    nativeHooks:
+      audit:
+        - { result: continue }
+        - { result: continue }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up record k1." }]
+    expect: { ok: true, endReason: responded }
+  - action: exportBundle
+    session: $s
+    tenant: t1
+    bindResult: $b
+    expect: { ok: true, bundle: { sessionId: $s } }
+  - load:
+      artifacts:
+        - kind: Persona
+          id: assistant
+          version: 1
+          schemaVersion: "0.1.0"
+          displayName: Test assistant
+          instructions: "SYN-INSTR-CURRENT"
+          tools: [lookup@1, update_record@1]
+          fallbackMessage: "This request was blocked."
+          defaultProfile: default@1
+          allowedProfiles: [default@1, streamed@1]
+          model:
+            provider: scripted-a
+            name: model-a
+            fallbacks:
+              - { provider: scripted-b, name: model-b }
+    bind: $cur
+    expect: { ok: true }
+  - action: replay
+    bind: $rp
+    tenant: t1
+    bundle: $b
+    snapshot: recorded
+    hookMode: reEvaluate
+    expect: { ok: true, divergences: [] }
+  - action: replay
+    bind: $rc
+    tenant: t1
+    bundle: $b
+    snapshot: candidate
+    hookMode: reEvaluate
+    expect: { ok: true, divergences: [] }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, snapshotHash: $snap, payload: { replay: { $absent: true } } }
+          - { type: run.ended, payload: { reason: responded } }
+    $rp:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: session.created
+            sessionId: { $all: [$rp, { $not: $s }] }
+            snapshotHash: { $all: [$snap, { $not: $cur }] }
+            payload: { persona: assistant@1, replay: { sessionId: $s, snapshotHash: $snap } }
+          - { type: tool.call, payload: { callId: c1, tool: lookup, arguments: { key: k1 } } }
+          - { type: tool.result, payload: { callId: c1, tool: lookup, result: { ok: { output: { value: SYN-VALUE-0061 } } } } }
+          - type: model.response
+            payload: { message: { parts: [{ type: text, text: "Record k1 holds SYN-VALUE-0061." }] } }
+          - { type: run.ended, payload: { reason: responded } }
+    $rc:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, snapshotHash: $cur, payload: { replay: { sessionId: $s, snapshotHash: $snap } } }
+          - { type: tool.result, payload: { callId: c1, result: { ok: { output: { value: SYN-VALUE-0061 } } } } }
+          - { type: run.ended, payload: { reason: responded } }
+  ports:
+    snapshotStore:
+      t1:
+        $snap:
+          artifacts:
+            Persona: { $contains: [{ id: assistant, instructions: "SYN-INSTR-RECORDED", requiredHooks: [audit@1] }] }
+        $cur:
+          artifacts:
+            Persona: { $contains: [{ id: assistant, instructions: "SYN-INSTR-CURRENT" }] }
+  stubCalls:
+    lookup: [{ arguments: { key: k1 }, context: { sessionId: $s } }]
+    audit: [{ arguments: { sessionId: $s, point: afterToolCall } }, { arguments: { sessionId: $rp, point: afterToolCall } }]
+  providerRequests:
+    scripted-a: { count: 2 }
+    scripted-b: { count: 0 }

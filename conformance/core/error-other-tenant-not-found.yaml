@@ -2,26 +2,55 @@ schemaVersion: "0.1.0"
 id: core.error-other-tenant-not-found
 title: Operations on another tenant's session fail with `not_found`, never a distinct authorization error
 description: >-
-  A session belongs to t1. A principal of t2 calling run(), close(), or
-  cancel() on it receives `not_found`, never `unauthorized` or `conflict`.
-  The t1 session is unaffected.
+  Two sessions belong to t1. $s is idle; in $e, update_record (`approval:
+  always`) escalated, so $e is suspended with an open escalation. A caller
+  in t2 receives `not_found`, never `unauthorized` or `conflict`, and
+  nothing is appended, for each of: run(), close() and cancel() on $s;
+  decide() and resume() on $e by a t2 principal holding the reviewer role
+  in t2, approving $e's pending action; and exportBundle of $s. The t1
+  sessions are unaffected: $s stays idle with no t2 run, $e stays suspended
+  with no `decision` audit record and no
+  `escalation.resolved`, and update_record is never dispatched.
 requirements: [CORE-193]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:
   clock: "2026-01-01T00:00:00Z"
   idSeed: 1
-  config: { base: baseline }
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        approval: always
+        binding: { kind: native, handler: test.update_record }
   tenants:
     - id: t1
       principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
     - id: t2
-      principals: [{ id: p2, subject: user-2, assurance: multi_factor }]
+      principals:
+        - { id: p2, subject: user-2, assurance: multi_factor }
+        - { id: r2, subject: reviewer-2, assurance: multi_factor, roles: [reviewer] }
   providers:
     scripted-a:
       responses:
         - parts: [{ type: text, text: "Hello." }]
           usage: { inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record: []
 script:
   - action: run
     bind: $s
@@ -46,6 +75,34 @@ script:
     tenant: t2
     principal: p2
     expect: { ok: false, error: { category: not_found } }
+  - action: run
+    bind: $e
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $act }
+    expect: { ok: true, endReason: escalated }
+  - action: decide
+    session: $e
+    tenant: t2
+    reviewer: r2
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000193", pendingActionId: $act, type: approve }
+    expect: { ok: false, error: { category: not_found }, newEvents: 0 }
+  - action: resume
+    session: $e
+    tenant: t2
+    reviewer: r2
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000194", pendingActionId: $act, type: approve }
+    expect: { ok: false, error: { category: not_found }, newEvents: 0 }
+  - action: exportBundle
+    session: $s
+    tenant: t2
+    expect: { ok: false, error: { category: not_found } }
 expect:
   sessions:
     $s:
@@ -53,5 +110,17 @@ expect:
       absentEvents:
         - { type: run.started, tenantId: t2 }
         - { type: session.closed }
+    $e:
+      state: suspended
+      absentEvents:
+        - { type: run.started, payload: { kind: resume } }
+        - { type: escalation.resolved }
+        - { type: tool.call }
+  stubCalls:
+    update_record: { count: 0 }
+  ports:
+    auditLog:
+      t1:
+        $count: { of: { type: decision }, equals: 0 }
   providerRequests:
-    scripted-a: { count: 1 }
+    scripted-a: { count: 2 }

@@ -207,8 +207,9 @@ $defs:
             $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/provenances"
       replay:
         description: >-
-          Present for a session created by replay (EVAL-060 as amended
-          2026-11-14): the recorded session and its snapshot hash. The
+          Present for every session created by replay, `recorded` or
+          `candidate` (EVAL-060 as amended 2026-11-14): the recorded session
+          and its snapshot hash. The
           session's own snapshot is the recording's behaviour with the
           current deployment's bindings.
         type: object
@@ -414,6 +415,10 @@ $defs:
     required: [version]
     properties:
       version: { type: integer, minimum: 1 }
+      fencingToken:
+        description: The checkpoint's `fencingToken` after this save, the highest lease token issued for the session (PORT-030 as amended 2026-11-14); present once any lease has been issued.
+        type: integer
+        minimum: 1
 
   escalationRaised:
     description: The escalation record (HITL-010), as in `schemas/core/v1/hitl.yaml`.

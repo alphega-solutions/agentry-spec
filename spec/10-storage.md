@@ -237,3 +237,7 @@ Schemas: stored records in `schemas/ports/v1/records.yaml` (checkpoint, idempote
 
 - **PORT-020, PORT-031, PORT-040.** "The session's current run lease" means its current lease of either kind: a run lease or an operation lease (HITL-093). Every write outside a run takes one, and the fencing rules are unchanged.
 - **PORT-030** (text above edited). The checkpoint records `fencingToken`, the highest token issued for the session. A save that acquires a new lease sets it to that lease's token. It is kept when the lease is released, so the next lease takes `fencingToken + 1`. The field is optional so that earlier 0.x checkpoints stay readable (PORT-120). When it is absent, it is the recorded lease's token if there is one, otherwise 0. See the Area 6 amendment 2026-11-14.
+
+## Amendment 2026-11-14 — readings settled with the coverage fixtures (post-Phase 4 review)
+
+- **PORT-030: `checkpoint.saved`.** Every `checkpoint.saved` event carries the checkpoint's `fencingToken` after the save, once any lease has been issued. So the tokens of successive leases, including a crashed run's, are observable from the event log (PORT-031).

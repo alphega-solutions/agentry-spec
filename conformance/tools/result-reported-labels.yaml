@@ -26,7 +26,7 @@ description: >-
     drop it, so the result is invalid output (TOOL-070): a `fatal`
     `agentry.tool.invalid_output` result, the run ends `failed`, the
     session closes, and the reported content never reaches the model.
-requirements: [TOOL-071, TOOL-070]
+requirements: [TOOL-071, TOOL-070, HOOK-127, HOOK-122]
 contract: ">=0.1.0 <1.0.0"
 features: []
 setup:

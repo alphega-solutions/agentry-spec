@@ -383,3 +383,7 @@ Requirement text above has been edited where noted.
 - **CFG-090** (table edited).
   - `checkpoint` defaults to `turn`. Before this, the field had no default, so behaviour was undefined when no layer set it. Checkpoint granularity affects cost, not correctness: events are persisted when emitted, and the event log is authoritative (PORT-034).
   - `outputSchema` is `locked` in persona and profile. The profile's schema applies when the persona declares none, and a profile schema that differs from the persona's is a configuration error.
+
+## Amendment 2026-11-14 — readings settled with the coverage fixtures (post-Phase 4 review)
+
+- **CFG-110, CFG-061: `extensions`.** A secret reference (`secret://…`) anywhere in a binding's `extensions` is a configuration error: bindings take secrets only in `credentials`. A literal secret value in `extensions` cannot be told apart from an ordinary setting, so that half of the rule is *(untestable: verified by review)*.

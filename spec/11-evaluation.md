@@ -261,3 +261,7 @@ Requirement text above has been edited where noted.
 Requirement text above has been edited where noted.
 
 - **EVAL-043** (reading). A case that replays a trace bundle takes its persona and principal inputs from the bundle, so it need not declare them (`schemas/eval/v1/case.yaml`).
+
+## Amendment 2026-11-14 — readings settled with the coverage fixtures (post-Phase 4 review)
+
+- **EVAL-060: `session.created.replay`.** Every session created by replay, under `recorded` or `candidate`, names the recording in `session.created.replay` (`{sessionId, snapshotHash}`).

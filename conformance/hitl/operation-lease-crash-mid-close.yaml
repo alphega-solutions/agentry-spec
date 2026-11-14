@@ -1,0 +1,87 @@
+schemaVersion: "0.1.0"
+id: hitl.operation-lease-crash-mid-close
+title: A close() that crashes after appending session.closed leaves a lapsed operation lease; the next access rebuilds from the event log and finds the session closed
+description: >-
+  $s has one completed turn and is `idle`. close() of an idle session is a
+  write outside a run, so it takes an operation lease (HITL-090, HITL-093,
+  amendment 2026-11-14). The implementation is crashed at
+  `after_operation_events`: `session.closed` (`completed`) is in the
+  event log, but the final checkpoint save that would release the lease
+  and record the session `closed` is not done (HITL-093 steps 3 and 4).
+  The stored checkpoint therefore still says `idle`, with the crashed
+  operation's lease. The implementation restarts and the clock is
+  advanced one hour, well past any lease's expiry (default `leaseTtl`
+  PT5M), so the operation lease has lapsed.
+
+  Under HITL-093 a lapsed operation lease is superseded by the next
+  lease: there is no run to recover, and the next holder rebuilds the
+  session from the event log (PORT-034), which is authoritative over the
+  stale checkpoint. So the next operations on $s see it closed:
+
+  - run() fails with `conflict` (CORE-022) and persists nothing. Had it
+    trusted the checkpoint, it would have started turn 2 and called the
+    provider.
+  - close() also fails with `conflict` and persists nothing. Had it
+    trusted the checkpoint, it would have appended a second
+    `session.closed`.
+
+  The session ends `closed` (`completed`) with exactly one
+  `session.closed`, which has no `runId`; no turn 2 starts and the
+  provider receives one request.
+requirements: [HITL-093, PORT-034, CORE-022]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config: { base: baseline }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: text, text: "Hello." }]
+          usage: { inputTokens: 20, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: true, endReason: responded }
+  - crash: { at: after_operation_events, session: $s }
+  - action: close
+    session: $s
+  - restart: {}
+  - clock: { advance: PT1H }
+  - action: run
+    session: $s
+    principal: p1
+    input: [{ type: text, text: "SYN-after-crash" }]
+    expect: { ok: false, error: { category: conflict }, newEvents: 0 }
+  - action: close
+    session: $s
+    expect: { ok: false, error: { category: conflict }, newEvents: 0 }
+expect:
+  sessions:
+    $s:
+      state: closed
+      closeReason: completed
+      events:
+        mode: subsequence
+        items:
+          - { type: run.ended, payload: { reason: responded } }
+          - { type: session.closed, runId: { $absent: true }, payload: { reason: completed } }
+      absentEvents:
+        - { type: turn.started, turn: 2 }
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $all:
+            - $count: { of: { type: session.closed }, equals: 1 }
+            - $count: { of: { type: run.started }, equals: 1 }
+  providerRequests:
+    scripted-a: { count: 1 }
