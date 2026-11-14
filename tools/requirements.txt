@@ -1,4 +1,9 @@
-jsonschema>=4.21
-referencing>=0.35
-pyyaml>=6.0
-rfc8785>=0.1
+# Exact pins, transitive dependencies included, so spec CI is reproducible.
+# Update deliberately: bump, run every tool in tools/, and commit the result.
+attrs==26.1.0
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+PyYAML==6.0.3
+referencing==0.37.0
+rfc8785==0.1.4
+rpds-py==2026.9.1
