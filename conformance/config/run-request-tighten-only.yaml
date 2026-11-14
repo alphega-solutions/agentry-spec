@@ -9,7 +9,9 @@ description: >-
   Raising the budget, loosening deliveryMode (buffered → streamed), and
   setting a locked field (outputSchema) or a union field
   (defaultAttachmentLabels) each fail with invalid_input before anything is
-  persisted. Tightening a stricter field (streamed → buffered on streamed@1)
+  persisted. So do tightening `guardrails.requireDeterministic`, a
+  load-time rule, and narrowing the `intersect` field `model.fallbacks`.
+  Neither is in CFG-101's list (as amended 2026-11-14). Tightening a stricter field (streamed → buffered on streamed@1)
   is accepted, recorded, and applied: no deltas reach the host.
 requirements: [CFG-101, CFG-102]
 contract: ">=0.1.0 <1.0.0"
@@ -98,6 +100,24 @@ script:
     overrides: { defaultAttachmentLabels: [pii] }
     input: [{ type: text, text: "Hi" }]
     expect: { ok: false, error: { category: invalid_input }, newEvents: 0 }
+  # A stricter field that is a load-time rule, not run behaviour (CFG-101 as amended 2026-11-14).
+  - action: run
+    bind: $x5
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    overrides: { guardrails: { requireDeterministic: true } }
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: false, error: { category: invalid_input, details: { field: /guardrails/requireDeterministic } }, newEvents: 0 }
+  # An intersect field, even narrowed.
+  - action: run
+    bind: $x6
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    overrides: { model: { fallbacks: [] } }
+    input: [{ type: text, text: "Hi" }]
+    expect: { ok: false, error: { category: invalid_input, details: { field: /model/fallbacks } }, newEvents: 0 }
   # Tightening a stricter field.
   - action: run
     bind: $b
