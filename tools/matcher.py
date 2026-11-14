@@ -55,12 +55,16 @@ def _num(v: Any) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 
+NUMBER_TOLERANCE = 1e-9  # fixture.yaml: numbers compare as decimals, absolute tolerance 1e-9
+
+
 def _equal(a: Any, b: Any) -> bool:
-    """Deep equality with JSON semantics: 1 == 1.0, but True != 1."""
+    """Deep equality with JSON semantics: 1 == 1.0, but True != 1. Numbers
+    are equal within an absolute tolerance of 1e-9 (fixture.yaml)."""
     if isinstance(a, bool) or isinstance(b, bool):
         return type(a) is type(b) and a == b
     if _num(a) and _num(b):
-        return a == b
+        return abs(a - b) <= NUMBER_TOLERANCE
     if isinstance(a, dict) and isinstance(b, dict):
         return a.keys() == b.keys() and all(_equal(a[k], b[k]) for k in a)
     if isinstance(a, list) and isinstance(b, list):
@@ -198,10 +202,10 @@ class Matcher:
             if present and isinstance(actual, (list, str, dict)) and len(actual) == arg:
                 yield env
         elif name == "$gte":
-            if present and _num(actual) and actual >= arg:
+            if present and _num(actual) and actual >= arg - NUMBER_TOLERANCE:
                 yield env
         elif name == "$lte":
-            if present and _num(actual) and actual <= arg:
+            if present and _num(actual) and actual <= arg + NUMBER_TOLERANCE:
                 yield env
         elif name == "$contains":
             if present and isinstance(actual, list):
