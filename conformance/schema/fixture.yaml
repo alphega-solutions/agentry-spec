@@ -554,7 +554,7 @@ $defs:
         description: For `replay`, a bundle file path relative to `conformance/` (e.g. `golden/x.yaml`), or a placeholder bound by an earlier `bindResult`.
         type: string
       snapshot:
-        description: "For `replay`: `recorded` (the bundle's snapshot) or `candidate` (the fixture's current configuration) (EVAL-060)."
+        description: "For `replay`: `recorded` (the bundle's snapshot, bound to the current deployment's providers, ports and endpoints) or `candidate` (the fixture's current configuration) (EVAL-060 as amended 2026-11-14)."
         enum: [recorded, candidate]
       hookMode: { enum: [reEvaluate, replayDecisions] }
       as: { enum: [case, fixture], description: For `convert`. }
