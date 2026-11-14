@@ -89,6 +89,14 @@ allOf:
     then: { required: [turn] }
   - if: { properties: { type: { enum: [model.request, model.response, tool.call, tool.result] } } }
     then: { required: [turn, step] }
+  # decisions and escalations belong to a step (CORE-150 as amended 2026-11-14);
+  # a sessionStart hook decision is turn 1, step 0 (HOOK-091 reading)
+  - if: { properties: { type: { enum: [policy.decision, escalation.raised] } } }
+    then: { required: [turn, step] }
+  - if:
+      required: [type, runId]
+      properties: { type: { const: hook.decision } }
+    then: { required: [turn, step] }
   # context events carry their position (Area 7 amendment 2026-11-01)
   - if: { properties: { type: { const: context.retrieved } } }
     then: { required: [turn] }

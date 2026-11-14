@@ -10,6 +10,8 @@ instance:
   traceContext: { traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" }
   eventId: 0190a3c4-0000-7000-8000-000000000023
   seq: 9
+  turn: 1
+  step: 1
   type: escalation.raised
   provenances: [model]
   labels: []

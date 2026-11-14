@@ -131,7 +131,9 @@ $defs:
     additionalProperties: false
     required: [protocol, contract, implementation, unsupportedFeatures, crashPoints]
     properties:
-      protocol: { description: Driver protocol version this driver speaks., type: string, pattern: "^1\\.\\d+$" }
+      protocol:
+        description: The driver protocol version this driver speaks. The protocol is versioned with the contract (ADR-0002, ADR-0020), so this is the contract version whose `driver.yaml` the driver implements.
+        $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/contractVersion"
       contract: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/contractVersion" }
       implementation:
         type: object

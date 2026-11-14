@@ -1,0 +1,185 @@
+schemaVersion: "0.1.0"
+id: providers.route-skips-incapable-fallback
+title: A routing switch takes the first fallback that is both allowed for every label and capable of the request, skipping an allowed fallback that lacks a needed capability
+description: >-
+  The deployment adds scripted-c. The bundle's `phi` policy allows only
+  scripted-b and scripted-c; `pii` allows all three providers. scripted-a
+  and scripted-c have `vision`; scripted-b declares `vision: false`.
+  Persona router has primary scripted-a, then fallbacks scripted-b and
+  scripted-c. Profile default@1 labels attachments `phi`; profile
+  plain@1 labels them `pii`. Each session sends the same image.
+
+  - $sPhi (default@1): the image is labelled `phi`, so the primary
+    scripted-a is not allowed (PROV-050). The first fallback, scripted-b,
+    is allowed but cannot take an image (`vision: false`, PROV-042), so
+    the harness skips it and uses scripted-c, the first fallback that is
+    both allowed and capable (PROV-051). The switch is a routing switch,
+    because the primary was not allowed for a label. One `policy.decision`
+    of kind `routing` and outcome `switch` names scripted-c/model-c. The
+    `model.request` records `role: fallback`, `fallbackReason: routing`
+    (Area 9 reading settled 2026-11-14). Neither scripted-a nor
+    scripted-b receives a request.
+  - $sPii (control, plain@1): the image is labelled `pii`, which every
+    provider is allowed, and scripted-a has `vision`, so the primary is
+    used with no `policy.decision`.
+requirements: [PROV-051, PROV-042, PROV-050]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: test
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          - { id: scripted-c, adapter: scripted, endpoint: "memory://scripted-c", region: test-region, retainsData: false }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b, scripted-c]
+            redaction: [{ mode: mask }]
+          phi:
+            allowedProviders: [scripted-b, scripted-c]
+            redaction: [{ mode: mask }]
+      - kind: HarnessProfile
+        id: default
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: [phi]
+      - kind: HarnessProfile
+        id: plain
+        version: 1
+        schemaVersion: "0.1.0"
+        idleTtl: PT24H
+        suspendedTtl: PT72H
+        stepLimit: 8
+        deliveryMode: buffered
+        budget: { tokens: 100000 }
+        timeouts: { run: PT5M, tool: PT30S }
+        retry: { unavailable: 2 }
+        outputRetryLimit: 2
+        limits: { partSize: 1048576, sessionSize: 10485760 }
+        defaultAttachmentLabels: [pii]
+      - kind: Persona
+        id: router
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test router
+        instructions: "You are a test assistant."
+        tools: [lookup@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, plain@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+            - { provider: scripted-c, name: model-c }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        # $sPii
+        - parts: [{ type: text, text: "I see a chart." }]
+          usage: { inputTokens: 30, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b:
+      capabilities: { vision: false }
+      responses: []
+    scripted-c:
+      responses:
+        # $sPhi
+        - parts: [{ type: text, text: "I see a chart." }]
+          usage: { inputTokens: 30, outputTokens: 4, cachedInputTokens: 0, reasoningTokens: 0 }
+  ports:
+    blobStore:
+      t1:
+        - id: blob-img-51
+          hash: "sha256:b137d4fedee2dcd3f23a9e3f3d774e5d254879e2fd178bc2fc46df934cf936b0"
+          mediaType: image/png
+          size: 19
+          data: "U1lOLUlNQUdFLVBST1YtMDA0Mg=="
+script:
+  - action: run
+    bind: $sPhi
+    tenant: t1
+    principal: p1
+    persona: router@1
+    input:
+      - { type: text, text: "Describe this" }
+      - { type: image, mediaType: image/png, source: upload, blob: { id: blob-img-51, hash: "sha256:b137d4fedee2dcd3f23a9e3f3d774e5d254879e2fd178bc2fc46df934cf936b0", mediaType: image/png, size: 19 } }
+    expect: { ok: true, endReason: responded }
+  - action: run
+    bind: $sPii
+    tenant: t1
+    principal: p1
+    persona: router@1
+    profile: plain@1
+    input:
+      - { type: text, text: "Describe this" }
+      - { type: image, mediaType: image/png, source: upload, blob: { id: blob-img-51, hash: "sha256:b137d4fedee2dcd3f23a9e3f3d774e5d254879e2fd178bc2fc46df934cf936b0", mediaType: image/png, size: 19 } }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $sPhi:
+      events:
+        mode: subsequence
+        items:
+          - { type: policy.decision, payload: { kind: routing, outcome: switch, details: { provider: scripted-c, model: model-c } } }
+          - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-c, model: model-c, role: fallback, fallbackReason: routing } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: model.request, payload: { provider: scripted-a } }
+        - { type: model.request, payload: { provider: scripted-b } }
+        - { type: policy.decision, payload: { outcome: block } }
+    $sPii:
+      events:
+        mode: subsequence
+        items:
+          - { type: model.request, turn: 1, step: 1, payload: { provider: scripted-a, model: model-a, role: primary } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: policy.decision }
+  ports:
+    eventLog:
+      t1:
+        $sPhi:
+          $count: { of: { type: policy.decision, payload: { kind: routing } }, equals: 1 }
+  providerRequests:
+    scripted-a: { count: 1 }
+    scripted-b: { count: 0 }
+    scripted-c: { count: 1 }

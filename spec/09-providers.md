@@ -257,3 +257,7 @@ Requirement text above has been edited where noted.
 
 - **PROV-042** (text above edited). `agentry.provider.unsupported_content` was the only code with two categories: `invalid_input` before a run, and `fatal` during one. The mid-run case is now `agentry.provider.no_capable_model` (`fatal`). `unsupported_content` keeps `invalid_input`.
 - **PROV-074** (text above edited). A model hook that returns `continue` emits no `hook.decision` (HOOK-060, HOOK-102), so its usage and cost are recorded in `run.ended.unrecordedUsage` and `unrecordedCost`.
+
+## Amendment 2026-11-14 — review leftovers (post-Phase 4 review)
+
+- **PROV-051 with a capability need** (reading). When the current model is not allowed for a label, the harness uses the first fallback that is both allowed for every label and capable of the request. It skips allowed fallbacks that lack a needed capability (PROV-042). The switch is a routing switch, because the primary was not allowed: one `policy.decision` (`routing`, `switch`), and `fallbackReason: routing` on the `model.request`. `fallbackReason: capability` with no decision applies only when the primary is allowed but not capable. Fixture: `providers.route-skips-incapable-fallback`.
