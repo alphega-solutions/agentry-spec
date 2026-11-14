@@ -69,6 +69,7 @@ Map-valued fields merge per key: a lower layer **MAY** add new keys; for an exis
 | Delivery mode | `buffered` → `streamed` |
 | Taint outcome | `block` → `escalate` → `allow` |
 | Approval policy | `always` → `policy` → `never` |
+| Approval default (HOOK-133) | `escalate` → `continue` |
 | Checkpoint granularity | `tool` → `turn` |
 | Include reasoning in traces | `false` → `true` |
 
@@ -123,6 +124,7 @@ A policy bundle holds mandatory organisational rules. Bundles may be stacked; ea
 | `trustedAttachmentSources` | `intersect` | Attachment sources treated as trusted (Area 1, CORE-121) |
 | `allowedProviders` | `intersect` | Providers any persona may use *(Area 9)* |
 | `toolTaintDefaults` | `stricter` | Per-tool overrides of the taint outcome *(Area 5)* |
+| `approvalDefault` | `stricter` | Outcome of an `approval: policy` call when no approval rule is true; bundle-only (HOOK-133, Area 5 amendment 2026-11-13) |
 | `defaultFallbackMessage` | `locked` | Fallback message when a persona declares none (Area 1, CORE-181) |
 | `dataResidency` | `locked` | Region constraints for storage ports *(Area 10)* |
 

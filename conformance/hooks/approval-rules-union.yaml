@@ -8,7 +8,9 @@ description: >-
   content enters any session, so the taint rule does not act and only the
   approval stage decides.
 
-  - $sFalse: value v1 → every rule is false → dispatched, no escalation.
+  - $sFalse: value v1 → every rule is false → the bundle's
+    `approvalDefault: continue` applies (HOOK-131, HOOK-133) → dispatched,
+    no escalation.
   - $sBundle: value bundle-flag → the bundle's rule is true → escalation
     from source `approval`, not dispatched.
   - $sPersona: value persona-flag → the persona's rule is true (it is not
@@ -31,6 +33,7 @@ setup:
         policyInstructions: "Follow organisational policy."
         defaultFallbackMessage: "I can't help with that request."
         approvalRules: ["call.arguments.value == 'bundle-flag'"]
+        approvalDefault: continue
         sensitivityPolicies:
           pii:
             allowedProviders: [scripted-a, scripted-b]

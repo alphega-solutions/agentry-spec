@@ -6,7 +6,8 @@ description: >-
   matches the value `needs-review`.
 
   - $sPass: untainted, value v1 → no taint decision, the rule does not
-    match, the call is dispatched without escalation.
+    match, the call is dispatched without escalation (the bundle sets
+    `approvalDefault: continue`, HOOK-133).
   - $sReview: untainted, value needs-review → escalation from the approval
     stage only (`sources: [approval]`); no taint decision.
   - $sTainted (contrast): an untrusted lookup result taints the session;
@@ -35,6 +36,17 @@ setup:
         idempotent: false
         approval: policy
         binding: { kind: native, handler: test.update_record }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        # Rules act as filters here: a policy call no rule matches continues (HOOK-133).
+        approvalDefault: continue
+        sensitivityPolicies:
+          pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+          phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
       - kind: Persona
         id: assistant
         version: 1

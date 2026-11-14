@@ -7,7 +7,8 @@ description: >-
   type-checks at load (`call.arguments` is a dynamic map), but reading a
   missing map key is a CEL evaluation error at run time (HOOK-113).
 
-  - $sOff: flag `off` → the rule evaluates to false → dispatched.
+  - $sOff: flag `off` → the rule evaluates to false → dispatched (the
+    bundle sets `approvalDefault: continue`, HOOK-133).
   - $sOn: flag `on` → true → escalation from source `approval`.
   - $sMissing: no `flag` → evaluation error → treated as true →
     escalation from source `approval`; the call is not dispatched.
@@ -37,6 +38,17 @@ setup:
         idempotent: true
         approval: policy
         binding: { kind: native, handler: test.set_flag }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        # Rules act as filters here: a policy call no rule matches continues (HOOK-133).
+        approvalDefault: continue
+        sensitivityPolicies:
+          pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+          phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
       - kind: Persona
         id: assistant
         version: 1
