@@ -1,6 +1,6 @@
 # Design notes — Memory: skills, episodes, facts, and the persona boundary
 
-**Status:** Draft · **Date:** 2026-11-14
+**Status:** Settled 2026-11-14 · **Date:** 2026-11-14
 **Feeds:** a 1.x memory extension (Areas 2, 6, 7, 10); one 1.0 fix to Area 4 (§9)
 **Related:** `notes/context.md` X1 (no memory concept in the 1.0 core), Area 2 (personas, merge rules, snapshots), Area 4 (tool result labels, TOOL-071), Area 5 (taint, HOOK-121/122/126/127), Area 6 (review), Area 7 (retrieval, compaction, CTX-081), Area 8 (delegation, ORCH-010–013), Area 10 (ports, retention), Area 11 (replay, eval), ADR-0008, ADR-0014, ADR-0015
 
@@ -71,9 +71,12 @@ How recalled content behaves:
 
 ## 5. The memory store port
 
-A new Area 10 port, alongside the vector store:
+A new Area 10 port, **separate from the vector store** (M1). The vector store stays read-only reference data; memory needs versioned entries, principal scoping, labels on every entry and erasure, which the vector store contract does not have.
 - **Operations:** `write`, `search`, `get`, `delete`, `erase(principal)`, and `deleteDerivedFrom(session)`.
-- **Scoping:** every operation is tenant-scoped (ADR-0014). Entries may also be **principal-scoped**: readable only by the principal that owns them, or by those an `access` field names, as for vector records.
+- **Search:** keyword search is required; vector search is optional and declared by the adapter (M1).
+- **Scoping:** every operation is tenant-scoped (ADR-0014). Entries are **principal-scoped by default**: readable only by the principal that owns them. Tenant-wide entries are opt-in per store (M2).
+- **No cross-principal reads through the agent:** reviewers and administrators do not read another principal's memory through a session. Administrative access is a separate host operation, and every such read is audited (M2).
+- **Erasure:** `erase(principal)` removes the principal's entries and everything derived from them, traced through `sources`: episodes built from their sessions, and facts consolidated from those episodes. Events and audit records keep their own retention (PORT-110). Data under a legal hold (PORT-114) is not erased while held; the deferral is audited and erasure completes when the hold is released (M3).
 - **Entries:** each stores its labels, provenances and sources, and returns them on read.
 - **Versioning:** a write never edits an entry in place, so recorded refs stay resolvable for replay and audit.
 - **Port cases:** tenant isolation, principal scoping, labels round-trip, version immutability, erasure.
@@ -84,9 +87,9 @@ The deployment declares stores, as it declares vector store sources.
 
 ### 6.1 Reading
 
-Two modes, as for retrieval (CTX-030/031):
+Two modes, as for retrieval (CTX-030/031). **The first 1.x release ships recall by tool only**; automatic recall and its gate follow in a later 1.x release (M4).
 - **By tool:** `recall` (facts) and `recall_episode` (episodes), built-in tools over the port. The model asks; the call is governed like any tool.
-- **Automatic:** the context manager recalls before a model call. A **relevance gate** decides whether to recall at all, since recalling on every turn costs latency and biases answers toward stored content. The gate:
+- **Automatic (later 1.x):** the context manager recalls before a model call. A **relevance gate** decides whether to recall at all, since recalling on every turn costs latency and biases answers toward stored content. The gate:
   - is a model-judged or rule check with a recorded decision;
   - fails **closed** by default: on error, nothing is recalled, as a guardrail does (HOOK-053);
   - is bounded by `context.memory` limits (count, tokens).
@@ -95,7 +98,7 @@ Assembly position (Area 7 §2): after system content and loaded skills, before h
 
 ### 6.2 Episodes
 
-An episode is a summary of a closed session, built like a compaction summary (CTX-081):
+An episode is a summary of a closed session, one per session (M8), built like a compaction summary (CTX-081):
 - **Provenance:** the least-trusted provenance of what it summarises.
 - **Labels:** the union of its sources' labels.
 - **Sources:** the session and event IDs it was built from.
@@ -113,6 +116,7 @@ An episode is a summary of a closed session, built like a compaction summary (CT
   - do not store operating state or the assistant's own claims as facts;
   - do not re-store what the same session recalled (a feedback loop that inflates and entrenches memory);
   - dedupe against existing entries.
+- **Scope:** consolidation writes principal-scoped facts by default. A write to a tenant-wide store is always escalated for review under that store's reviewer rules, whatever the taint state (M7).
 - **Triggers:** on session close, after N closed sessions, or on a schedule. Every trigger starts a session as above.
 
 ### 6.4 Skills
@@ -123,7 +127,7 @@ A **`Skill`** is a new configuration artifact kind:
 - `tools` (references it uses) and `requiredHooks` (hooks it adds).
 
 How skills behave:
-- **Loading:** the persona's skill index (IDs and descriptions) goes into system content. A skill's body is loaded on demand by the built-in `load_skill` tool, or automatically when it matches the input. Unused skills cost no tokens.
+- **Loading:** the persona's skill index (IDs and descriptions) goes into system content. The model chooses a skill from the index and loads its body with the built-in `load_skill` tool, so the choice is recorded as a tool call and replays. There is no automatic matching on the input: keyword matching is easy to hijack with a message stuffed with trigger words (M6). Unused skills cost no tokens.
 - **Trust:** loaded bodies have provenance `system`. They are reviewed configuration, pinned in the snapshot and reproduced on replay.
 - **Reach:** a skill's tools must be in the persona's `tools`, checked at load (as CFG-082). A skill narrows, never widens, what the agent can reach (as ORCH-013).
 - **Learned skills are proposals.** An agent may call `propose_skill`. That raises a review (Area 6) carrying the proposed artifact. Approval produces a new artifact version through the normal configuration pipeline, not a runtime edit. The same applies to any proposed change to persona instructions.
@@ -162,13 +166,13 @@ A child session gets its own persona's skills and memory stores, never the paren
 | Field | Where | Merge | Purpose |
 |---|---|---|---|
 | `skills` | Persona | `union` | Skills this persona may load (`id@version`) |
-| `requiredSkills` | Policy bundle | `union` | Organisation-mandated procedures, the counterpart of `requiredHooks` |
+| `requiredSkills` | Policy bundle | `union` | *Deferred (M5).* Organisation-mandated procedures, the counterpart of `requiredHooks`; added when needed |
 | `memoryStores` | Persona | `intersect` | Stores this role may read or write; default none, so memory is opt-in per role |
 | `trustedMemoryStores` | Policy bundle | `intersect` | Stores whose recalled content does not taint; settable only in bundles |
-| `context.memory` | Bundle, profile | `min` / `stricter` per field | Automatic recall on or off, gate, limits; like `context.retrieval` |
+| `context.memory` | Bundle, profile | `min` / `stricter` per field | *With automatic recall (M4).* Automatic recall on or off, gate, limits; like `context.retrieval` |
 | Memory stores | Deployment | — | Store declarations and bindings, like vector store sources |
 
-There is deliberately **no persona field that memory can write to**.
+There is deliberately **no persona field that memory can write to**. Fields added later with a `union`, `intersect`, `min` or `stricter` rule do not break existing configuration, so deferring them is safe.
 
 ## 9. The 1.0 fix: labels from tool results
 
@@ -193,16 +197,16 @@ This makes host-provided memory safe enough for 1.0 without the 1.x extension.
   Each probe runs in a fresh session, so answers cannot come from history.
 - **Receipts:** the host can be told which memory refs shaped a response, from the recorded events.
 
-## 11. Open questions
+## 11. Decisions (settled 2026-11-14)
 
-1. **Search model.** Vector, keyword, or both? Is the memory store a specialisation of the vector store port, or separate?
-2. **Scope defaults.** Are facts principal-scoped by default, with tenant-wide facts opt-in? Who may read another principal's memory (reviewers, administrators), and is that access audited?
-3. **Erasure.** Does `erase(principal)` also redact the principal's content in retained events and audit records, or only memory? How does it interact with legal holds (PORT-114)?
-4. **Automatic recall in 1.x,** or tool-only first?
-5. **`requiredSkills`.** Needed in 1.x, or wait for demand?
-6. **Skill matching.** When automatic loading is on, how are skills matched (description overlap, a model judge, a rule)? Which signal is recorded?
-7. **Consolidation scope.** Per principal only, or tenant-wide knowledge? Who reviews tenant-wide writes?
-8. **Episode granularity.** Per session, or per task within a session?
+- **M1 — Search model.** A separate `MemoryStore` port, not a specialisation of the vector store. Keyword search is required; vector search is optional and declared by the adapter.
+- **M2 — Scope.** Entries are principal-scoped by default; tenant-wide entries are opt-in per store. No principal's memory is read by another through a session, reviewers and administrators included; administrative access is a separate, audited host operation.
+- **M3 — Erasure.** `erase(principal)` covers memory and everything derived from it (episodes, consolidated facts), traced through `sources`. Retained events and audit records follow their own retention. Legal holds take precedence; deferred erasure is audited. Redacting event content on erasure is a separate decision, not taken here.
+- **M4 — Automatic recall.** Not in the first 1.x release: recall is by tool only. Automatic recall, the relevance gate and `context.memory` come in a later 1.x release.
+- **M5 — `requiredSkills`.** Deferred until an organisation needs to mandate a procedure. Persona `skills` ships first.
+- **M6 — Skill selection.** The model chooses from the skill index through `load_skill`. No automatic matching on the input.
+- **M7 — Consolidation scope.** Principal-scoped by default. Writes to tenant-wide stores always escalate for review under the store's reviewer rules.
+- **M8 — Episode granularity.** One episode per closed session. Per-task episodes wait until "task" is a defined unit.
 
 ## 12. Candidate domain concepts
 
@@ -211,8 +215,7 @@ Memory store · Memory reference · Episode · Fact · Consolidation session · 
 ## 13. Next steps
 
 1. Settle the 1.0 fix (§9) as an Area 4 amendment with fixtures.
-2. Resolve the open questions here.
-3. ADRs:
+2. ADRs:
    - **(a)** Memory store port and memory references (Areas 7, 10).
    - **(b)** `Skill` artifact and on-demand loading (Areas 2, 7).
    - **(c)** Learned skills and persona changes only through review (Area 6).
