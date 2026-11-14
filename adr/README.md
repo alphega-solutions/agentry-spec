@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-Phase 2 records every cross-cutting decision made during Phases 0–1. All ADRs below were accepted on 2026-10-31 when Phase 2 was approved. Accepted ADRs are changed only by a new ADR that supersedes them.
+Phase 2 records every cross-cutting decision made during Phases 0–1. ADR-0001–0015 were accepted on 2026-10-31, when Phase 2 was approved; ADR-0016–0020 were accepted on 2026-11-14, after the post-Phase 4 review. An accepted decision is changed only by a new ADR that supersedes it. A dated **Note** may record how later specs refine an ADR's details without changing its decision (see ADR-0007, ADR-0008, ADR-0015).
 
 
 | ADR | Decision | Status |
@@ -30,4 +30,5 @@ Phase 2 records every cross-cutting decision made during Phases 0–1. All ADRs 
 
 - [ ] Inventory ADRs from the earlier `@alphega/agentry` scaffold and mark each keep / revise / retire (needs repo access).
 - Further ADRs will be added as Tier 2 notes settle (HITL, context and memory, providers, content).
-- ADR-0016–0018 (memory, skills, reviewed behaviour changes), accepted 2026-11-14, govern a 1.x extension and change nothing in 1.0; they enter the spec as Areas 2, 6, 7 and 10 amendments with schemas and fixtures.
+- ADR-0016–0019 (memory, skills, reviewed behaviour changes, shadow mode), accepted 2026-11-14, target **1.x** and change nothing in 1.0. They enter the spec as amendments with schemas and fixtures: ADR-0016–0018 in Areas 2, 6, 7 and 10, and ADR-0019 in Areas 2, 5 and 11. `spec/README.md` lists them under "Accepted decisions not yet specified".
+- ADR-0020 (shared runner) is applied: EVAL-020 as amended 2026-11-14, `conformance/schema/driver.yaml` and `tools/runner/`.

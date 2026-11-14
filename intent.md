@@ -81,7 +81,7 @@ The contract will eventually specify each of these areas. Order reflects intende
 
 - **HIPAA.** The contract must support PHI redaction, append-only audit, regional data residency, and provider restriction per persona. Fixtures and examples contain synthetic data only.
 - **Three languages from the start.** Every concept must be expressible idiomatically in TypeScript, Java, and Python. A concept that only fits one language's idioms is a design smell.
-- **Language-neutral formats.** Contract artifacts are data (schemas, fixtures) and prose — never code in one language.
+- **Language-neutral formats.** Contract artifacts are data (schemas, fixtures) and prose — never code in one language. *(Clarified 2026-11-14: the conformance runner in `tools/runner/` is tooling, not a contract artifact. What binds is the fixture format, the driver protocol and the matching semantics in `conformance/`, which any language can implement. ADR-0020 makes the runner's report the basis of a conformance claim so that every implementation is judged by one interpretation.)*
 - **Versioning.** Every persisted or emitted artifact carries a contract version.
 - **Public contract, private implementations.** Nothing in this repository may depend on, describe, or leak private implementation code, client details, or the internals of any consuming product. The conformance suite must be runnable by anyone, so a third party could build a conforming implementation from this repository alone.
 

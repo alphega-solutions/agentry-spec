@@ -13,6 +13,7 @@ It exits 0 when no fixture failed. The report's `conforms` (the claim, EVAL-023)
 |---|---|
 | `run.py` | CLI: discovers fixtures, runs each, writes the report and JUnit |
 | `engine.py` | Executes one fixture: configuration resolution, placeholders, actions and scheduling (`startAfter`, discrete-event clock advance), crashes and restarts, captures, step outcomes and every top-level expectation |
+| `cases.py` | Executes port cases, provider adapter cases and CEL rule fixtures |
 | `client.py` | JSON-RPC 2.0 over the driver's stdio |
 | `fake_driver.py` | A test driver that runs no harness and answers `replay` from golden bundles; used by `tools/runner_test.py` |
 

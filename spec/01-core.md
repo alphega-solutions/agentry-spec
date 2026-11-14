@@ -148,7 +148,7 @@ A session is in exactly one state.
 - **CORE-121** `image` and `file` parts supplied with a request (attachments) **MUST** carry provenance `attachment:<source>`, where `<source>` is the channel the host declares (e.g. `upload`). They **MUST** be untrusted, regardless of who supplied them, unless a policy bundle lists their source in `trustedAttachmentSources`.
 - **CORE-122** Content derived from a part (for example, text extracted from a file) **MUST** inherit that part's provenance and labels.
 - **CORE-123** Until a hook labels it, an attachment **MUST** carry the harness profile's default attachment labels.
-- **CORE-124** Parts produced by a tool **MUST** have provenance `tool:<name>` and carry the tool's sensitivity labels; they are untrusted unless a policy bundle marks the tool `trustedOutput: true`.
+- **CORE-124** Parts produced by a tool **MUST** have provenance `tool:<id>` and carry the tool's sensitivity labels together with any labels its result reports (TOOL-071); they are untrusted unless the effective policy lists the tool in `trustedTools` (CFG-070, ADR-0008). *(Edited 2026-11-14 to match TOOL-004 and TOOL-071.)*
 
 ### 7.4 Content and hooks
 
@@ -270,7 +270,7 @@ When a hook or policy decision blocks, the effect depends on where it occurs. Ho
 | Category | Meaning | Required handling |
 |---|---|---|
 | `invalid_input` | Bad arguments or request | Returned to the model or caller to correct |
-| `unauthorized` | Principal lacks rights or assurance | Not retried; may escalate |
+| `unauthorized` | Principal lacks rights in the host's authorization (insufficient assurance is `policy`, amendment 2026-11-01) | Not retried; may escalate |
 | `policy` | Blocked by a guardrail or policy decision | Not retried; outcome per §10 |
 | `limit` | Budget, step limit, or timeout reached | Run ends with the matching reason |
 | `unavailable` | A dependency is temporarily down | Retried per profile; then treated as `fatal` |

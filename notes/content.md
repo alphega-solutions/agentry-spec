@@ -103,3 +103,7 @@ Fixtures:
 - [ ] Hook `rewrite` replaces a binary part; in-place binary edit rejected
 - [ ] Unscanned attachment receives the profile's default labels
 - [ ] Part exceeding the size limit → `invalid_input`
+
+## Amendment 2026-11-14 — labels reported by tool results
+
+A tool result carries its tool's declared labels **and** any labels the result reports (TOOL-071 as amended 2026-11-14). Statements here that a result carries "the tool's labels" should be read with that extension.

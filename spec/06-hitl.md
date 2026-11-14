@@ -22,7 +22,7 @@ As in Area 1 §2. Requirement IDs use the prefix `HITL-`. The schemas `Escalatio
 | Source | Trigger |
 |---|---|
 | `taint` | The taint rule's outcome is `escalate` (HOOK-122) |
-| `approval` | A call's effective approval is `always`; or `policy` and an approval rule is true, errors, or none is declared (TOOL-035, HOOK-131, HOOK-132) |
+| `approval` | A call's effective approval is `always`; or `policy` and an approval rule is true or errors, or no rule is true and the effective `approvalDefault` is `escalate` (TOOL-035, HOOK-131–133) |
 | `hook` | A hook returns `escalate` (HOOK-033) |
 | `recovery` | A non-idempotent mutating call has an unknown outcome: after a crash (TOOL-062, §10) or a timeout (TOOL-055) |
 
@@ -79,7 +79,7 @@ As in Area 1 §2. Requirement IDs use the prefix `HITL-`. The schemas `Escalatio
   - any single `reject` rejects the action immediately;
   - each `approve` counts toward the original content, and each `edit` counts toward its replacement content;
   - the action is approved when the required number of distinct reviewers have approved the **same** content (the original, or one identical replacement). Until then it stays undecided;
-  - each `confirm` counts toward the outcome it states (`outcome`, and `output` if supplied). A `recovery` action is decided when the required number of distinct reviewers have confirmed the **same** outcome. That outcome is the one recorded and delivered (§7.3). Until then the action stays undecided, including while reviewers disagree.
+  - each `confirm` counts toward the outcome it states (`outcome`, and `output` if supplied). A `recovery` action **MUST** be decided only when the required number of distinct reviewers have confirmed the **same** outcome, and that outcome **MUST** be the one recorded and delivered (§7.3). Until then the action **MUST** stay undecided, including while reviewers disagree.
 
 ### 7.3 Effects
 
@@ -117,7 +117,7 @@ As in Area 1 §2. Requirement IDs use the prefix `HITL-`. The schemas `Escalatio
 ## 10. Recovery of interrupted runs
 
 - **HITL-090** An active run **MUST** hold a renewable lease recorded with its checkpoint. A run whose lease lapses (for example, after a process crash) is **orphaned**. Every other write to a session's event log, checkpoint, idempotency records or audit log **MUST** be made under an operation lease (HITL-093). This covers `decide()`, `close()` and `cancel()` of an idle or suspended session, and expiry processing.
-- **HITL-091** An implementation **MUST** detect orphaned runs, at the latest when the session is next accessed, and end them:
+- **HITL-091** *(Superseded: replaced by the ordered per-call procedure in the amendment 2026-11-01, "from Phase 4 (Area 4 fixtures)"; the bullets below are the original text.)* An implementation **MUST** detect orphaned runs, at the latest when the session is next accessed, and end them:
   - if a non-idempotent mutating call has a started record and no outcome (TOOL-062): raise a `recovery` escalation and end the run `escalated`;
   - if an idempotent mutating call was in flight: re-dispatch it with the same idempotency key, then continue the run;
   - otherwise: end the run `failed`.

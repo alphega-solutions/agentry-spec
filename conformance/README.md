@@ -8,6 +8,10 @@ Data-only test cases every agentry implementation must pass (Area 11). An implem
 |---|---|
 | `schema/fixture.yaml` | Format of a conformance fixture (EVAL-001–004) |
 | `schema/cel-fixture.yaml` | Format of a CEL rule fixture (EVAL-005) |
+| `schema/port-case.yaml` | Format of a port adapter test-kit case (PORT-130) |
+| `schema/adapter-case.yaml` | Format of a provider adapter case (EVAL-011, EVAL-036) |
+| `schema/adapter-manifest.yaml` | Format of a provider adapter's manifest |
+| `schema/driver.yaml` | The driver protocol between the shared runner and an implementation (EVAL-020, ADR-0020) |
 | `shared/baseline/` | Configuration set most fixtures start from |
 | `core/` | Area 1 fixtures |
 | `config/` | Area 2–3 fixtures |
@@ -41,7 +45,7 @@ Event patterns (`expect.sessions.<s>.events`, EVAL-004) have a `mode`: `sequence
 
 **Runner and drivers.** One shared runner (`tools/runner/`, ADR-0020) runs the suite against each implementation through its **driver**, which speaks the driver protocol in [`schema/driver.yaml`](schema/driver.yaml). Implementations provide a driver, not a runner (EVAL-020 as amended 2026-11-14).
 
-**Reference matcher.** [`tools/matcher.py`](../tools/matcher.py) implements these matching rules executably: partial objects, matchers, placeholders, assignment search with canonical bindings, and the event-pattern modes. [`tools/matcher_test.py`](../tools/matcher_test.py) pins each rule, and runs the replay fixtures' patterns against the golden bundles they replay. Runners in any language (EVAL-020) should agree with it; where they differ, the README governs and the reference is fixed.
+**Reference matcher.** [`tools/matcher.py`](../tools/matcher.py) implements these matching rules executably: partial objects, matchers, placeholders, assignment search with canonical bindings, and the event-pattern modes. [`tools/matcher_test.py`](../tools/matcher_test.py) pins each rule, and runs the replay fixtures' patterns against the golden bundles they replay. The shared runner uses it; any development-time runner should agree with it. Where they differ, this README governs and the reference is fixed.
 
 Matchers: `{"$any": true}`, `{"$absent": true}`, `{"$regex": "..."}`, `{"$len": n}`, `{"$contains": [...]}` (each item matches a distinct element), `{"$not": m}`, `{"$every": m}`, `{"$gte": n}`, `{"$lte": n}`, `{"$all": [m1, m2]}`, and `{"$count": {"of": m, "equals"|"gte"|"lte": n}}`, which counts the array elements matching `m`. In adapter cases only, `{"$selfProvider": true}` stands for the adapter's declared provider ID. Write "no element matches" and "exactly one matches" with `$count`, never as `$not` around `$contains`. `{"$not": m}` matches whenever `m` does not, including when the field is absent; `{"$absent": true}` matches only an absent field. Matcher names are reserved and are never placeholders; any other `$`-key must be a placeholder.
 
@@ -89,7 +93,7 @@ Matchers: `{"$any": true}`, `{"$absent": true}`, `{"$regex": "..."}`, `{"$len": 
   - `auditLog: {t1: [{ timestamp, tenant, sessionId, principalRef, snapshotHash, type, reviewer?, eventIds, details }]}`, with `type` one of `hook_decision`, `policy_decision`, `escalation`, `decision`, `tool_call` (details `{ callId, tool, arguments, outcome }`) (PORT-071);
   - `blobStore: {t1: [{ id, hash, mediaType, size, data, labels }]}`. In `setup.ports` and `expect.ports`, `data` is the blob's bytes as a standard base64 string (RFC 4648 §4, padded), whatever the media type. Port cases use their own form, UTF-8 text or `{base64}` (`schema/port-case.yaml`);
   - `snapshotStore: {t1: {<hash>: snapshot}}`, each a snapshot record (`schemaVersion`, `tenant`, `hash`, `createdAt`, `artifacts` grouped by kind);
-  - `checkpointStore: {t1: {<sessionId>: checkpoint}}`, with the PORT-030 fields `state`, `principalRef`, `tenant`, `persona`, `snapshotHash`, `taint`, `budget`, `counters`, `reasoning`, `escalation`, `heldResults`, `lease`, `parentSessionId`, `childSessionIds` (also used by `sessions.*.checkpoint`).
+  - `checkpointStore: {t1: {<sessionId>: checkpoint}}`, with the PORT-030 fields `state`, `principalRef`, `tenant`, `persona`, `snapshotHash`, `taint`, `budget`, `counters`, `reasoning`, `escalation`, `heldResults`, `lease`, `fencingToken`, `expiresAt`, `parentSessionId`, `childSessionIds` (also used by `sessions.*.checkpoint`).
 
 Rules:
 

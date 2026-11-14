@@ -65,13 +65,19 @@ Map-valued fields merge per key: a lower layer **MAY** add new keys; for an exis
 
 | Field family | Strictness order (strictest first) |
 |---|---|
-| Hook failure mode | `failClosed` → `failOpen` |
 | Delivery mode | `buffered` → `streamed` |
 | Taint outcome | `block` → `escalate` → `allow` |
 | Approval policy | `always` → `policy` → `never` |
 | Approval default (HOOK-133) | `escalate` → `continue` |
 | Checkpoint granularity | `tool` → `turn` |
 | Include reasoning in traces | `false` → `true` |
+| Expiry action (HITL-081) | `close` → `reject` |
+| Self-approval per escalation source (HITL-023) | `false` → `true` |
+| Deterministic guardrails required (HOOK-104) | `true` → `false` |
+| Compaction mode (CTX-102) | `none` → `truncate` → `summarize` |
+| Automatic retrieval (CTX-102) | `false` → `true` |
+
+Hook failure modes are not merged: `Hook` artifacts are not layered (CFG-034 keeps a required hook's failure mode intact). *(Table consolidated 2026-11-14 from the amendments below.)*
 
 - **CFG-032** A lower layer that sets a value its merge rule does not permit **MUST** cause a configuration error naming the artifact, field, and layer. Implementations **MUST NOT** silently clamp the value.
 - **CFG-033** `override` **MUST NOT** be used on any field that affects tools, hooks, providers, sensitivity, trust, limits, budgets, delivery, or retention. The provisional `model` and `context` fields (CFG-092) are the only exceptions, and remain subject to `allowedProviders` (CFG-042). *(untestable: a property of the spec's own schemas, enforced by spec CI rather than by implementation fixtures.)*
@@ -83,13 +89,13 @@ Map-valued fields merge per key: a lower layer **MAY** add new keys; for an exis
 - **CFG-041** If any step fails for any artifact, **nothing** **MUST** be loaded. Implementations **MUST NOT** run with partial configuration.
 - **CFG-042** Semantic validation **MUST** include at least:
   - layering violations (CFG-032)
-  - a `streamed` delivery mode with any output hook that declares `block` (ADR-0005)
+  - a `streamed` delivery mode with any output hook that declares `rewrite`, `block` or `escalate`, or is `failClosed` (ADR-0005; HOOK-040 as amended 2026-11-07)
   - a `streamed` delivery mode with an output schema (Area 1, CORE-131)
   - a sensitivity label with no sensitivity policy (ADR-0015)
   - a declarative rule that uses CEL outside the agentry subset, or fails to compile or type-check (ADR-0006)
   - a selected model whose provider is not in the effective `allowedProviders`
-  - an effective taint outcome of `allow` for an egress tool (ADR-0008); the effective outcome for a tool is the stricter of its own `onTainted` and any `toolTaintDefaults` entry
-  - `trustedOutput` or trusted attachment sources set outside a policy bundle (ADR-0008)
+  - an effective taint outcome of `allow` for an egress tool (ADR-0008); the effective outcome for a tool is the stricter of its own `onTaintedEgress` and any `toolTaintDefaults` entry
+  - `trustedTools` or `trustedAttachmentSources` set outside a policy bundle, or `trustedOutput` in a tool definition (ADR-0008, TOOL-004)
   - a hook at `onError` or `sessionEnd` declaring `rewrite`, `block`, or `escalate` (Area 1, CORE-182)
 - **CFG-043** Configuration is read through the **config source** port. A file-system source is the default; other sources (object storage, database) **MAY** be provided as adapters.
 
@@ -117,10 +123,10 @@ A policy bundle holds mandatory organisational rules. Bundles may be stacked; ea
 
 | Field | Merge rule | Meaning |
 |---|---|---|
-| `instructions` | `union` | Policy instructions added to every persona's system content; provenance `system` (Area 1, CORE-119) |
+| `policyInstructions` | `union` | Policy instructions added to every persona's system content; provenance `system` (Area 1, CORE-119). *(Named `instructions` before the 2026-11-01 amendment.)* |
 | `requiredHooks` | `union` | Hook references that every session must run *(Area 5)* |
-| `sensitivityPolicies` | `union` | Label → behaviour mappings: redaction, allowed providers, trace handling, approval (ADR-0015) |
-| `trustedTools` | `intersect` | Tools whose output is trusted (`trustedOutput`) (ADR-0008) |
+| `sensitivityPolicies` | `union` | Label → behaviour mappings: redaction (including trace handling, as redaction `targets`), allowed providers, approval (ADR-0015) |
+| `trustedTools` | `intersect` | Tools whose output is trusted (ADR-0008, TOOL-071) |
 | `trustedAttachmentSources` | `intersect` | Attachment sources treated as trusted (Area 1, CORE-121) |
 | `allowedProviders` | `intersect` | Providers any persona may use *(Area 9)* |
 | `toolTaintDefaults` | `stricter` | Per-tool overrides of the taint outcome *(Area 5)* |

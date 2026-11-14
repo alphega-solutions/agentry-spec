@@ -23,8 +23,13 @@ schemas/<area>/v<major>/<name>.yaml
 | `core/v1/hitl.yaml` | Escalation record, pending actions, decision records, reviewer view (Area 6) |
 | `ports/v1/records.yaml` | Stored records: checkpoint, idempotency record, snapshot, blob metadata, audit record, lease (Area 10) |
 | `core/v1/hook.yaml` | `HookRequest`, `HookResult`, and the per-point view of the session that hooks and CEL rules see (Area 5 §5, §8, §9.1) |
+| `eval/v1/bundle.yaml` | Trace bundle: a session's events, blobs, snapshot and audit records (EVAL-025) |
+| `eval/v1/case.yaml` | Eval case and its graders (EVAL-043, EVAL-050) |
+| `eval/v1/run.yaml` | Eval run: matrix, repeats, replay settings, gate (EVAL-044, EVAL-060, EVAL-081) |
+| `eval/v1/report.yaml` | Eval report (EVAL-080–082) |
+| `eval/v1/conformance-report.yaml` | The shared runner's conformance report and claim (EVAL-021, EVAL-023, ADR-0020) |
 
-Areas 6–11 add theirs in later Phase 4 pull requests.
+The fixture-format schemas (`fixture`, `port-case`, `adapter-case`, `adapter-manifest`, `cel-fixture`, `driver`) live in `conformance/schema/`.
 
 ## Conventions
 
