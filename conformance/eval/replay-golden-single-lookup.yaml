@@ -64,7 +64,7 @@ expect:
             sessionId: { $all: [$rp, { $not: 019ca8a0-3e80-7001-8000-001100000001 }] }
             tenantId: t1
             principalRef: { subject: user-1, tenant: t1 }
-            snapshotHash: "sha256:917994aa752361a52830e78416b0550055054dca7ee4aecfbae787862d1eeb19"
+            snapshotHash: "sha256:21bb1a6f202b5d6973f96f904b341eebe6e0d867c5d4ab66b71d4ec7c1eb7996"
             payload: { persona: assistant@1, profile: default@1 }
           - { type: run.started, runId: $r1, payload: { kind: run } }
           - type: turn.started

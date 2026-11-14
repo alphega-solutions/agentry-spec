@@ -98,7 +98,7 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: session.created, snapshotHash: "sha256:5d5fd5a488fbd5146e7b569d071cf15e0f460f87ea6e5ae0696766ea4f28f63a" }
+          - { type: session.created, snapshotHash: "sha256:58377fc12ea3d3f3b79afafab7ff0a33697897584fa23adf0dbfb1c2912ec98e" }
           - { type: turn.started, turn: 1 }
           - { type: context.retrieved, turn: 1, payload: { source: kb, results: [{ labels: [] }] } }
           - { type: model.response, turn: 1, payload: { message: { parts: [{ type: text, text: "SYN-AR-01 SYN-AR-02 SYN-AR-03 SYN-AR-04 SYN-AR-05 SYN-AR-06 SYN-AR-07 SYN-AR-08 SYN-AR-09 SYN-AR-10 SYN-AR-11 SYN-AR-12 SYN-AR-13 SYN-AR-14 SYN-AR-15 SYN-AR-16 SYN-AR-17 SYN-AR-18 SYN-AR-19 SYN-AR-20" }] } } }

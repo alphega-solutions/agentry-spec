@@ -23,7 +23,7 @@ events:
   timestamp: '2026-03-01T09:00:00.100Z'
   tenantId: t1
   principalRef: {subject: user-1, tenant: t1}
-  snapshotHash: sha256:917994aa752361a52830e78416b0550055054dca7ee4aecfbae787862d1eeb19
+  snapshotHash: sha256:21bb1a6f202b5d6973f96f904b341eebe6e0d867c5d4ab66b71d4ec7c1eb7996
   traceContext: {traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000001-01}
   payload: {persona: assistant@1, profile: default@1}
 - schemaVersion: 0.1.0
@@ -35,7 +35,7 @@ events:
   timestamp: '2026-03-01T09:00:00.200Z'
   tenantId: t1
   principalRef: {subject: user-1, tenant: t1}
-  snapshotHash: sha256:917994aa752361a52830e78416b0550055054dca7ee4aecfbae787862d1eeb19
+  snapshotHash: sha256:21bb1a6f202b5d6973f96f904b341eebe6e0d867c5d4ab66b71d4ec7c1eb7996
   traceContext: {traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000002-01}
   payload: {kind: run}
 - schemaVersion: 0.1.0
@@ -48,7 +48,7 @@ events:
   timestamp: '2026-03-01T09:00:00.300Z'
   tenantId: t1
   principalRef: {subject: user-1, tenant: t1}
-  snapshotHash: sha256:917994aa752361a52830e78416b0550055054dca7ee4aecfbae787862d1eeb19
+  snapshotHash: sha256:21bb1a6f202b5d6973f96f904b341eebe6e0d867c5d4ab66b71d4ec7c1eb7996
   traceContext: {traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000003-01}
   provenances: [principal]
   labels: []
@@ -68,7 +68,7 @@ events:
   timestamp: '2026-03-01T09:00:00.400Z'
   tenantId: t1
   principalRef: {subject: user-1, tenant: t1}
-  snapshotHash: sha256:917994aa752361a52830e78416b0550055054dca7ee4aecfbae787862d1eeb19
+  snapshotHash: sha256:21bb1a6f202b5d6973f96f904b341eebe6e0d867c5d4ab66b71d4ec7c1eb7996
   traceContext: {traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000004-01}
   payload:
     provider: scripted-a
@@ -90,7 +90,7 @@ events:
   timestamp: '2026-03-01T09:00:00.500Z'
   tenantId: t1
   principalRef: {subject: user-1, tenant: t1}
-  snapshotHash: sha256:917994aa752361a52830e78416b0550055054dca7ee4aecfbae787862d1eeb19
+  snapshotHash: sha256:21bb1a6f202b5d6973f96f904b341eebe6e0d867c5d4ab66b71d4ec7c1eb7996
   traceContext: {traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000005-01}
   provenances: [model]
   labels: []
@@ -118,7 +118,7 @@ events:
   timestamp: '2026-03-01T09:00:00.600Z'
   tenantId: t1
   principalRef: {subject: user-1, tenant: t1}
-  snapshotHash: sha256:917994aa752361a52830e78416b0550055054dca7ee4aecfbae787862d1eeb19
+  snapshotHash: sha256:21bb1a6f202b5d6973f96f904b341eebe6e0d867c5d4ab66b71d4ec7c1eb7996
   traceContext: {traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000006-01}
   provenances: [model]
   labels: []
@@ -137,7 +137,7 @@ events:
   timestamp: '2026-03-01T09:00:00.700Z'
   tenantId: t1
   principalRef: {subject: user-1, tenant: t1}
-  snapshotHash: sha256:917994aa752361a52830e78416b0550055054dca7ee4aecfbae787862d1eeb19
+  snapshotHash: sha256:21bb1a6f202b5d6973f96f904b341eebe6e0d867c5d4ab66b71d4ec7c1eb7996
   traceContext: {traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000007-01}
   provenances: ['tool:lookup']
   labels: []
@@ -158,7 +158,7 @@ events:
   timestamp: '2026-03-01T09:00:00.800Z'
   tenantId: t1
   principalRef: {subject: user-1, tenant: t1}
-  snapshotHash: sha256:917994aa752361a52830e78416b0550055054dca7ee4aecfbae787862d1eeb19
+  snapshotHash: sha256:21bb1a6f202b5d6973f96f904b341eebe6e0d867c5d4ab66b71d4ec7c1eb7996
   traceContext: {traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000008-01}
   payload:
     provider: scripted-a
@@ -180,7 +180,7 @@ events:
   timestamp: '2026-03-01T09:00:00.900Z'
   tenantId: t1
   principalRef: {subject: user-1, tenant: t1}
-  snapshotHash: sha256:917994aa752361a52830e78416b0550055054dca7ee4aecfbae787862d1eeb19
+  snapshotHash: sha256:21bb1a6f202b5d6973f96f904b341eebe6e0d867c5d4ab66b71d4ec7c1eb7996
   traceContext: {traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000009-01}
   provenances: [model]
   labels: []
@@ -202,7 +202,7 @@ events:
   timestamp: '2026-03-01T09:00:01.000Z'
   tenantId: t1
   principalRef: {subject: user-1, tenant: t1}
-  snapshotHash: sha256:917994aa752361a52830e78416b0550055054dca7ee4aecfbae787862d1eeb19
+  snapshotHash: sha256:21bb1a6f202b5d6973f96f904b341eebe6e0d867c5d4ab66b71d4ec7c1eb7996
   traceContext: {traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-000000000000000a-01}
   payload: {}
 - schemaVersion: 0.1.0
@@ -214,7 +214,7 @@ events:
   timestamp: '2026-03-01T09:00:01.100Z'
   tenantId: t1
   principalRef: {subject: user-1, tenant: t1}
-  snapshotHash: sha256:917994aa752361a52830e78416b0550055054dca7ee4aecfbae787862d1eeb19
+  snapshotHash: sha256:21bb1a6f202b5d6973f96f904b341eebe6e0d867c5d4ab66b71d4ec7c1eb7996
   traceContext: {traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-000000000000000b-01}
   payload: {reason: responded}
 blobs:
@@ -235,7 +235,7 @@ blobs:
 snapshot:
   schemaVersion: 0.1.0
   tenant: t1
-  hash: sha256:917994aa752361a52830e78416b0550055054dca7ee4aecfbae787862d1eeb19
+  hash: sha256:21bb1a6f202b5d6973f96f904b341eebe6e0d867c5d4ab66b71d4ec7c1eb7996
   createdAt: '2026-03-01T09:00:00.000Z'
   artifacts:
     Deployment:
@@ -305,7 +305,6 @@ snapshot:
       outputRetryLimit: 2
       limits: {partSize: 1048576, sessionSize: 10485760}
       defaultAttachmentLabels: []
-      onExpiry: close
     - kind: HarnessProfile
       id: streamed
       version: 1
@@ -318,7 +317,6 @@ snapshot:
       timeouts: {run: PT5M, tool: PT30S}
       retry: {unavailable: 2}
       limits: {partSize: 1048576, sessionSize: 10485760}
-      onExpiry: close
     Tool:
     - kind: Tool
       id: lookup

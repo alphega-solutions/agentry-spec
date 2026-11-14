@@ -62,7 +62,7 @@ expect:
           - type: session.created
             seq: 1
             sessionId: { $all: [$rp, { $not: 019cadc6-9a80-7001-8000-002200000001 }] }
-            snapshotHash: "sha256:c0a22c1324b23e837122b386bf62208378345e91bfffe5a2277652b109e00c5c"
+            snapshotHash: "sha256:44b2a8a97c722c5824002a95a0a5fb38b5720ceb4bb3c533ef64248ca9b2da3f"
             payload: { persona: assistant@1 }
           - { type: run.started, runId: $r1, payload: { kind: run } }
           - type: model.response

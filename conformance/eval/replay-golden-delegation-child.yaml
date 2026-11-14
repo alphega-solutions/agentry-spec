@@ -94,7 +94,7 @@ expect:
         items:
           - type: session.created
             sessionId: { $all: [$rp, { $not: 019cb813-5280-7001-8000-004400000001 }] }
-            snapshotHash: "sha256:a7faa5cfd75dde10c0945620c11dbd21f11b77182befaeedb2cbf41ad5dd36b2"
+            snapshotHash: "sha256:656c59ccfa2a8ce513a2dc32ca56c84b0f44aa3158f18f37192215d66a72e00a"
             payload: { persona: assistant@1, parent: { $absent: true } }
           - { type: run.started, runId: $r1 }
           - { type: tool.call, runId: $r1, payload: { callId: c1, tool: ask_helper, arguments: { task: Look up record k1 }, childSessionId: { $absent: true } } }

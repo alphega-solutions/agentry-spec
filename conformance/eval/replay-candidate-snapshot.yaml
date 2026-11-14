@@ -111,7 +111,7 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: session.created, snapshotHash: "sha256:917994aa752361a52830e78416b0550055054dca7ee4aecfbae787862d1eeb19" }
+          - { type: session.created, snapshotHash: "sha256:21bb1a6f202b5d6973f96f904b341eebe6e0d867c5d4ab66b71d4ec7c1eb7996" }
           - { type: tool.result, payload: { callId: c1, result: { ok: { output: { key: k1, value: SYN-VALUE-0001 } } } } }
           - { type: run.ended, payload: { reason: responded } }
       absentEvents:
@@ -121,7 +121,7 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: session.created, snapshotHash: { $all: [$base, "sha256:917994aa752361a52830e78416b0550055054dca7ee4aecfbae787862d1eeb19"] } }
+          - { type: session.created, snapshotHash: { $all: [$base, "sha256:21bb1a6f202b5d6973f96f904b341eebe6e0d867c5d4ab66b71d4ec7c1eb7996"] } }
           - { type: tool.result, payload: { callId: c1, result: { ok: { output: { key: k1, value: SYN-VALUE-0001 } } } } }
           - { type: run.ended, payload: { reason: responded } }
       absentEvents:
@@ -135,7 +135,7 @@ expect:
               $all:
                 - $cand
                 - { $not: $base }
-                - { $not: "sha256:917994aa752361a52830e78416b0550055054dca7ee4aecfbae787862d1eeb19" }
+                - { $not: "sha256:21bb1a6f202b5d6973f96f904b341eebe6e0d867c5d4ab66b71d4ec7c1eb7996" }
           - { type: tool.result, payload: { callId: c1, result: { ok: { output: { key: k1, value: SYN-VALUE-0001 } } } } }
           - { type: hook.decision, snapshotHash: $cand, payload: { hook: final-check@1, point: beforeResponse, result: block } }
           - { type: run.ended, payload: { reason: blocked } }
