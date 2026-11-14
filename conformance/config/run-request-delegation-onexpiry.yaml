@@ -6,7 +6,8 @@ description: >-
   session-scoped fields, which only the run request that creates the session
   may tighten (CFG-101 as amended 2026-11-01). The session-creating run
   request moves onExpiry to the stricter `close` and lowers maxDepth to 1;
-  both are accepted and recorded on run.started. Raising maxDepth to 3
+  both are accepted and recorded on session.created, not on run.started,
+  whose run gets no `overrides` (CFG-102 as amended 2026-11-14). Raising maxDepth to 3
   fails, as does setting onExpiry `reject` on default@1, whose onExpiry
   defaults (after merging) to the stricter `close`. On the existing session,
   a later run request may tighten a run-scoped field (`stepLimit`), but one
@@ -112,9 +113,11 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: run.started, payload: { kind: run, overrides: { onExpiry: close, delegation: { maxDepth: 1 } } } }
+          - { type: session.created, payload: { overrides: { onExpiry: close, delegation: { maxDepth: 1 } } } }
+          - { type: run.started, payload: { kind: run, overrides: { $absent: true } } }
           - { type: run.started, payload: { kind: run, overrides: { stepLimit: 4 } } }
       absentEvents:
         - { type: run.started, payload: { overrides: { delegation: { maxDepth: 0 } } } }
+        - { type: run.started, payload: { overrides: { onExpiry: close } } }
   providerRequests:
     scripted-a: { count: 2 }

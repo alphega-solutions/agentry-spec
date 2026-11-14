@@ -185,7 +185,7 @@ A harness profile declares **how** a persona runs.
 
 - **CFG-100** A run request **MAY** name a profile. It **MUST** be a member of the persona's `allowedProfiles`; otherwise the request fails with error category `invalid_input`. If none is named, `defaultProfile` applies.
 - **CFG-101** A run request **MAY** set harness profile fields whose merge rule is `min` or `stricter`, and only to tighten them. Any other value **MUST** fail with error category `invalid_input`.
-- **CFG-102** Run-request values apply to that run only and **MUST** be recorded on its `run.started` event.
+- **CFG-102** Run-request values for run-scoped fields apply to that run only and **MUST** be recorded on its `run.started` event. Values for session-scoped fields (CFG-101), which only the session-creating run request may set, apply to the session and **MUST** be recorded on `session.created`, not on `run.started`.
 
 ## 13. Deployment
 
@@ -260,7 +260,7 @@ These went beyond the settled notes and ADRs and were approved with this spec.
 | CFG-090 | Profile fields `timeouts.run`, `timeouts.tool`, `retry.unavailable`, `checkpoint`, and all merge-rule choices |
 | CFG-091 | **Budgets apply per turn**, so `resume()` does not reset them |
 | CFG-100/101 | These failures use `invalid_input`; run requests may tighten only `min`/`stricter` profile fields |
-| CFG-102 | Run-request values recorded on `run.started` |
+| CFG-102 | Run-scoped run-request values recorded on `run.started`; session-scoped ones on `session.created` (as amended 2026-11-14) |
 | CFG-110 | Config source supplied at startup, outside configuration |
 
 ## Amendment 2026-10-31 — from Area 4
@@ -329,3 +329,15 @@ Writing schemas and fixtures for these areas exposed the gaps below. They are ap
 **Environment overlays** (CFG-021, CFG-112)
 - An overlay has an environment name, deployment values, and per-artifact behavioural values applied last, which may only tighten. Its file format is left to implementations; fixtures use the form in the fixture schema.
 - An overlay **MAY** change endpoints, adapters, regions (subject to `dataResidency`), and port bindings. It **MUST NOT** loosen deployment governance: it may only append policy bundles, only remove `attachmentSources`, only add legal holds, and only lengthen retention periods.
+
+## Amendment 2026-11-14 — where session-scoped overrides are recorded (post-Phase 4 review)
+
+Requirement text above has been edited where noted.
+
+- **CFG-102** (text above edited). The 2026-11-01 reading of CFG-101 added session-scoped fields: `idleTtl`, `suspendedTtl`, `onExpiry`, `limits.sessionSize` and `delegation`. Only the session-creating run request may tighten them, and the reading recorded them on `session.created`. CFG-102 still said every run-request value applies to that run only and is recorded on `run.started`, and `cfg.run-request-delegation-onexpiry` followed CFG-102. An implementation could satisfy one and fail the other. One following the fixture left `session.created.overrides` empty, so rebuilding a session from its event log (PORT-034) could not recover its effective session-scoped values, which the checkpoint does not hold.
+- **Now** each value is recorded once, on the event of the scope it applies to:
+  - `session.created.overrides` holds the session-scoped values;
+  - `run.started.overrides` holds the run-scoped values.
+
+  The session-creating request is split between the two. A request with only session-scoped values gives a `run.started` without `overrides`.
+- **Fixtures.** `cfg.run-request-delegation-onexpiry` asserts the creating request's `onExpiry` and `delegation` on `session.created` and their absence from `run.started`.
