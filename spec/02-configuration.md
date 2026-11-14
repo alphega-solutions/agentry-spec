@@ -317,8 +317,8 @@ Writing schemas and fixtures for these areas exposed the gaps below. They are ap
 
 **Loading and snapshots**
 - **CFG-042**: semantic checks apply to each persona combined with each profile in its `allowedProfiles`, with the full policy bundle stack. An artifact not reachable from any persona is checked on its own.
-- **Defaults**: schema defaults (e.g. `deliveryMode: buffered`, `onExpiry: close`) apply after all layers merge. They are not a layer value, so a run request tightens relative to the effective value, defaults included.
-- **CFG-050**: the **effective configuration snapshot** is the validated set of artifacts after overlays, with schema defaults filled in and secret references unresolved. Merged views (persona × profile × run request) are computed from it deterministically and are not part of the snapshot. The **snapshot hash** is `sha256:` followed by the SHA-256 of the RFC 8785 canonical JSON (EVAL-000) of an object whose keys are artifact kinds, each holding its artifacts sorted by id then version.
+- **Defaults**: schema defaults (e.g. `deliveryMode: buffered`, `onExpiry: close`) apply after all layers merge. They are not a layer value, so a run request tightens relative to the effective value, defaults included. A merge-annotated field that no layer sets therefore takes its default only in the merged view; the snapshot leaves it absent (CFG-050, as amended 2026-11-14).
+- **CFG-050**: the **effective configuration snapshot** is the validated set of artifacts after overlays, with schema defaults filled in, except for fields that carry a merge rule (`x-agentry-merge`), and with secret references unresolved. Merged views (persona × profile × run request) are computed from it deterministically and are not part of the snapshot. The **snapshot hash** is `sha256:` followed by the SHA-256 of the RFC 8785 canonical JSON (EVAL-000) of an object whose keys are artifact kinds, each holding its artifacts sorted by id then version.
 - **JSON-compatible values**: configuration **MUST** use only JSON-compatible YAML values — strings, booleans, null, arrays, objects, and numbers within I-JSON's range (RFC 7493). Implicit YAML types such as dates or `yes`/`no` booleans are configuration errors. This makes the snapshot hash identical across implementations.
 - **PORT-050**: a snapshot is written to a tenant's snapshot store when the first session for that tenant is created against it.
 
@@ -341,3 +341,15 @@ Requirement text above has been edited where noted.
 
   The session-creating request is split between the two. A request with only session-scoped values gives a `run.started` without `overrides`.
 - **Fixtures.** `cfg.run-request-delegation-onexpiry` asserts the creating request's `onExpiry` and `delegation` on `session.created` and their absence from `run.started`.
+
+## Amendment 2026-11-14 — merged fields keep no defaults in the snapshot (post-Phase 4 review)
+
+Readings above have been edited where noted.
+
+- **CFG-050, "Defaults".** The snapshot filled in schema defaults, and merged views are computed from the snapshot. The "Defaults" reading also says defaults "are not a layer value". Once a default was filled into a layer, it could not be told apart from a value its author had set, so it merged as a layer value. Results differed between implementations that merged from the filled snapshot and those that did not:
+  - **`min` fields:** a bundle silent on `context.compaction.triggerPercent` became `90`, so a profile's `95` merged to 90. `context.retrieval.limit` behaved the same way.
+  - **`approvalDefault`:** a silent upper bundle became `escalate` and overrode a lower bundle's `continue`. HOOK-133 (amendment 2026-11-13) relies on a silent bundle imposing nothing, and on an organisation setting `escalate` explicitly to forbid `continue` lower down.
+  - **`stricter` fields whose default is mid-order** (`context.compaction.mode`): a silent bundle filled with `truncate` would have forbidden a profile's `summarize`.
+- **Now** the snapshot fills every schema default except those of fields that carry `x-agentry-merge`. Such a field stays absent when its author did not set it. Its default applies to the merged view only, after every layer including the run request. Filling still happens only within objects present in the artifact (Area 11 amendment 2026-11-02). Defaults of fields that carry no merge rule are filled as before, for example a tool's `approval` and `idempotent`, and a hook's `failureMode`.
+- **Hashes.** Snapshots that filled such defaults now hash differently. The golden bundles had `onExpiry: close` filled into every profile and `context.compaction.triggerPercent: 90` filled into one. Both were removed and the bundles re-hashed, and the replay fixtures that assert those hashes were updated.
+- **Fixtures.** New: `cfg.merged-defaults-not-layer-values`.

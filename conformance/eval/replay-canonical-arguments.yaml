@@ -136,7 +136,7 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: session.created, snapshotHash: "sha256:6f44c0cfcd5855090f5f55a2888fa8164796a4da0d92a0d29f3270ede616437a" }
+          - { type: session.created, snapshotHash: "sha256:715a62affee8fae0a136db82420393bd5b7ce5bf0809e84a78c8f2371a74ae62" }
           - { type: run.started, runId: $m1 }
           - { type: tool.result, runId: $m1, step: 1, payload: { callId: c1, tool: count_records, result: { ok: { output: { count: 3 } } } } }
           - { type: tool.result, runId: $m1, step: 2, payload: { callId: c2, tool: count_records, result: { ok: { output: { count: 4 } } } } }
@@ -152,7 +152,7 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: session.created, snapshotHash: "sha256:6f44c0cfcd5855090f5f55a2888fa8164796a4da0d92a0d29f3270ede616437a" }
+          - { type: session.created, snapshotHash: "sha256:715a62affee8fae0a136db82420393bd5b7ce5bf0809e84a78c8f2371a74ae62" }
           - { type: run.started, runId: $d1 }
           - type: tool.result
             runId: $d1
@@ -181,7 +181,7 @@ expect:
       events:
         mode: subsequence
         items:
-          - { type: session.created, snapshotHash: "sha256:6f44c0cfcd5855090f5f55a2888fa8164796a4da0d92a0d29f3270ede616437a" }
+          - { type: session.created, snapshotHash: "sha256:715a62affee8fae0a136db82420393bd5b7ce5bf0809e84a78c8f2371a74ae62" }
           - { type: run.started, runId: $u1 }
           - type: hook.decision
             runId: $u1
