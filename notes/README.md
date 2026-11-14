@@ -24,6 +24,7 @@ Each note is one pull request; merging it settles it.
 | [context.md](context.md) | Context assembly, retrieval, compaction, cross-session memory | Area 7 | Settled 2026-10-31 |
 | [providers.md](providers.md) | Adapter contract, model choice, capabilities, sensitivity routing, usage and cost | Area 9 | Settled 2026-10-31 |
 | [content.md](content.md) | Messages, multimodal parts, structured output, reasoning | Areas 1, 9 | Settled 2026-10-31 |
+| [memory.md](memory.md) | Skills, episodic and semantic memory, consolidation, the persona boundary; the 1.0 tool-result labels fix | 1.x memory extension; Areas 2, 4, 6, 7, 10 | Draft 2026-11-14 |
 
 Tier 3 topics (storage migration, observability, eval, orchestration) go directly into their Phase 3 specs.
 
