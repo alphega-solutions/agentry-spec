@@ -78,7 +78,8 @@ As in Area 1 §2. Requirement IDs use the prefix `HITL-`. The schemas `Escalatio
 - **HITL-051** With `requiredApprovals` greater than 1:
   - any single `reject` rejects the action immediately;
   - each `approve` counts toward the original content, and each `edit` counts toward its replacement content;
-  - the action is approved when the required number of distinct reviewers have approved the **same** content (the original, or one identical replacement). Until then it stays undecided.
+  - the action is approved when the required number of distinct reviewers have approved the **same** content (the original, or one identical replacement). Until then it stays undecided;
+  - each `confirm` counts toward the outcome it states (`outcome`, and `output` if supplied). A `recovery` action is decided when the required number of distinct reviewers have confirmed the **same** outcome. That outcome is the one recorded and delivered (§7.3). Until then the action stays undecided, including while reviewers disagree.
 
 ### 7.3 Effects
 
@@ -254,7 +255,7 @@ Schemas: `schemas/core/v1/hitl.yaml` (`escalation`, `pendingAction`, `decision`,
 - HITL-021: reviewer rules are evaluated per pending action, for the rules of that action's source; `escalation.source` and `escalation.reasonCode` are the action's.
 - HITL-040–043: `decide()` and `resume()` validate their decisions as one batch. If any decision is refused (`unauthorized`, `invalid_input`, or a pending action ID not in the open escalation, `not_found`), none of the batch is recorded and the error's `details.decisionId` names the first refused decision. An already recorded decision ID is acknowledged, not refused. A batch that records but leaves actions undecided makes `resume()` fail with `conflict` (HITL-070) after recording.
 - HITL-044: a decision is audited as a `decision` audit record whose `details` are the `decision` record, plus `original` for an `edit`. Expiry rejections are audited too, with `decidedBy: expiry`, no reviewer, and the expiry time as timestamp.
-- HITL-051: two replacements are identical when their RFC 8785 canonical JSON is equal.
+- HITL-051: two replacements are identical when their RFC 8785 canonical JSON is equal. Two confirmed outcomes are the same when the RFC 8785 canonical JSON of `{outcome, output}` is equal; an absent `output` differs from any supplied one (amendment 2026-11-14).
 - HITL-072: `escalation.resolved` lists every decision ID recorded for the escalation, in recording order.
 
 **Ordering, timing and events** (settled with the Area 6 fixtures)
@@ -310,3 +311,16 @@ Requirement text above has been edited where noted.
 ## Amendment 2026-11-14 — timeouts raise recovery actions (post-Phase 4 review)
 
 - **HITL-001** (table above edited). A `recovery` pending action is also raised, within the run, when a mutating call that is not idempotent times out (TOOL-055, Area 4 amendment 2026-11-14). It is the same action as after a crash, with reason `agentry.recovery.unknown_outcome` and the `confirm` decision. Self-approval stays forbidden for `recovery` (HITL-023).
+
+## Amendment 2026-11-14 — confirmations with several required approvals (post-Phase 4 review)
+
+Requirement text above has been edited where noted.
+
+- **HITL-051** (text above extended). Reviewer rules are per source, so a bundle may require several approvals for `recovery`. HITL-051 said how `approve`, `edit` and `reject` count when `requiredApprovals` is greater than 1, but not `confirm`, the only decision a `recovery` action allows. It was undefined:
+  - whether the first `confirm` decided anyway;
+  - what happened when reviewers confirmed different outcomes;
+  - whether two `succeeded` confirmations with different outputs agreed.
+
+  Yet this is the decision that permanently fixes what the system believes a non-idempotent side effect did.
+- **Now** confirmations count like approvals, toward the outcome each states. The action is decided when the required number of distinct reviewers agree on the same outcome, compared as RFC 8785 canonical JSON of `{outcome, output}`. Disagreement leaves the action undecided. There is no `reject` for recovery, so an action that never reaches agreement expires and closes the session `expired` (HITL-082). Distinct reviewers (HITL-024), no self-approval for `recovery` (HITL-023), and the refusal of a second decision from the same reviewer (`agentry.hitl.duplicate_reviewer`) are unchanged.
+- **Fixtures.** New: `hitl.decide-confirm-quorum`.
