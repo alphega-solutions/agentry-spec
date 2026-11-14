@@ -1,0 +1,154 @@
+schemaVersion: "0.1.0"
+id: hitl.decide-confirm-quorum
+title: With requiredApprovals 2 on recovery, a recovery action is decided only when two distinct reviewers confirm the same outcome; disagreement leaves it undecided
+description: >-
+  The org bundle's reviewer rule for `recovery` requires two approvals.
+  update_record (mutating, not idempotent, timeoutMs 1000) times out, so a
+  `recovery` action is raised (TOOL-055) and the run ends `escalated`.
+  Reviewers r1, r2 and r3 are distinct, and none is the principal.
+
+  - r1 confirms `succeeded` with output {updated: true}. One confirmation
+    of that outcome is not enough, so resume() fails with `conflict`
+    (`agentry.hitl.pending`).
+  - r2 confirms `failed`. That is a different outcome, so neither outcome
+    has two confirmations. The action stays undecided, and resume() still
+    fails with `agentry.hitl.pending`.
+  - r1 tries again with `failed` and is refused (`conflict`,
+    `agentry.hitl.duplicate_reviewer`): one decision per reviewer.
+  - r3 resumes with `confirm` `succeeded` and the same output as r1, so
+    the canonical JSON of `{outcome, output}` is equal (HITL-051 as
+    amended 2026-11-14). Two distinct reviewers now agree, and the action
+    is decided with that outcome. The model receives `ok` {updated: true}
+    as c1's tool.result, the turn responds, and the idempotency record
+    holds that outcome. The call is never re-dispatched.
+
+  The audit log holds three decision records for the action: r1's, r2's
+  and r3's.
+requirements: [HITL-051, HITL-024]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        reviewerRules:
+          recovery: [{ rule: "'reviewer' in reviewer.roles", requiredApprovals: 2 }]
+        sensitivityPolicies:
+          pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+          phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        timeoutMs: 1000
+        binding: { kind: native, handler: test.update_record }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+        - { id: r2, subject: reviewer-2, assurance: multi_factor, roles: [reviewer] }
+        - { id: r3, subject: reviewer-3, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Record k1 is updated." }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - { ok: { output: { updated: true } }, delayMs: 10000 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $act, payload.escalation.pendingActions.0.idempotencyKey: $k }
+    expect: { ok: true, endReason: escalated }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000561", pendingActionId: $act, type: confirm, outcome: succeeded, output: { updated: true } }
+    expect: { ok: false, error: { category: conflict, code: agentry.hitl.pending }, newEvents: 0 }
+  - action: resume
+    session: $s
+    reviewer: r2
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000562", pendingActionId: $act, type: confirm, outcome: failed }
+    expect: { ok: false, error: { category: conflict, code: agentry.hitl.pending }, newEvents: 0 }
+  - action: decide
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000563", pendingActionId: $act, type: confirm, outcome: failed }
+    expect: { ok: false, error: { category: conflict, code: agentry.hitl.duplicate_reviewer }, newEvents: 0 }
+  - action: resume
+    session: $s
+    reviewer: r3
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000564", pendingActionId: $act, type: confirm, outcome: succeeded, output: { updated: true } }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            payload:
+              escalation:
+                sources: [recovery]
+                pendingActions: [{ id: $act, kind: recovery, reviewerRequirements: { requiredApprovals: 2, selfApprovalAllowed: false } }]
+          - { type: run.ended, payload: { reason: escalated } }
+          - { type: escalation.resolved }
+          - { type: tool.result, payload: { callId: c1, tool: update_record, result: { ok: { output: { updated: true } } } } }
+          - { type: model.request }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.result, payload: { callId: c1, result: { error: { $any: true } } } }
+  stubCalls:
+    update_record:
+      - { arguments: { key: k1, value: v1 }, cancelled: true, completed: false }
+  ports:
+    idempotencyStore:
+      t1:
+        $k: { state: completed, outcome: { ok: { output: { updated: true } } } }
+    auditLog:
+      t1:
+        $all:
+          - $count: { of: { type: decision, details: { pendingActionId: $act } }, equals: 3 }
+          - $contains:
+              - { type: decision, reviewer: { subject: reviewer-1 }, details: { id: "01900000-0000-7000-8000-000000000561", type: confirm, outcome: succeeded } }
+              - { type: decision, reviewer: { subject: reviewer-2 }, details: { id: "01900000-0000-7000-8000-000000000562", type: confirm, outcome: failed } }
+              - { type: decision, reviewer: { subject: reviewer-3 }, details: { id: "01900000-0000-7000-8000-000000000564", type: confirm, outcome: succeeded } }
+  providerRequests:
+    scripted-a:
+      - {}
+      - messages:
+          $contains:
+            - role: tool
+              parts: [{ type: tool_result, callId: c1, result: { ok: { output: { updated: true } } } }]
