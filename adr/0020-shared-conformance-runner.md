@@ -1,6 +1,6 @@
 # ADR-0020: One shared conformance runner; implementations provide a driver
 
-**Status:** Proposed 2026-11-14 · **Date:** 2026-11-14 · **Source:** post-Phase 4 review (runner matching ambiguity, EVAL-004 amendment 2026-11-14); Phase 5 plan (Python, Node.js and Java implementations); Area 11 §4–5
+**Status:** Accepted 2026-11-14 · **Date:** 2026-11-14 · **Source:** post-Phase 4 review (runner matching ambiguity, EVAL-004 amendment 2026-11-14); Phase 5 plan (Python, Node.js and Java implementations); Area 11 §4–5
 
 ## Context
 EVAL-020 requires each implementation to provide its own conformance runner. With three implementations, that means three fixture loaders, three expectation matchers and three script engines. Each script engine must handle concurrency, crash and restart, the virtual clock, stubs and scripted providers. Each must also interpret the fixture format identically.
