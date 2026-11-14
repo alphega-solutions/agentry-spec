@@ -4,8 +4,10 @@
                                [--report report.json] [--junit report.xml]
 
 Runs the fixtures through the driver and writes the conformance report
-(schemas/eval/v1/conformance-report.yaml) and JUnit XML. Exits 0 only if the
-report conforms.
+(schemas/eval/v1/conformance-report.yaml) and JUnit XML. Exits 0 if no
+fixture failed. `conforms` (the claim, EVAL-023) is true only for a run of
+the full suite with no failures; while some fixture kinds are not yet run
+(NOT_YET_RUN), no run is a full suite, so no run claims conformance.
 """
 from __future__ import annotations
 
@@ -24,6 +26,8 @@ from runner.client import DriverClient, DriverError  # noqa: E402
 from runner.engine import FixtureRun, Unmet  # noqa: E402
 
 RUNNER_VERSION = "0.1.0"
+FULL_SUITE = ["**/*.yaml"]
+NOT_YET_RUN = ["ports", "adapters", "cel"]  # fixture kinds the runner does not execute yet
 
 
 def fixture_paths(globs: list[str]) -> list[pathlib.Path]:
@@ -31,7 +35,7 @@ def fixture_paths(globs: list[str]) -> list[pathlib.Path]:
     paths: list[pathlib.Path] = []
     for g in globs:
         paths += sorted(p for p in base.glob(g) if p.suffix == ".yaml")
-    skip = {"schema", "shared", "golden", "ports", "adapters", "cel"}
+    skip = {"schema", "shared", "golden", *NOT_YET_RUN}
     return [p for p in dict.fromkeys(paths)
             if len(p.relative_to(base).parts) > 1 and p.relative_to(base).parts[0] not in skip]
 
@@ -70,7 +74,8 @@ def run(driver: list[str], globs: list[str]) -> dict:
         "contract": info.get("contract", "0.1.0"),
         "unsupportedFeatures": unsupported,
         "results": results,
-        "conforms": all(r["status"] != "fail" for r in results),
+        "conforms": (all(r["status"] != "fail" for r in results)
+                     and list(globs) == FULL_SUITE and not NOT_YET_RUN),
     }
 
 
@@ -95,7 +100,7 @@ def junit(report: dict) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--driver", required=True, help="command that starts the driver")
-    ap.add_argument("--fixtures", nargs="*", default=["**/*.yaml"], help="globs relative to conformance/")
+    ap.add_argument("--fixtures", nargs="*", default=FULL_SUITE, help="globs relative to conformance/")
     ap.add_argument("--report")
     ap.add_argument("--junit")
     args = ap.parse_args()
@@ -106,8 +111,10 @@ def main() -> int:
         pathlib.Path(args.junit).write_text(junit(report))
     for r in report["results"]:
         print(f"{r['status']:7} {r['fixture']}" + (f": {r['firstUnmet']}" if r["status"] == "fail" else ""))
-    print(f"conforms: {report['conforms']}")
-    return 0 if report["conforms"] else 1
+    failed = sum(r["status"] == "fail" for r in report["results"])
+    print(f"failed: {failed}; conforms: {report['conforms']}"
+          + ("" if report["conforms"] or failed else " (not a full-suite run, or some fixture kinds are not run yet)"))
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

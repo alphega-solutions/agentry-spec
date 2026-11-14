@@ -7,7 +7,7 @@ python tools/runner/run.py --driver "<command that starts your driver>" \
     [--fixtures "core/*.yaml" ...] [--report report.json] [--junit report.xml]
 ```
 
-It exits 0 only when the report conforms (EVAL-023). Fixture globs are relative to `conformance/`.
+It exits 0 when no fixture failed. The report's `conforms` (the claim, EVAL-023) is true only for a full-suite run with no failures. Fixture globs are relative to `conformance/`.
 
 | File | Role |
 |---|---|

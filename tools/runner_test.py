@@ -42,8 +42,9 @@ def _report(globs, fault=""):
 
 def test_golden_replays_pass_with_fake_driver() -> None:
     rep = _report(GOLDEN)
-    assert rep["conforms"], [r for r in rep["results"] if r["status"] != "pass"]
+    assert all(r["status"] == "pass" for r in rep["results"]), [r for r in rep["results"] if r["status"] != "pass"]
     assert len(rep["results"]) >= 3
+    assert not rep["conforms"], "a subset run is never a conformance claim (EVAL-023)"
 
 
 def test_faulty_driver_fails() -> None:
