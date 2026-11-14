@@ -184,12 +184,15 @@ $defs:
     description: >-
       A `load` step. The runner resolves it against the configuration of the
       last successful load (fixture.yaml `loadStep`) and sends the complete
-      resulting artifact list. Result: `loadResult`.
+      resulting artifact list. A step's `raw` YAML texts, which may be
+      invalid on purpose, are passed through verbatim for the driver's loader
+      to parse. Result: `loadResult`.
     type: object
     additionalProperties: false
     required: [artifacts]
     properties:
       artifacts: { type: array, items: { type: object } }
+      raw: { type: array, items: { type: string } }
       overlay: { type: object }
 
   loadResult:
@@ -356,7 +359,7 @@ $defs:
       items:
         type: array
         uniqueItems: true
-        items: { enum: [events, ports, stubCalls, providerRequests, delivered, persistedText] }
+        items: { enum: [events, ports, stubCalls, providerRequests, delivered, telemetrySpans, persistedText] }
       tenant: { type: string }
 
   # ---- port and adapter cases ---------------------------------------------
