@@ -371,7 +371,10 @@ $defs:
       - required: [error]
       - required: [hang]
     properties:
-      ok: { type: object, properties: { output: {} } }
+      ok:
+        description: "`output`, and optionally `labels` the tool reports for the result (TOOL-071 as amended 2026-11-14)."
+        type: object
+        properties: { output: {}, labels: { type: array, items: { type: string } } }
       error:
         type: object
         required: [category]
