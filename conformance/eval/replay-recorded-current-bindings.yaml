@@ -1,0 +1,234 @@
+schemaVersion: "0.1.0"
+id: eval.replay-recorded-current-bindings
+title: A recorded-snapshot replay keeps the recording's behaviour but binds to the current deployment, and is refused when the current deployment cannot bind it
+description: >-
+  $s is recorded under a deployment named `prod`: its remote hook endpoint
+  `inspector` is memory://hook-inspector-prod and its retention is longer
+  than the baseline's. assistant@1 requires the remote afterToolCall hook
+  inspector@1. The model calls lookup (c1, {key: k1}), inspector is called
+  once and answers `continue`, and the model responds. `exportBundle` binds
+  the bundle as $b; $s's snapshot hash is $snap.
+
+
+  - A load then replaces the Deployment with an `eval` one: the same
+    provider and endpoint IDs, inspector at memory://hook-inspector-eval,
+    and the baseline retention. Its snapshot is $evalSnap.
+  - $rp: `replay` of $b with `snapshot: recorded` and `reEvaluate` (EVAL-060
+    as amended 2026-11-14). The replayed configuration is the recording's
+    behaviour (persona, bundles, tools, hook) with the current deployment's
+    bindings. Here the behaviour equals the current configuration's, so the
+    replayed session is pinned to exactly $evalSnap, not $snap. Its
+    `session.created` names the recording: `replay: {sessionId: $s,
+    snapshotHash: $snap}`. The stored $evalSnap holds the `eval`
+    Deployment and the recording's persona, while $snap still holds the
+    `prod` one. The tool call is answered from the recording. inspector is
+    re-evaluated through the current deployment's `inspector` binding (its
+    second request, for $rp), and the recorded outcome is reproduced with
+    no divergence.
+  - A second load replaces inspector@1 with a native hook and removes
+    `remoteHooks` from the Deployment. The current configuration loads, but
+    the recording's inspector@1 is bound to remote endpoint `inspector`,
+    which the current deployment no longer declares (CFG-011). A second
+    `recorded` replay of $b is therefore refused with a `configuration`
+    error before any session is created. inspector receives no third
+    request, and the native stub is never invoked.
+
+
+  No provider is called during either replay: scripted-a's script holds
+  only $s's two responses. lookup's one behaviour is consumed by $s.
+requirements: [EVAL-060]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-04-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Deployment
+        id: test
+        version: 1
+        schemaVersion: "0.1.0"
+        environment: prod
+        policyBundles: [org@1]
+        attachmentSources: [upload, email]
+        providers:
+          - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+          - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+        remoteHooks:
+          - { id: inspector, endpoint: "memory://hook-inspector-prod", region: test-region }
+        ports:
+          eventLog: { adapter: memory, region: test-region }
+          checkpointStore: { adapter: memory, region: test-region }
+          idempotencyStore: { adapter: memory, region: test-region }
+          snapshotStore: { adapter: memory, region: test-region }
+          blobStore: { adapter: memory, region: test-region }
+          auditLog: { adapter: memory, region: test-region }
+          secrets: { adapter: memory, region: test-region }
+        retention: { events: P90D, checkpoints: P90D, idempotency: P90D, blobs: P90D, snapshots: P90D, audit: P730D }
+      - kind: Hook
+        id: inspector
+        version: 1
+        schemaVersion: "0.1.0"
+        points: [afterToolCall]
+        results: [annotate]
+        timeoutMs: 1000
+        source: { kind: remote, endpoint: inspector }
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [lookup@1, update_record@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        requiredHooks: [inspector@1]
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals: [{ id: p1, subject: user-1, assurance: multi_factor }]
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: lookup, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Record k1 holds SYN-VALUE-0060." }]
+          usage: { inputTokens: 30, outputTokens: 6, cachedInputTokens: 0, reasoningTokens: 0 }
+    scripted-b: { responses: [] }
+  stubs:
+    tools:
+      lookup:
+        - ok: { output: { value: SYN-VALUE-0060 } }
+      update_record: []
+    remoteHooks:
+      inspector:
+        - { result: continue }
+        - { result: continue }
+    nativeHooks:
+      inspector: []
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Look up record k1." }]
+    expect: { ok: true, endReason: responded }
+  - action: exportBundle
+    session: $s
+    tenant: t1
+    bindResult: $b
+    expect: { ok: true, bundle: { sessionId: $s } }
+  - load:
+      artifacts:
+        - kind: Deployment
+          id: test
+          version: 1
+          schemaVersion: "0.1.0"
+          environment: eval
+          policyBundles: [org@1]
+          attachmentSources: [upload, email]
+          providers:
+            - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+            - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          remoteHooks:
+            - { id: inspector, endpoint: "memory://hook-inspector-eval", region: test-region }
+          ports:
+            eventLog: { adapter: memory, region: test-region }
+            checkpointStore: { adapter: memory, region: test-region }
+            idempotencyStore: { adapter: memory, region: test-region }
+            snapshotStore: { adapter: memory, region: test-region }
+            blobStore: { adapter: memory, region: test-region }
+            auditLog: { adapter: memory, region: test-region }
+            secrets: { adapter: memory, region: test-region }
+          retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+    bind: $evalSnap
+    expect: { ok: true }
+  - action: replay
+    bind: $rp
+    tenant: t1
+    bundle: $b
+    snapshot: recorded
+    hookMode: reEvaluate
+    expect: { ok: true, divergences: [] }
+  - load:
+      artifacts:
+        - kind: Hook
+          id: inspector
+          version: 1
+          schemaVersion: "0.1.0"
+          points: [afterToolCall]
+          results: [annotate]
+          timeoutMs: 1000
+          source: { kind: native, handler: test.hook.inspector }
+        - kind: Deployment
+          id: test
+          version: 1
+          schemaVersion: "0.1.0"
+          environment: eval
+          policyBundles: [org@1]
+          attachmentSources: [upload, email]
+          providers:
+            - { id: scripted-a, adapter: scripted, endpoint: "memory://scripted-a", region: test-region, retainsData: false }
+            - { id: scripted-b, adapter: scripted, endpoint: "memory://scripted-b", region: test-region, retainsData: false }
+          ports:
+            eventLog: { adapter: memory, region: test-region }
+            checkpointStore: { adapter: memory, region: test-region }
+            idempotencyStore: { adapter: memory, region: test-region }
+            snapshotStore: { adapter: memory, region: test-region }
+            blobStore: { adapter: memory, region: test-region }
+            auditLog: { adapter: memory, region: test-region }
+            secrets: { adapter: memory, region: test-region }
+          retention: { events: P30D, checkpoints: P30D, idempotency: P30D, blobs: P30D, snapshots: P30D, audit: P365D }
+    expect: { ok: true }
+  - action: replay
+    tenant: t1
+    bundle: $b
+    snapshot: recorded
+    hookMode: reEvaluate
+    expect: { ok: false, error: { category: configuration } }
+expect:
+  sessions:
+    $s:
+      events:
+        mode: subsequence
+        items:
+          - { type: session.created, snapshotHash: $snap, payload: { replay: { $absent: true } } }
+          - { type: run.ended, payload: { reason: responded } }
+    $rp:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - type: session.created
+            sessionId: { $all: [$rp, { $not: $s }] }
+            snapshotHash: { $all: [$evalSnap, { $not: $snap }] }
+            payload: { persona: assistant@1, replay: { sessionId: $s, snapshotHash: $snap } }
+          - { type: tool.call, payload: { callId: c1, tool: lookup, arguments: { key: k1 } } }
+          - { type: tool.result, payload: { callId: c1, tool: lookup, result: { ok: { output: { value: SYN-VALUE-0060 } } } } }
+          - type: model.response
+            payload: { message: { parts: [{ type: text, text: "Record k1 holds SYN-VALUE-0060." }] } }
+          - { type: run.ended, payload: { reason: responded } }
+  ports:
+    snapshotStore:
+      t1:
+        $snap:
+          artifacts:
+            Deployment: [{ environment: prod, remoteHooks: [{ id: inspector, endpoint: "memory://hook-inspector-prod" }] }]
+        $evalSnap:
+          artifacts:
+            Deployment: [{ environment: eval, remoteHooks: [{ id: inspector, endpoint: "memory://hook-inspector-eval" }], retention: { events: P30D } }]
+            Persona: { $contains: [{ id: assistant, requiredHooks: [inspector@1] }] }
+            Hook: [{ id: inspector, source: { kind: remote, endpoint: inspector } }]
+  stubCalls:
+    lookup: [{ arguments: { key: k1 }, context: { sessionId: $s } }]
+    inspector: [{ arguments: { sessionId: $s, point: afterToolCall } }, { arguments: { sessionId: $rp, point: afterToolCall } }]
+  providerRequests:
+    scripted-a: { count: 2 }
+    scripted-b: { count: 0 }

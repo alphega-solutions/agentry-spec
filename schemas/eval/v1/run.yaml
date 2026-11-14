@@ -42,7 +42,7 @@ properties:
     additionalProperties: false
     properties:
       snapshot:
-        description: "`recorded` replays against each bundle's own snapshot; `candidate` against the run's current configuration; a hash against that stored snapshot."
+        description: "`recorded` replays against each bundle's own snapshot, bound to the run's eval deployment (EVAL-060 as amended 2026-11-14); `candidate` against the run's current configuration; a hash against that stored snapshot."
         oneOf:
           - enum: [recorded, candidate]
           - $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/sha256"

@@ -152,6 +152,18 @@ $defs:
           callId: { type: string, minLength: 1 }
           tool: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/toolId" }
           depth: { type: integer, minimum: 1 }
+      replay:
+        description: >-
+          Present for a session created by replay (EVAL-060 as amended
+          2026-11-14): the recorded session and its snapshot hash. The
+          session's own snapshot is the recording's behaviour with the
+          current deployment's bindings.
+        type: object
+        additionalProperties: false
+        required: [sessionId, snapshotHash]
+        properties:
+          sessionId: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/uuidv7" }
+          snapshotHash: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/sha256" }
 
   sessionClosed:
     type: object
