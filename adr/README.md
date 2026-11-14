@@ -20,8 +20,12 @@ Phase 2 records every cross-cutting decision made during Phases 0–1. All ADRs 
 | [0013](0013-langchain.md) | LangChain is an optional integration, never a core dependency | Accepted |
 | [0014](0014-identity-tenancy.md) | Principal identity and tenant isolation | Accepted |
 | [0015](0015-sensitivity-labels.md) | Extensible sensitivity labels with policy mapping | Accepted |
+| [0016](0016-memory-store.md) | Memory as a port with references that keep provenance and labels | Accepted |
+| [0017](0017-skills.md) | Skills are configuration artifacts, loaded on demand by the model | Accepted |
+| [0018](0018-reviewed-behaviour-changes.md) | Learned behaviour changes only through review | Accepted |
 
 ## Pending
 
 - [ ] Inventory ADRs from the earlier `@alphega/agentry` scaffold and mark each keep / revise / retire (needs repo access).
 - Further ADRs will be added as Tier 2 notes settle (HITL, context and memory, providers, content).
+- ADR-0016–0018 (memory, skills, reviewed behaviour changes), accepted 2026-11-14, govern a 1.x extension and change nothing in 1.0; they enter the spec as Areas 2, 6, 7 and 10 amendments with schemas and fixtures.
