@@ -232,6 +232,16 @@ def test_unregistered_or_mismatched_code_rejected() -> None:
         fx.unlink(missing_ok=True)
 
 
+def test_hold_at_misuse_rejected() -> None:
+    """holdAt is allowed only inside `concurrently`, and never on the last action."""
+    outside = {"script": [dict(_RUN, holdAt="after_operation_lease")]}
+    assert any("only inside" in p for p in validate.check_crashes(outside))
+    last = {"script": [{"concurrently": [dict(_RUN), dict(_RUN, holdAt="after_operation_lease")]}]}
+    assert any("last action" in p for p in validate.check_crashes(last))
+    ok = {"script": [{"concurrently": [dict(_RUN, holdAt="after_operation_lease"), dict(_RUN)]}]}
+    assert not validate.check_crashes(ok)
+
+
 def main() -> int:
     tests = [test_unbound_placeholder_rejected, test_coverage_fails_when_last_fixture_removed,
              test_real_endpoint_rejected, test_invalid_example_needs_a_working_repair,
@@ -241,7 +251,7 @@ def main() -> int:
              test_unknown_stub_call_key_rejected, test_stub_for_non_native_tool_rejected,
              test_port_case_foreign_op_rejected, test_missing_merge_annotation_rejected,
              test_missing_secret_marker_rejected, test_invalid_inline_config_rejected,
-             test_unregistered_or_mismatched_code_rejected]
+             test_unregistered_or_mismatched_code_rejected, test_hold_at_misuse_rejected]
     failed = 0
     for t in tests:
         try:

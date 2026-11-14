@@ -128,6 +128,8 @@ class FixtureRun:
         """Start the actions in listed order, each after the previous has begun,
         honouring `startAfter`, and drive them all to completion."""
         rids: list[str] = []
+        held: dict[str, int] = {}  # requestId -> index of the sibling it holds open for
+        released: set[str] = set()
         abandon: dict | None = None  # {requestId, afterEvents} once the armed abandon's action starts
         crashed_any = False
         waiting: list[tuple[int, dict]] = []
@@ -142,7 +144,10 @@ class FixtureRun:
             if isinstance(args.get("bundle"), str):
                 args["bundle"] = load_yaml(ROOT / "conformance" / args["bundle"])
             process = f"p{k}" if separate else "main"
-            self.c.call("action.start", {"requestId": rid, "process": process, "action": st["action"], "args": args})
+            params = {"requestId": rid, "process": process, "action": st["action"], "args": args}
+            if st.get("holdAt"):
+                params["holdAt"] = st["holdAt"]
+            self.c.call("action.start", params)
             rids.append(rid)
             started[rid] = k
             self.events_by_request[rid] = []
@@ -154,11 +159,16 @@ class FixtureRun:
                     self.c.call("stream.abandon", {"requestId": rid})
                     abandon = None
 
+        hold_gate: int | None = None  # siblings after a holdAt start only once it is held
         for k, st in enumerate(steps):
-            if "startAfter" in st and k > 0:
+            if hold_gate is not None:
+                waiting.append((k, st))
+            elif "startAfter" in st and k > 0:
                 waiting.append((k, st))
             else:
                 start(k, st)
+                if st.get("holdAt"):
+                    hold_gate = k
 
         for _ in range(MAX_SETTLES):
             res = self.c.call("settle", {"pauseOnEvents": bool(waiting) or abandon is not None})
@@ -178,11 +188,29 @@ class FixtureRun:
                     if hit:
                         waiting.remove(w)
                         start(*w)
+            for w in res.get("waiting") or []:  # a held action opens the gate for its later siblings
+                if w.get("on") == "held" and w["requestId"] not in held:
+                    held[w["requestId"]] = started[w["requestId"]]
+                    for item in [x for x in waiting if x[0] > held[w["requestId"]] and "startAfter" not in x[1]]:
+                        waiting.remove(item)
+                        start(*item)
             for c in res.get("completed") or []:
                 outcomes[c["requestId"]] = c["outcome"]
+                if c["requestId"] in held and c["requestId"] not in released:
+                    raise Unmet(f"{where}[{held[c['requestId']]}]: completed while held")
             for c in res.get("crashed") or []:
                 outcomes[c["requestId"]] = None
                 crashed_any = True
+            for rid, k in held.items():  # release once every later sibling has completed
+                later = [r for r in rids if started[r] > k]
+                if rid not in released and later and all(r in outcomes for r in later):
+                    self.c.call("action.release", {"requestId": rid})
+                    released.add(rid)
+            for k, st in enumerate(steps):
+                if st.get("holdAt") and any(started.get(r) == k for r in rids):
+                    rid_k = next(r for r in rids if started[r] == k)
+                    if rid_k in outcomes and rid_k not in held:
+                        raise Unmet(f"{where}[{k}]: completed without reaching holdAt {st['holdAt']}")
             if all(r in outcomes for r in rids) and not waiting:
                 break
             pending = res.get("waiting") or []
@@ -301,6 +329,11 @@ class FixtureRun:
                     for s in strings:
                         if s in text:
                             raise Unmet(f"{where}: {s!r} is persisted")
+            elif key == "noReturnedContent":
+                text = _searchable([o for o in self.outcomes if o] + [obs.get("delivered")])
+                for s in exp:
+                    if s in text:
+                        raise Unmet(f"{where}: {s!r} was returned to the host")
             elif key == "noTransmittedContent":
                 text = _searchable([obs.get("stubCalls"), obs.get("providerRequests")])
                 for s in exp:

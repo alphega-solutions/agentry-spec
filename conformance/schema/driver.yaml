@@ -51,7 +51,7 @@ $defs:
       jsonrpc: { const: "2.0" }
       id: { type: integer, minimum: 1 }
       method:
-        enum: [driver.describe, fixture.begin, fixture.end, case.begin, config.load, action.start, settle,
+        enum: [driver.describe, fixture.begin, fixture.end, case.begin, config.load, action.start, action.release, settle,
                crash.arm, process.restart, clock.set, clock.advance, retention.run, stream.abandon, observe,
                port.call, adapter.call, cel.evaluate]
       params: { type: object }
@@ -68,6 +68,8 @@ $defs:
         then: { properties: { params: { $ref: "#/$defs/configLoad" } } }
       - if: { properties: { method: { const: action.start } } }
         then: { properties: { params: { $ref: "#/$defs/actionStart" } } }
+      - if: { properties: { method: { const: action.release } } }
+        then: { properties: { params: { $ref: "#/$defs/actionRelease" } } }
       - if: { properties: { method: { const: settle } } }
         then: { properties: { params: { $ref: "#/$defs/settle" } } }
       - if: { properties: { method: { const: crash.arm } } }
@@ -228,6 +230,20 @@ $defs:
         enum: [run, resume, decide, close, cancel, getReviewerView, listPendingEscalations,
                exportBundle, replay, convert, evalRun]
       args: { type: object }
+      holdAt:
+        description: >-
+          Hold the action when it reaches this point (a crash point name),
+          until `action.release` (fixture.yaml `holdAt`). While held it is
+          reported as waiting `on: held`.
+        type: string
+
+  actionRelease:
+    description: Release a held action; it continues at the next `settle`.
+    type: object
+    additionalProperties: false
+    required: [requestId]
+    properties:
+      requestId: { type: string }
 
   settle:
     description: >-
@@ -285,7 +301,8 @@ $defs:
           required: [requestId, "on"]
           properties:
             requestId: { type: string }
-            "on": { enum: [timer, paused] }
+            "on": { enum: [timer, paused, held] }
+            point: { description: For `held`, the point it is held at., type: string }
             until:
               description: For `timer`, when the earliest timer this action waits on fires.
               $ref: "#/$defs/timestamp"
