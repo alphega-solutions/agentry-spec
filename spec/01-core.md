@@ -413,3 +413,6 @@ Writing schemas and fixtures for this area exposed these gaps. Requirement text 
 
 - **CORE-191** `unavailable`: for errors returned by a **tool**, handling follows TOOL-052/053 as amended — non-retryable tool errors are delivered to the model; retryable ones are retried, or treated as `fatal` when they may not be retried or retries are exhausted. The "then treated as `fatal`" rule applies to provider, port, and harness errors.
 
+## Amendment 2026-11-14 — writes outside a run (post-Phase 4 review)
+
+- **CORE-031, CORE-032.** While a session holds an operation lease (HITL-093), taken by `decide()`, by `close()` or `cancel()` of a non-active session, or by expiry processing, `run()` and `resume()` fail with `conflict` (`retryable: true`) as they do on an active session. They change nothing. CORE-032's optimistic concurrency on the checkpoint version is how both kinds of lease are acquired. See the Area 6 amendment 2026-11-14.

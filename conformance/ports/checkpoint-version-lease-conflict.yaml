@@ -23,10 +23,12 @@ description: >-
     its old token 1: `conflict` (stale fencing token), and v3 stays
     worker-b's. worker-b's own save at `expectedVersion` 3 succeeds (v4):
     the run has ended, the session is idle, and v4 records no lease but
-    the idle TTL's expiry (`expiresAt`, required while idle).
+    the idle TTL's expiry (`expiresAt`, required while idle) and
+    `fencingToken` 2, the highest token issued, which the next lease must
+    exceed (PORT-030 as amended 2026-11-14).
   - Control: fencing is per session. Session S2 (…0051) accepts a create
     with token 1 after token 2 was accepted for S.
-requirements: [PORT-031, PORT-004]
+requirements: [PORT-030, PORT-031, PORT-004]
 port: checkpointStore
 clock: "2026-03-01T09:00:00Z"
 steps:
@@ -86,7 +88,7 @@ steps:
       session: 01900000-0000-7000-8000-000000000050
       expectedVersion: 2
       lease: { holder: worker-b, token: 2, expiresAt: "2026-03-01T09:15:00Z" }
-      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-000000000050, version: 3, lastSeq: 5, state: active, principalRef: { subject: user-1, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:6666666666666666666666666666666666666666666666666666666666666666", taint: { tainted: false, provenances: [] }, budget: { tokens: 99000 }, counters: { sessionSize: 480 }, lease: { holder: worker-b, token: 2, expiresAt: "2026-03-01T09:15:00Z" } }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-000000000050, version: 3, lastSeq: 5, state: active, principalRef: { subject: user-1, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:6666666666666666666666666666666666666666666666666666666666666666", taint: { tainted: false, provenances: [] }, budget: { tokens: 99000 }, counters: { sessionSize: 480 }, fencingToken: 2, lease: { holder: worker-b, token: 2, expiresAt: "2026-03-01T09:15:00Z" } }
     expect: { ok: true }
   - op: save
     args:
@@ -106,12 +108,12 @@ steps:
       session: 01900000-0000-7000-8000-000000000050
       expectedVersion: 3
       lease: { holder: worker-b, token: 2, expiresAt: "2026-03-01T09:15:00Z" }
-      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-000000000050, version: 4, lastSeq: 6, state: idle, expiresAt: "2026-03-01T10:10:00Z", principalRef: { subject: user-1, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:6666666666666666666666666666666666666666666666666666666666666666", taint: { tainted: false, provenances: [] }, budget: { tokens: 98500 }, counters: { sessionSize: 610 } }
+      checkpoint: { schemaVersion: "0.1.0", tenant: t1, sessionId: 01900000-0000-7000-8000-000000000050, version: 4, lastSeq: 6, state: idle, expiresAt: "2026-03-01T10:10:00Z", principalRef: { subject: user-1, tenant: t1 }, persona: assistant@1, profile: default@1, snapshotHash: "sha256:6666666666666666666666666666666666666666666666666666666666666666", taint: { tainted: false, provenances: [] }, budget: { tokens: 98500 }, counters: { sessionSize: 610 }, fencingToken: 2 }
     expect: { ok: true }
   - op: load
     args: { tenant: t1, session: 01900000-0000-7000-8000-000000000050 }
     expect:
-      result: { version: 4, lastSeq: 6, state: idle, expiresAt: "2026-03-01T10:10:00Z", lease: { $absent: true } }
+      result: { version: 4, lastSeq: 6, state: idle, expiresAt: "2026-03-01T10:10:00Z", lease: { $absent: true }, fencingToken: 2 }
   - op: save
     args:
       tenant: t1
