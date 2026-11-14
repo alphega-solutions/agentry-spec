@@ -13,16 +13,21 @@ description: >-
     `agentry.approval.rule`.
   - $sError: set_flag with no flag → evaluation error →
     `agentry.approval.rule_error`.
-  - $sOff (control): flag `off` → the rule is false → dispatched, no
-    escalation.
+  - $sOff (control): flag `off` → the rule is false, and the bundle sets
+    `approvalDefault: continue` → dispatched, no escalation.
 
-  The configuration is then reloaded with the persona declaring no
-  approval rules (and the bundle declares none), so a new session uses a
-  snapshot with no rules at all:
+  The bundle is then reloaded without `approvalDefault`, so its default
+  `escalate` applies (HOOK-133); the persona keeps its rule:
 
-  - $sNoRules: set_flag with flag `off` — the argument that did not
-    escalate under the rule — escalates with `agentry.approval.no_rules`
-    (HOOK-131).
+  - $sNoMatch: set_flag with flag `off` — the argument that did not
+    escalate before — escalates with `agentry.approval.no_match`: rules
+    are declared and none is true (HOOK-131 as amended 2026-11-13).
+
+  The persona is then reloaded declaring no approval rules (and the bundle
+  declares none), so a new session uses a snapshot with no rules at all:
+
+  - $sNoRules: set_flag with flag `off` escalates with
+    `agentry.approval.no_rules` (HOOK-131).
 
   Each escalation has one `tool_call` action from source `approval`,
   allowing exactly approve, reject and edit (HITL-011), as the exact array
@@ -66,6 +71,16 @@ setup:
         idempotent: true
         approval: policy
         binding: { kind: native, handler: test.set_flag }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        approvalDefault: continue
+        sensitivityPolicies:
+          pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+          phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
       - kind: Persona
         id: assistant
         version: 1
@@ -103,6 +118,9 @@ setup:
           usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
         - parts: [{ type: text, text: "Flag set." }]
           usage: { inputTokens: 30, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sNoMatch
+        - parts: [{ type: tool_call, callId: c1, tool: set_flag, arguments: { key: k1, flag: "off" } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
         # $sNoRules
         - parts: [{ type: tool_call, callId: c1, tool: set_flag, arguments: { key: k1, flag: "off" } }]
           usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
@@ -140,6 +158,27 @@ script:
     persona: assistant@1
     input: [{ type: text, text: "Set the flag on k1 off" }]
     expect: { ok: true, endReason: responded }
+  # The bundle without approvalDefault: its default `escalate` applies.
+  - load:
+      artifacts:
+        - kind: PolicyBundle
+          id: org
+          version: 1
+          schemaVersion: "0.1.0"
+          policyInstructions: "Follow organisational policy."
+          defaultFallbackMessage: "I can't help with that request."
+          sensitivityPolicies:
+            pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+            phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
+    expect: { ok: true }
+  - action: run
+    bind: $sNoMatch
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set the flag on k1 off" }]
+    expect: { ok: true, endReason: escalated }
+  # The persona without approval rules: none are declared at all.
   - load:
       artifacts:
         - kind: Persona
@@ -243,6 +282,27 @@ expect:
           - { type: run.ended, payload: { reason: responded } }
       absentEvents:
         - { type: escalation.raised }
+    $sNoMatch:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            payload:
+              escalation:
+                sources: [approval]
+                reasonCodes: [agentry.approval.no_match]
+                pendingActions:
+                  - kind: tool_call
+                    source: approval
+                    reasonCode: agentry.approval.no_match
+                    callId: c1
+                    tool: set_flag
+                    arguments: { key: k1, flag: "off" }
+                    allowedDecisions: [approve, reject, edit]
+          - { type: run.ended, payload: { reason: escalated } }
+      absentEvents:
+        - { type: tool.call }
     $sNoRules:
       state: suspended
       events:

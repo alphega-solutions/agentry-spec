@@ -1,0 +1,199 @@
+schemaVersion: "0.1.0"
+id: hook.approval-default-not-loosened
+title: Approval rules a persona adds never release a `policy` call the bundle left to the default; only a policy bundle can set `approvalDefault`
+description: >-
+  The org bundle's pii sensitivity policy sets `approval: policy`, and the
+  bundle declares no approval rules and no `approvalDefault`, so its
+  default `escalate` applies (HOOK-133). read_patient (read, sensitivity
+  pii, its own approval `never`) therefore has effective approval `policy`
+  (TOOL-035). The persona adds two approval rules: one scoped to another
+  tool (`tool.id == 'pay' && ...`, false for read_patient without reading
+  `amount`, so no evaluation error) and the literal `false`.
+
+  - $s: read_patient {k1} → no rule is true → `approvalDefault` decides →
+    escalation from source `approval` with reason
+    `agentry.approval.no_match` (HOOK-131 as amended 2026-11-13). Before
+    the amendment the persona's rules switched off the "no rules →
+    escalate" default and the call was dispatched without review.
+  - A persona that sets `approvalDefault: continue` is a configuration
+    error (HOOK-133): only policy bundles may set it.
+  - $sReleased (control): the bundle is reloaded with `approvalDefault:
+    continue`, the governance layer's explicit choice; the same call is
+    now dispatched with no escalation.
+requirements: [HOOK-131, HOOK-133]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: read_patient
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Read a patient record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key]
+          properties: { key: { type: string } }
+        effect: read
+        sensitivity: [pii]
+        binding: { kind: native, handler: test.read_patient }
+      - kind: Tool
+        id: pay
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Make a payment.
+        input:
+          type: object
+          additionalProperties: false
+          required: [amount]
+          properties: { amount: { type: number } }
+        effect: mutating
+        idempotent: true
+        approval: policy
+        binding: { kind: native, handler: test.pay }
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        sensitivityPolicies:
+          pii:
+            allowedProviders: [scripted-a, scripted-b]
+            redaction: [{ mode: mask }]
+            approval: policy
+          phi:
+            allowedProviders: [scripted-a]
+            redaction: [{ mode: mask }]
+      - kind: Persona
+        id: assistant
+        version: 1
+        schemaVersion: "0.1.0"
+        displayName: Test assistant
+        instructions: "You are a test assistant."
+        tools: [read_patient@1, pay@1]
+        fallbackMessage: "This request was blocked."
+        defaultProfile: default@1
+        allowedProfiles: [default@1, streamed@1]
+        approvalRules:
+          - "tool.id == 'pay' && call.arguments.amount > 1000"
+          - "false"
+        model:
+          provider: scripted-a
+          name: model-a
+          fallbacks:
+            - { provider: scripted-b, name: model-b }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+  providers:
+    scripted-a:
+      responses:
+        # $s
+        - parts: [{ type: tool_call, callId: c1, tool: read_patient, arguments: { key: k1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        # $sReleased
+        - parts: [{ type: tool_call, callId: c1, tool: read_patient, arguments: { key: k2 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Record read." }]
+          usage: { inputTokens: 30, outputTokens: 3, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      read_patient:
+        - ok: { output: { name: "Synthetic Patient" } }
+      pay: []
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Read patient k1" }]
+    expect: { ok: true, endReason: escalated }
+  # A persona cannot change the default.
+  - load:
+      artifacts:
+        - kind: Persona
+          id: assistant
+          version: 1
+          schemaVersion: "0.1.0"
+          displayName: Test assistant
+          instructions: "You are a test assistant."
+          tools: [read_patient@1, pay@1]
+          fallbackMessage: "This request was blocked."
+          defaultProfile: default@1
+          allowedProfiles: [default@1, streamed@1]
+          approvalRules: ["false"]
+          approvalDefault: continue
+          model:
+            provider: scripted-a
+            name: model-a
+            fallbacks:
+              - { provider: scripted-b, name: model-b }
+    expect: { ok: false, error: { category: configuration } }
+  # The governance layer opts in explicitly.
+  - load:
+      artifacts:
+        - kind: PolicyBundle
+          id: org
+          version: 1
+          schemaVersion: "0.1.0"
+          policyInstructions: "Follow organisational policy."
+          defaultFallbackMessage: "I can't help with that request."
+          approvalDefault: continue
+          sensitivityPolicies:
+            pii:
+              allowedProviders: [scripted-a, scripted-b]
+              redaction: [{ mode: mask }]
+              approval: policy
+            phi:
+              allowedProviders: [scripted-a]
+              redaction: [{ mode: mask }]
+    expect: { ok: true }
+  - action: run
+    bind: $sReleased
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Read patient k2" }]
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: suspended
+      events:
+        mode: subsequence
+        items:
+          - type: escalation.raised
+            payload:
+              escalation:
+                sources: [approval]
+                reasonCodes: [agentry.approval.no_match]
+                pendingActions:
+                  - kind: tool_call
+                    source: approval
+                    reasonCode: agentry.approval.no_match
+                    callId: c1
+                    tool: read_patient
+                    arguments: { key: k1 }
+          - { type: run.ended, payload: { reason: escalated } }
+      absentEvents:
+        - { type: tool.call }
+    $sReleased:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: read_patient, arguments: { key: k2 } } }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: escalation.raised }
+  stubCalls:
+    read_patient: [{ arguments: { key: k2 } }]
+    pay: { count: 0 }

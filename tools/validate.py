@@ -144,6 +144,7 @@ STRICTNESS_ORDERS = [
     ("Delivery mode", ["buffered", "streamed"], ["HarnessProfile.deliveryMode"]),
     ("Taint outcome", ["block", "escalate", "allow"], ["PolicyBundle.toolTaintDefaults.*"]),
     ("Approval policy", ["always", "policy", "never"], ["PolicyBundle.sensitivityPolicies.*.approval"]),
+    ("Approval default (HOOK-133)", ["escalate", "continue"], ["PolicyBundle.approvalDefault"]),
     ("Checkpoint granularity", ["tool", "turn"], ["HarnessProfile.checkpoint"]),
     ("Include reasoning in traces", [False, True], ["HarnessProfile.trace.includeReasoning"]),
     ("Deterministic guardrails (HOOK-104)", [True, False],

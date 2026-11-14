@@ -71,6 +71,16 @@ properties:
     description: "Approval rules for `approval: policy` (HOOK-130)."
     x-agentry-merge: union
     $ref: "https://alphega.io/agentry/schemas/config/defs/v1.json#/$defs/approvalRules"
+  approvalDefault:
+    description: >-
+      Outcome of a call whose effective approval is `policy` when no approval
+      rule is true, including when none is declared (HOOK-131, HOOK-133).
+      Settable only in policy bundles; a persona adds rules but never changes
+      the default. Default `escalate`.
+    x-agentry-merge: stricter
+    x-agentry-order: [escalate, continue]
+    enum: [escalate, continue]
+    default: escalate
   reviewerRules:
     description: Reviewer rules per escalation source (HITL-021, HITL-024).
     x-agentry-merge: union

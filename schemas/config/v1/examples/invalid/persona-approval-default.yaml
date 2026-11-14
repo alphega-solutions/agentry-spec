@@ -1,0 +1,13 @@
+# HOOK-133: approvalDefault is settable only in policy bundles; a persona may add approval rules but never change the default.
+schema: https://alphega.io/agentry/schemas/config/persona/v1.json
+instance:
+  kind: Persona
+  id: assistant
+  version: 1
+  schemaVersion: "0.1.0"
+  instructions: "You are a test assistant."
+  tools: [lookup@1]
+  approvalRules: ["call.arguments.key == 'review-me'"]
+  approvalDefault: continue
+  defaultProfile: default@1
+  allowedProfiles: [default@1]

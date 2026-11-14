@@ -13,7 +13,8 @@ description: >-
     with arguments no approval rule matches → effective `always` →
     escalates anyway.
   - $sPolicy: `read_contact` (approval never, labels pii) → effective
-    `policy`: with key k1 no rule matches and it is dispatched; with key
+    `policy`: with key k1 no rule matches and it is dispatched (the
+    bundle sets `approvalDefault: continue`, HOOK-133); with key
     escalate-me the rule matches and it escalates.
   - $sUnlabelled: lookup (approval never, no labels) with key escalate-me
     is dispatched: the approval rule applies only where the effective
@@ -34,6 +35,7 @@ setup:
         policyInstructions: "Follow organisational policy."
         defaultFallbackMessage: "I can't help with that request."
         approvalRules: ["call.arguments.key == 'escalate-me'"]
+        approvalDefault: continue
         sensitivityPolicies:
           pii:
             allowedProviders: [scripted-a, scripted-b]

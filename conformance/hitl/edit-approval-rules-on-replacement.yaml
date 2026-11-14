@@ -3,7 +3,8 @@ id: hitl.edit-approval-rules-on-replacement
 title: "After an edit of a `hook` action, `approval: policy` evaluates the approval rules on the replacement"
 description: >-
   update_record has `approval: policy`; the bundle's only approval rule is
-  `call.arguments.value == 'v-flagged'`. The bundle requires one native
+  `call.arguments.value == 'v-flagged'`, and it sets `approvalDefault:
+  continue`, so a call no rule matches continues (HOOK-133). The bundle requires one native
   beforeToolCall hook, gate, which escalates each session's first call and
   continues on the edited one. Every call is the session's first step, so
   no session is tainted.
@@ -61,6 +62,7 @@ setup:
         defaultFallbackMessage: "I can't help with that request."
         requiredHooks: [gate@1]
         approvalRules: ["call.arguments.value == 'v-flagged'"]
+        approvalDefault: continue
         sensitivityPolicies:
           pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
           phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }

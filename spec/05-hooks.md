@@ -183,8 +183,9 @@ The taint rule is a deterministic policy check in the harness. It is not a hook 
 ## 11. Approval policy
 
 - **HOOK-130** Policy bundles and personas **MAY** declare `approvalRules`: CEL expressions (§9) evaluated at tool pipeline stage 7 with the `beforeToolCall` variables. Merge rule: `union`. *(Extends CFG-070 and CFG-080.)*
-- **HOOK-131** For a call whose effective approval is `policy` (TOOL-035), the call **MUST** escalate if any approval rule evaluates to `true`, and continue otherwise. If no approval rules are declared at all, the call **MUST** escalate.
+- **HOOK-131** For a call whose effective approval is `policy` (TOOL-035), the call **MUST** escalate if any approval rule evaluates to `true`. Otherwise — including when no approval rules are declared at all — it **MUST** take the effective `approvalDefault` (HOOK-133): `escalate` escalates, `continue` continues. Adding a rule can therefore only add escalations.
 - **HOOK-132** An approval rule evaluation error **MUST** be treated as `true` (escalate).
+- **HOOK-133** A policy bundle **MAY** set `approvalDefault`: `escalate` or `continue`, default `escalate`. Merge rule: `stricter`, order `escalate` → `continue`. The field **MUST** be settable only in policy bundles; in any other kind it is a configuration error. *(Extends CFG-070.)*
 
 ## 12. Conformance fixtures (to be written in Phase 4)
 
@@ -229,7 +230,8 @@ The taint rule is a deterministic policy check in the harness. It is not a hook 
 | Bundle default stricter than tool setting → bundle applies | HOOK-123 |
 | Taint decision → `policy.decision` + audit | HOOK-124 |
 | Hook cannot override a taint block | HOOK-125 |
-| Approval rule true → escalate; false → continue; error → escalate; no rules declared → escalate | HOOK-130–132 |
+| Approval rule true → escalate; error → escalate; no rule true (or none declared) → `approvalDefault`: `escalate` by default, `continue` only when a bundle sets it | HOOK-130–133 |
+| A persona rule that is false for a tool (or `"false"`) does not release a `policy` call the bundle left to the default; `approvalDefault` in a persona → configuration error; a lower bundle cannot loosen `escalate` | HOOK-131, 133 |
 | Unknown hook point in a definition → rejected | HOOK-010 |
 | One hook at two points evaluated at each | HOOK-004 |
 | Rewrite cannot drop labels; inserted part is least-trusted | HOOK-021 |
@@ -281,7 +283,7 @@ The taint rule is a deterministic policy check in the harness. It is not a hook 
 | HOOK-124 | Taint decisions audited even when the outcome is `allow` |
 | HOOK-125 | Hooks cannot override the taint rule |
 | HOOK-126 | Sessions record which provenances tainted them |
-| HOOK-130–132 | **New `approvalRules` field** for `approval: policy`; evaluation errors escalate; with no rules declared, `policy` escalates (extends CFG-070, CFG-080) |
+| HOOK-130–133 | **New `approvalRules` field** for `approval: policy`; evaluation errors escalate; when no rule is true, the bundle-only `approvalDefault` decides, `escalate` unless set (extends CFG-070, CFG-080) |
 
 ## Amendment 2026-10-31 — from Area 10
 
@@ -355,3 +357,19 @@ Requirement text above has been edited where noted.
   - `hook.result-annotate-unmapped-label`: its annotate-only session now blocks.
   - `cfg.semantic-streamed-output-hooks` gains `failClosed` annotate-only cases, rejected on `streamed`.
   - Output hooks used with personas that allow `streamed@1`, and that never fail in their fixture, now declare `failureMode: failOpen`.
+
+## Amendment 2026-11-13 — explicit approval default (post-Phase 4 review)
+
+Requirement text above has been edited where noted.
+
+- **HOOK-131** (text above replaced) **and new HOOK-133.** A `policy` call escalates if any approval rule is true; otherwise it takes the effective `approvalDefault`, a new policy-bundle field (`escalate` or `continue`, default `escalate`, merged `stricter`). "No rules declared" is now just the case where no rule is true, so it is no longer a special case.
+- **Why.** Before this change the call escalated by default only when no rules were declared **anywhere**. The first rule any layer declared therefore removed the default. A persona declaring `approvalRules: ["false"]` released every `policy` call, including those a bundle's sensitivity policy had made `policy` (TOOL-035). A rule scoped to one tool (`tool.id == 'pay' && ...`) released every other `policy` tool, because it is false for them without error. A lower bundle in the stack could do the same to a higher one. This was the one place where adding configuration in a lower layer loosened governance, contrary to ADR-0007 ("no lower layer may weaken governance") and the bundle-stack rule that each lower bundle can only tighten the ones above it (CFG-070). Now adding a rule can only add escalations, and the default can only be tightened by lower layers.
+- **Bundle-only.** `approvalDefault` is settable only in policy bundles, not personas. A `stricter` field imposes nothing when a higher layer leaves it unset, so a persona allowed to set `continue` could reopen the same gap explicitly. Personas still declare rules, which only add escalations. An organisation that wants rules to act as filters ("escalate only large amounts") sets `approvalDefault: continue` in its bundle. One that wants to forbid that for lower bundles sets `escalate` explicitly.
+- **Reason codes.** `agentry.approval.no_rules` remains for "no rules declared". `agentry.approval.no_match` is new, for "rules declared, none true", with the default `escalate` (Area 6 amendment 2026-11-01 reason-code list updated).
+- **Configuration.** CFG-031 gains the order `escalate` → `continue`. CFG-070 lists the field. `schemas/config/v1/policy-bundle.yaml` declares it, and the persona schema rejects it.
+- **Fixtures.**
+  - New: `hook.approval-default-not-loosened`.
+  - `hitl.raise-approval-reason-codes` gains the `no_match` case.
+  - `cfg.strictness-orders-layers` gains the field.
+  - Fixtures whose unmatched `policy` calls are dispatched now set `approvalDefault: continue` in their bundle: `tool.pipeline-label-approval`, `tool.pipeline-untainted-normal-approval`, `hook.approval-rule-error-escalates`, `hook.approval-rules-union`, `hitl.edit-approval-rules-on-replacement`.
+  - New invalid schema example: `persona-approval-default`.
