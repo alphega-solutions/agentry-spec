@@ -10,3 +10,6 @@ instance:
   effect: read
   trustedOutput: true
   binding: { kind: native, handler: test.lookup }
+# The smallest change that makes the instance valid, so it fails only for the reason above.
+repair:
+  - { op: remove, path: "/trustedOutput" }

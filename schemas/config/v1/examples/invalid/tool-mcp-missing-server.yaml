@@ -9,3 +9,6 @@ instance:
   input: { type: object, additionalProperties: false, required: [key], properties: { key: { type: string } } }
   effect: read
   binding: { kind: mcp, tool: search }
+# The smallest change that makes the instance valid, so it fails only for the reason above.
+repair:
+  - { op: add, path: "/binding/server", value: "docs" }

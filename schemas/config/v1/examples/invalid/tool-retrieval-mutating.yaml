@@ -9,3 +9,6 @@ instance:
   input: { type: object, required: [query], properties: { query: { type: string } } }
   effect: mutating
   binding: { kind: retrieval, source: docs }
+# The smallest change that makes the instance valid, so it fails only for the reason above.
+repair:
+  - { op: replace, path: "/effect", value: "read" }

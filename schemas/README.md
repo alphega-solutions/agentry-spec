@@ -34,6 +34,10 @@ Areas 6–11 add theirs in later Phase 4 pull requests.
 - **Versioning**: every top-level document carries `schemaVersion`. The schema path's major version changes only with a major contract release (ADR-0002).
 - **Merge annotations**: configuration schemas (Areas 2–3) annotate each field with `x-agentry-merge`, each `stricter` field with `x-agentry-order` (strictest first), and secret fields with `x-agentry-secret: true` (CFG-030, CFG-031, CFG-061). `tools/validate.py` checks this, that `override` appears only on the allowlisted display and generation-parameter fields (CFG-033), and that the non-layered kinds (`Deployment`, `Tool`, `Hook`) carry no merge annotations in their own documents.
 
+## Examples
+
+Each schema area has `examples/valid/` and `examples/invalid/`, one YAML file per example with `schema` (the target `$id`, optionally with a `#` fragment) and `instance`. Valid examples must validate. Invalid examples must not, and they must also declare `repair`: a list of JSON-Patch operations (RFC 6902 `add`, `remove` or `replace`) giving the smallest change that makes the instance valid. `tools/validate.py` applies the repair and requires the result to validate. That proves the example fails only for the fault its comment describes, and would start passing if the rule it tests were removed.
+
 ## Validating
 
 ```

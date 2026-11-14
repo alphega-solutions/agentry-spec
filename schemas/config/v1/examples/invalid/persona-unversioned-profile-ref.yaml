@@ -9,3 +9,7 @@ instance:
   tools: []
   defaultProfile: default
   allowedProfiles: [default]
+# The smallest change that makes the instance valid, so it fails only for the reason above.
+repair:
+  - { op: replace, path: "/defaultProfile", value: "default@1" }
+  - { op: replace, path: "/allowedProfiles/0", value: "default@1" }

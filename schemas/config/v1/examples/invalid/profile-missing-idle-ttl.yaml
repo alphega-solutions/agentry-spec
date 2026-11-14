@@ -7,3 +7,6 @@ instance:
   schemaVersion: "0.1.0"
   suspendedTtl: PT72H
   stepLimit: 8
+# The smallest change that makes the instance valid, so it fails only for the reason above.
+repair:
+  - { op: add, path: "/idleTtl", value: "PT24H" }

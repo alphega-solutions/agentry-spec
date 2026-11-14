@@ -12,3 +12,6 @@ instance:
   snapshotHash: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   traceContext: { traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" }
   payload: { text: "x" }
+# The smallest change that makes the instance valid, so it fails only for the reason above.
+repair:
+  - { op: remove, path: "/seq" }

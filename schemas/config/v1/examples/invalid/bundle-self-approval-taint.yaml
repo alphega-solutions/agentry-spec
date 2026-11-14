@@ -7,3 +7,6 @@ instance:
   version: 1
   schemaVersion: "0.1.0"
   allowSelfApproval: { approval: true, taint: false }
+# The smallest change that makes the instance valid, so it fails only for the reason above.
+repair:
+  - { op: remove, path: "/allowSelfApproval/taint" }

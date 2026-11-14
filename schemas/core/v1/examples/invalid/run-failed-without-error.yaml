@@ -1,2 +1,5 @@
 schema: https://alphega.io/agentry/schemas/core/event/v1.json#/$defs/runEnded
 instance: { reason: failed }
+# The smallest change that makes the instance valid, so it fails only for the reason above.
+repair:
+  - { op: add, path: "/error", value: {"code": "agentry.harness.internal", "category": "fatal", "retryable": false, "source": "harness", "message": "Failed."} }

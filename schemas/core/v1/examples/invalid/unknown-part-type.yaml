@@ -1,2 +1,6 @@
 schema: https://alphega.io/agentry/schemas/core/content/v1.json#/$defs/part
 instance: { type: audio, provenance: principal, labels: [] }
+# The smallest change that makes the instance valid, so it fails only for the reason above.
+repair:
+  - { op: replace, path: "/type", value: "text" }
+  - { op: add, path: "/text", value: "Hi" }
