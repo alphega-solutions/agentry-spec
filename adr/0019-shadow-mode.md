@@ -1,6 +1,6 @@
 # ADR-0019: Shadow mode for rolling out hooks and approval rules
 
-**Status:** Proposed 2026-11-14 · **Date:** 2026-11-14 · **Source:** post-Phase 4 comparative review (managed agent platforms offer a log-only mode for new policies); Area 5 (hooks, approval rules), Area 11 (evaluation)
+**Status:** Accepted 2026-11-14 · **Date:** 2026-11-14 · **Source:** post-Phase 4 comparative review (managed agent platforms offer a log-only mode for new policies); Area 5 (hooks, approval rules), Area 11 (evaluation)
 
 ## Context
 Adding governance is all-or-nothing today. A new guardrail hook or approval rule either enforces from its first session, or it is not deployed. Offline replay (EVAL-063, `reEvaluate`) shows how a change would have affected *recorded* sessions, but not the live distribution of inputs. A guardrail with a high false-positive rate therefore blocks real users before anyone has measured it.

@@ -23,7 +23,7 @@ Phase 2 records every cross-cutting decision made during Phases 0–1. All ADRs 
 | [0016](0016-memory-store.md) | Memory as a port with references that keep provenance and labels | Accepted |
 | [0017](0017-skills.md) | Skills are configuration artifacts, loaded on demand by the model | Accepted |
 | [0018](0018-reviewed-behaviour-changes.md) | Learned behaviour changes only through review | Accepted |
-| [0019](0019-shadow-mode.md) | Shadow mode for rolling out hooks and approval rules | Proposed |
+| [0019](0019-shadow-mode.md) | Shadow mode for rolling out hooks and approval rules | Accepted |
 
 ## Pending
 
