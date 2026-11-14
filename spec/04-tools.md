@@ -126,7 +126,7 @@ Every tool call the model requests passes through these stages, in order. A stag
 ### 7.4 Result handling
 
 - **TOOL-070** If the tool declares `output` and an `ok` result does not validate, the result **MUST** be replaced by a `fatal` error (`agentry.tool.invalid_output`, source `harness`). The run ends `failed`, which closes the session (CORE-020).
-- **TOOL-071** Every result **MUST** carry provenance `tool:<id>` and the tool's sensitivity labels. It is untrusted unless the effective policy lists the tool in `trustedTools` (CFG-070).
+- **TOOL-071** Every result **MUST** carry provenance `tool:<id>` and the tool's sensitivity labels. An `ok` result **MAY** also report labels of its own (`ok.labels`), and the result **MUST** then carry the union of both: reported labels add to the declared ones and never remove them. A reported label without a sensitivity policy (ADR-0015) makes the result invalid output, handled as TOOL-070. The result is untrusted unless the effective policy lists the tool in `trustedTools` (CFG-070).
 - **TOOL-072** After `afterToolCall` hooks, a result larger than the implementation's inline limit **MUST** be stored in the BlobStore and passed to the model as a blob reference (CORE-154). A result larger than the profile's `limits.partSize` **MUST** instead be replaced by an error `limit` (`agentry.tool.result_too_large`) (CORE-115, CORE-191).
 - **TOOL-073** Events and blobs **MUST** record the result as it stands after `afterToolCall` hooks. A withheld result is recorded only as its `policy` error.
 - **TOOL-074** Every mutating call and its outcome **MUST** be written to the audit log with the snapshot hash (`domain.md` invariant 14).
@@ -192,6 +192,7 @@ Tooling that generates `Tool` artifacts from an MCP server's tool list is encour
 | Crash mid-call: idempotent → re-dispatched with same key; non-idempotent → escalates | TOOL-062 |
 | Output failing `output` schema → run `failed`, `agentry.tool.invalid_output` | TOOL-070 |
 | Result provenance and labels; trusted only via `trustedTools` | TOOL-071 |
+| Labels a result reports add to the declared ones; an unmapped reported label → invalid output | TOOL-071 |
 | Result above inline limit → blob reference; above `partSize` → `limit` | TOOL-072 |
 | Hook-redacted result is what events record; withheld result recorded as error | TOOL-073 |
 | Labels visible to `afterToolCall` hook and tracer | TOOL-071, 073 |
@@ -285,3 +286,16 @@ Requirement text above has been edited where noted.
 - **Fixtures.**
   - `tool.exec-timeout-unavailable`'s first session now escalates.
   - New: `tool.exec-timeout-mutating-confirm`.
+
+## Amendment 2026-11-14 — labels reported by tool results (post-Phase 4 review)
+
+Requirement text above has been edited where noted.
+
+- **TOOL-071** (text above edited). A result carried only the labels its tool declares in `sensitivity`, plus any a hook adds. A tool that returns stored data, such as host-provided memory (`notes/context.md` X1), a CRM or a file store, returns data whose sensitivity varies by record. If such a tool declared no labels, `pii` data it had stored came back unlabelled, so provider routing (PROV-050), redaction and the egress condition (HOOK-122, HOOK-127) no longer applied to it. Declaring every label the store might ever hold would over-restrict every call. See `notes/memory.md` §9.
+- **Now** an `ok` result may report `labels`. The result carries the union of the declared and the reported labels, so a tool can add labels and never remove them, as with hook annotations (HOOK-022). The reported labels are recorded in the result as given. The union is on the `tool_result` part and on the `tool.result` event. A reported label with no sensitivity policy cannot be governed. Dropping it would lose protection silently, so the result is invalid output: a `fatal` error `agentry.tool.invalid_output` (TOOL-070).
+- **Bindings.**
+  - **Native** handlers report labels in their `ok` result.
+  - **Agent-bound** results already carry the union of the labels the child saw (TOOL-102).
+  - **MCP and HTTP** results have no label field in 1.0. A deployment that needs labels on them adds them with an `afterToolCall` `annotate` hook.
+- **Not changed.** Approval by label (TOOL-035) still uses the declared labels, because it is decided before dispatch, when the result's labels are not yet known. Reported labels take effect from stage 9: `afterToolCall` hooks see them, and so do context assembly, provider routing, redaction and the session label set.
+- **Fixtures.** New: `tool.result-reported-labels`.

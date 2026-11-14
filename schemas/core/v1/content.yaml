@@ -105,6 +105,12 @@ $defs:
             properties:
               output: {}
               blob: { $ref: "#/$defs/blobRef" }
+              labels:
+                description: >-
+                  Labels the tool reports for this result (TOOL-071 as amended
+                  2026-11-14). They add to the tool's declared labels; the
+                  result part and event carry the union.
+                $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/labels"
       - type: object
         additionalProperties: false
         required: [error]
