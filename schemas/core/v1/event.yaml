@@ -139,7 +139,7 @@ $defs:
       persona: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/artifactRef" }
       profile: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/artifactRef" }
       overrides:
-        description: Session-scoped values tightened by the session-creating run request (CFG-101, amended).
+        description: Session-scoped values tightened by the session-creating run request (CFG-101, CFG-102 as amended 2026-11-14).
         type: object
       parent:
         description: Present for child sessions (ORCH-004).
@@ -197,7 +197,7 @@ $defs:
     properties:
       kind: { enum: [run, resume] }
       overrides:
-        description: Run-request values that tightened the profile (CFG-102).
+        description: Run-request values that tightened run-scoped profile fields (CFG-102 as amended 2026-11-14); session-scoped values are on `session.created`.
         type: object
 
   runEnded:
