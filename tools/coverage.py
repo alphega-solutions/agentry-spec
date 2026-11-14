@@ -39,7 +39,9 @@ def main() -> int:
     failed = False
     for prefix in sorted(by_prefix):
         ids = sorted(by_prefix[prefix])
-        open_ = [r for r in ids if r not in covered and r not in elsewhere]
+        # A pending requirement stays open even when fixtures cite it: its
+        # fixtures cannot yet verify it (e.g. adapter cases before transcripts).
+        open_ = [r for r in ids if (r not in covered and r not in elsewhere) or r in pending]
         missing = [r for r in open_ if r not in pending]
         status = "ENFORCED" if prefix in enforced else "reported"
         note = f", {len(open_) - len(missing)} pending" if len(open_) > len(missing) else ""

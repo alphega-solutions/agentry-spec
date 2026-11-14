@@ -30,7 +30,17 @@ verifiedElsewhere:
   EVAL-033: "Suite-level: each in-memory port adapter runs the port cases in conformance/ports/ for its port (PORT-130, PORT-009)."
 
 # Normative requirements whose verification is scheduled for a later phase.
-# Coverage reports them as open but does not fail; each must be resolved
-# before the first release.
+# Coverage reports them as open, even when fixtures cite them, but does not
+# fail; each must be resolved before the first release.
 pending:
   EVAL-036: "Phase 5: recorded wire-level vendor transcripts for the native Claude and OpenAI adapters are published with the suite; until then the adapter cases run against scripted transport."
+  PROV-001: "Phase 5: an adapter obligation. The adapter cases are normative now, but the only adapter that runs them is the scripted one, which passes by construction; native adapters are verified once their recorded transcripts are published (EVAL-036)."
+  PROV-002: "Phase 5: an adapter obligation. The adapter cases are normative now, but the only adapter that runs them is the scripted one, which passes by construction; native adapters are verified once their recorded transcripts are published (EVAL-036)."
+  PROV-003: "Phase 5: an adapter obligation. The adapter cases are normative now, but the only adapter that runs them is the scripted one, which passes by construction; native adapters are verified once their recorded transcripts are published (EVAL-036)."
+  PROV-004: "Phase 5: an adapter obligation. The adapter cases are normative now, but the only adapter that runs them is the scripted one, which passes by construction; native adapters are verified once their recorded transcripts are published (EVAL-036)."
+  PROV-005: "Phase 5: an adapter obligation. The adapter cases are normative now, but the only adapter that runs them is the scripted one, which passes by construction; native adapters are verified once their recorded transcripts are published (EVAL-036)."
+  PROV-006: "Phase 5: an adapter obligation. The adapter cases are normative now, but the only adapter that runs them is the scripted one, which passes by construction; native adapters are verified once their recorded transcripts are published (EVAL-036)."
+  PROV-007: "Phase 5: an adapter obligation. The adapter cases are normative now, but the only adapter that runs them is the scripted one, which passes by construction; native adapters are verified once their recorded transcripts are published (EVAL-036)."
+  PROV-008: "Phase 5: an adapter obligation. The adapter cases are normative now, but the only adapter that runs them is the scripted one, which passes by construction; native adapters are verified once their recorded transcripts are published (EVAL-036)."
+  PROV-009: "Phase 5: an adapter obligation. The adapter cases are normative now, but the only adapter that runs them is the scripted one, which passes by construction; native adapters are verified once their recorded transcripts are published (EVAL-036)."
+  PROV-080: "Phase 5: an adapter obligation. The adapter cases are normative now, but the only adapter that runs them is the scripted one, which passes by construction; native adapters are verified once their recorded transcripts are published (EVAL-036)."
