@@ -43,3 +43,6 @@ The spec repository now has a reference matcher (`tools/matcher.py`). The lead i
 - **A runner per implementation (the current EVAL-020).** No protocol, fully in-process, idiomatic per language. But it means three loaders, matchers and script engines to keep identical, and runner bugs indistinguishable from harness bugs.
 - **Per-language runners ported from the reference matcher.** Less matcher divergence, but three script engines remain: concurrency, crashes and the clock, where the subtle bugs live.
 - **A shared runner over an in-process FFI or embedded language.** Avoids a process boundary, but ties the runner to each language's runtime and build. Stdio JSON-RPC works the same for Python, Node.js and Java.
+
+## Note 2026-11-14
+"Versioned with the contract" is applied literally. A driver reports as its protocol version the contract version whose `conformance/schema/driver.yaml` it implements (`driver.describe`, and the conformance report's `driver.protocol`). There is no separate protocol numbering. Protocol changes follow the contract's compatibility rules (ADR-0002).

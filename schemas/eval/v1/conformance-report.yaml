@@ -25,7 +25,9 @@ properties:
     additionalProperties: false
     required: [protocol, implementationVersion, language]
     properties:
-      protocol: { type: string, pattern: "^1\\.\\d+$" }
+      protocol:
+        description: The driver protocol version, i.e. the contract version whose driver protocol the driver speaks (ADR-0020 note 2026-11-14).
+        $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/contractVersion"
       implementationVersion: { type: string, minLength: 1 }
       language: { type: string, minLength: 1 }
   contract: { $ref: "https://alphega.io/agentry/schemas/common/defs/v1.json#/$defs/contractVersion" }

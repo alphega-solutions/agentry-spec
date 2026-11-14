@@ -43,7 +43,7 @@ class FakeDriver:
     # ---- methods ------------------------------------------------------------
 
     def describe(self, _p: dict) -> dict:
-        return {"protocol": "1.0", "contract": "0.1.0",
+        return {"protocol": "0.1.0", "contract": "0.1.0",
                 "implementation": {"name": "agentry-fake-driver", "version": "0.0.0", "language": "python"},
                 "unsupportedFeatures": [], "crashPoints": []}
 

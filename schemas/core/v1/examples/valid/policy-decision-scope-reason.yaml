@@ -10,5 +10,7 @@ instance:
   traceContext: { traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" }
   eventId: 0190a3c4-0000-7000-8000-000000000020
   seq: 6
+  turn: 1
+  step: 1
   type: policy.decision
   payload: { kind: scope, outcome: block, callId: c1, tool: archive_record, reason: out_of_scope }

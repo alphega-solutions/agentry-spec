@@ -187,7 +187,7 @@ The consequences of provenance and taint for tool calls are specified in Area 5.
 | `eventId` | UUIDv7 |
 | `sessionId`, `runId` | `runId` absent only on `session.created`, on a `session.closed` that occurs outside a run (expiry, `close()`, or `cancel()` of an idle or suspended session), and on the `hook.decision` and `error` events of `sessionEnd` hooks in that case (HOOK-052 reading) *(edited 2026-11-14)* |
 | `seq` | Per §9.2 |
-| `turn`, `step` | Present where applicable |
+| `turn`, `step` | Present where applicable: `turn` on turn and context events; `turn` and `step` on model, tool, `policy.decision` and `escalation.raised` events, and on `hook.decision` within a run (a `sessionStart` decision is turn 1, step 0) *(edited 2026-11-14)* |
 | `type` | One of the catalog types (§9.3) |
 | `timestamp` | Per CORE-002 |
 | `tenantId` | The session's tenant |
@@ -405,13 +405,13 @@ Writing schemas and fixtures for this area exposed these gaps. Requirement text 
 - **CORE-040/041** a TTL has elapsed when the current time is equal to or later than the expiry time.
 - **CORE-150/170** `model.response` is persisted after `afterModelCall` hooks, and records the response as those hooks left it, with any labels they added (consistent with TOOL-073 for tool results).
 
-## Amendment 2026-11-02 — from Phase 4 (Area 11)
-
-- **CORE-170** event catalog: the `turn.started` payload is `{message}`, the principal's message as it enters context — on the first turn, after the `sessionStart` hooks — with its provenances and labels (`schemas/core/v1/event.yaml`). `turn.started` is a content event for CORE-151: it carries `provenances` and `labels`. See the Area 11 amendment 2026-11-02 (CTX-001, EVAL-025).
-
 ## Amendment 2026-11-01 — from Phase 4 (Area 4)
 
 - **CORE-191** `unavailable`: for errors returned by a **tool**, handling follows TOOL-052/053 as amended — non-retryable tool errors are delivered to the model; retryable ones are retried, or treated as `fatal` when they may not be retried or retries are exhausted. The "then treated as `fatal`" rule applies to provider, port, and harness errors.
+
+## Amendment 2026-11-02 — from Phase 4 (Area 11)
+
+- **CORE-170** event catalog: the `turn.started` payload is `{message}`, the principal's message as it enters context — on the first turn, after the `sessionStart` hooks — with its provenances and labels (`schemas/core/v1/event.yaml`). `turn.started` is a content event for CORE-151: it carries `provenances` and `labels`. See the Area 11 amendment 2026-11-02 (CTX-001, EVAL-025).
 
 ## Amendment 2026-11-14 — writes outside a run (post-Phase 4 review)
 
@@ -435,3 +435,8 @@ Requirement text above has been edited where noted.
   - an `annotate` `hook.decision` carries `annotations`, which context rebuilding needs (CTX-001);
   - `run.started.overrides` and `session.created.overrides` accept only the fields CFG-101 lists, by scope.
 - **Structured parts.** A `structured` part's optional `schemaRef` names the output schema it was validated against (CORE-130).
+
+## Amendment 2026-11-14 — review leftovers (post-Phase 4 review)
+
+- **CORE-150** (table edited). "Present where applicable" is now explicit, and the event schema enforces it. Decisions and escalations belong to a step, so `policy.decision`, `escalation.raised`, and a `hook.decision` within a run carry `turn` and `step`.
+- Amendment sections in this area are now in date order. Content is unchanged.

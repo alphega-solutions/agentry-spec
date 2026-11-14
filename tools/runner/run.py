@@ -103,7 +103,7 @@ def run(driver: list[str], globs: list[str]) -> dict:
         "schemaVersion": "0.1.0",
         "implementation": impl.get("name", "unknown"),
         "runner": {"version": RUNNER_VERSION},
-        "driver": {"protocol": info.get("protocol", "1.0"), "implementationVersion": impl.get("version", "unknown"),
+        "driver": {"protocol": info.get("protocol", "unknown"), "implementationVersion": impl.get("version", "unknown"),
                    "language": impl.get("language", "unknown")},
         "contract": info.get("contract", "0.1.0"),
         "unsupportedFeatures": unsupported,
