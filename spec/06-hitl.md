@@ -24,7 +24,7 @@ As in Area 1 §2. Requirement IDs use the prefix `HITL-`. The schemas `Escalatio
 | `taint` | The taint rule's outcome is `escalate` (HOOK-122) |
 | `approval` | A call's effective approval is `always`; or `policy` and an approval rule is true, errors, or none is declared (TOOL-035, HOOK-131, HOOK-132) |
 | `hook` | A hook returns `escalate` (HOOK-033) |
-| `recovery` | A non-idempotent mutating call has an unknown outcome (TOOL-062, §10) |
+| `recovery` | A non-idempotent mutating call has an unknown outcome: after a crash (TOOL-062, §10) or a timeout (TOOL-055) |
 
 - **HITL-002** A session **MUST** have at most one open escalation at a time. All escalations arising while processing one step's tool calls **MUST** be grouped into one escalation, with one pending action each (TOOL-033). A new escalation may be raised in the same step after the previous one is resolved (for example, TOOL-036 re-escalation).
 - **HITL-003** When an escalation is created, the implementation **MUST** checkpoint the session, emit `escalation.raised` carrying the escalation record (subject to the redaction rules for events, CORE-154), end the run with `escalated`, and move the session to `suspended` (CORE-020).
@@ -306,3 +306,7 @@ Requirement text above has been edited where noted.
   - New: `hitl.expiry-detected-twice-processed-once`.
   - New: `core.run-during-close-operation-lease`.
   - `port.checkpoint.version-lease-conflict` records `fencingToken`.
+
+## Amendment 2026-11-14 — timeouts raise recovery actions (post-Phase 4 review)
+
+- **HITL-001** (table above edited). A `recovery` pending action is also raised, within the run, when a mutating call that is not idempotent times out (TOOL-055, Area 4 amendment 2026-11-14). It is the same action as after a crash, with reason `agentry.recovery.unknown_outcome` and the `confirm` decision. Self-approval stays forbidden for `recovery` (HITL-023).

@@ -111,7 +111,8 @@ Every tool call the model requests passes through these stages, in order. A stag
 - **TOOL-050** A tool returns either `ok` with output or an error in the Area 1 error shape (CORE-190).
 - **TOOL-051** A call exceeding its timeout **MUST** be cancelled and produce `unavailable` (`agentry.tool.timeout`, `retryable: true`).
 - **TOOL-052** The implementation **MAY** retry an error marked `retryable`, up to the profile's `retry.unavailable`, **only** if the tool's `effect` is `read` or the tool is `idempotent`.
-- **TOOL-053** When retries are exhausted, or a retryable error occurs on a call that may not be retried, the error is treated as `fatal` (CORE-191): the run ends `failed`.
+- **TOOL-053** When retries are exhausted, or a retryable error occurs on a call that may not be retried, the error is treated as `fatal` (CORE-191): the run ends `failed`. The exception is a timeout of a non-idempotent mutating call, which follows TOOL-055.
+- **TOOL-055** A timeout (TOOL-051) of a mutating call that is not `idempotent` leaves its outcome unknown: the tool may have acted. The implementation **MUST NOT** record an outcome for the call, and **MUST NOT** deliver the timeout to the model. It **MUST** emit an `error` event carrying the timeout error, and raise a `recovery` pending action for the call with reason `agentry.recovery.unknown_outcome` (TOOL-062, HITL-001). The step's other calls are processed (TOOL-033), and the run ends `escalated`. The call's one `tool.result` (TOOL-034) is the outcome a reviewer confirms (HITL-060), delivered when the session resumes. A result the tool produces after its timeout is neither recorded nor delivered.
 - **TOOL-054** Errors returned to the model **MUST** carry only the safe `message`, `code`, and category; `details` are subject to redaction (CORE-190).
 
 ### 7.3 Idempotency
@@ -185,6 +186,7 @@ Tooling that generates `Tool` artifacts from an MCP server's tool list is encour
 | Timeout → `unavailable`, `agentry.tool.timeout` | TOOL-051 |
 | Retry for read or idempotent tool; none for non-idempotent mutating tool | TOOL-052 |
 | Retries exhausted → run `failed` | TOOL-053 |
+| Non-idempotent mutating call times out → `recovery` escalation, no outcome recorded; confirm delivers the outcome | TOOL-055 |
 | Model-facing error excludes `details` | TOOL-054 |
 | Started/outcome records written; store tenant-scoped | TOOL-060 |
 | Crash mid-call: idempotent → re-dispatched with same key; non-idempotent → escalates | TOOL-062 |
@@ -222,6 +224,7 @@ Tooling that generates `Tool` artifacts from an MCP server's tool list is encour
 | TOOL-051 | Timeout is `unavailable` and retryable |
 | TOOL-060 | "Started" record written before dispatch |
 | TOOL-062 | **Unknown outcome of a non-idempotent mutating call escalates to a human** |
+| TOOL-055 | A timeout of a non-idempotent mutating call is an unknown outcome and escalates for recovery (amendment 2026-11-14) |
 | TOOL-070 | **Invalid tool output is `fatal`**: the run fails and the session closes. Alternative: return it to the model as an error and continue |
 | TOOL-072 | Result above `partSize` is replaced by a `limit` error (ends the run) |
 | TOOL-073 | Events record results after `afterToolCall` hooks, never raw |
@@ -257,3 +260,28 @@ Tooling that generates `Tool` artifacts from an MCP server's tool list is encour
 - **Binding credentials**: `credentials` is allowed on `native` and `langchain` bindings only. `mcp` and `http` bindings use the credentials on their deployment server or endpoint; `agent` and `retrieval` bindings take none. With `credentialMode: principal`, the references are resolved per principal (CFG-062).
 - **Agent tools** are idempotent by construction (ORCH-002); declaring `idempotent: false` on an `agent`-bound tool is a configuration error.
 
+## Amendment 2026-11-14 — a timeout is an unknown outcome (post-Phase 4 review)
+
+Requirement text above has been edited where noted.
+
+- **TOOL-053** (text above edited) **and new TOOL-055.** A timed-out call is cancelled and produces a retryable `unavailable` (TOOL-051). A mutating call that is not idempotent may not be retried (TOOL-052), so TOOL-053 made the timeout `fatal`: the run ended `failed` and the session closed. But a timeout does not mean the call failed, only that nobody knows whether it took effect. That is the state TOOL-062 escalates to a human after a crash. A timeout closed the session instead:
+  - no human was told that a side effect might have happened;
+  - no confirmation was possible;
+  - it was unspecified whether the timeout was recorded as the call's outcome, which would be false if the call had succeeded.
+
+  The common case was handled less safely than the crash case.
+- **Now** such a timeout follows TOOL-055:
+  - no outcome is recorded, so the started record stays, as for a cancelled call;
+  - the timeout is reported by an `error` event (CORE-170: errors not delivered as tool results), not delivered to the model;
+  - the call raises a `recovery` pending action with the existing reason `agentry.recovery.unknown_outcome`, and the run ends `escalated`;
+  - a `confirm` decision records and delivers the outcome, and the call is never re-dispatched (HITL-060);
+  - an undecided recovery action closes the session `expired` (HITL-082).
+
+  The `recovery` source (HITL-001) now covers this trigger.
+- **Not changed.**
+  - An error a tool **returns** follows TOOL-053, since the tool has reported its outcome.
+  - `read` and `idempotent` calls retry on timeout (TOOL-052).
+  - Cancelling a run still closes the session `cancelled` (CORE-020), because the host chose to stop.
+- **Fixtures.**
+  - `tool.exec-timeout-unavailable`'s first session now escalates.
+  - New: `tool.exec-timeout-mutating-confirm`.

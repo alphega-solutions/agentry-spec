@@ -1,0 +1,125 @@
+schemaVersion: "0.1.0"
+id: tool.exec-timeout-mutating-confirm
+title: A timed-out non-idempotent mutating call escalates for recovery; confirming it delivers the stated outcome, records it, and never re-dispatches the call
+description: >-
+  update_record (mutating, not idempotent) declares timeoutMs 1000, and its
+  stub takes 10 s on the virtual clock and honours cancellation. The model
+  calls it (c1). The call times out, so its outcome is unknown (TOOL-055,
+  amendment 2026-11-14). An `error` event carries `agentry.tool.timeout`,
+  no tool.result is emitted, and nothing is delivered to the model. A
+  `recovery` escalation with `agentry.recovery.unknown_outcome` ends the
+  run `escalated`, and the session is `suspended`, not closed. The
+  idempotency record for the call's key stays `started`.
+
+
+  The principal may not confirm their own recovery action (HITL-023). The
+  reviewer r1 resumes with `confirm`, outcome `succeeded` and a stated
+  output (HITL-060). The call's one tool.result is that `ok` result,
+  emitted after `escalation.resolved`. The model receives it in the next
+  request, and the turn continues to a response. update_record is
+  dispatched exactly once, the timed-out attempt; it is never
+  re-dispatched. The idempotency record is now `completed` with the
+  confirmed outcome.
+requirements: [TOOL-055, HITL-060]
+contract: ">=0.1.0 <1.0.0"
+features: []
+setup:
+  clock: "2026-01-01T00:00:00Z"
+  idSeed: 1
+  config:
+    base: baseline
+    artifacts:
+      - kind: Tool
+        id: update_record
+        version: 1
+        schemaVersion: "0.1.0"
+        description: Update a record.
+        input:
+          type: object
+          additionalProperties: false
+          required: [key, value]
+          properties: { key: { type: string }, value: { type: string } }
+        effect: mutating
+        idempotent: false
+        timeoutMs: 1000
+        binding: { kind: native, handler: test.update_record }
+  tenants:
+    - id: t1
+      principals:
+        - { id: p1, subject: user-1, assurance: multi_factor }
+        - { id: r1, subject: reviewer-1, assurance: multi_factor, roles: [reviewer] }
+  providers:
+    scripted-a:
+      responses:
+        - parts: [{ type: tool_call, callId: c1, tool: update_record, arguments: { key: k1, value: v1 } }]
+          usage: { inputTokens: 20, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+        - parts: [{ type: text, text: "Record k1 is updated." }]
+          usage: { inputTokens: 30, outputTokens: 5, cachedInputTokens: 0, reasoningTokens: 0 }
+  stubs:
+    tools:
+      update_record:
+        - { ok: { output: { updated: true } }, delayMs: 10000 }
+script:
+  - action: run
+    bind: $s
+    tenant: t1
+    principal: p1
+    persona: assistant@1
+    input: [{ type: text, text: "Set k1 to v1" }]
+    capture:
+      - event: { type: escalation.raised }
+        bind: { payload.escalation.pendingActions.0.id: $act, payload.escalation.pendingActions.0.idempotencyKey: $k }
+    expect: { ok: true, endReason: escalated }
+  - action: decide
+    session: $s
+    reviewer: p1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000551", pendingActionId: $act, type: confirm, outcome: succeeded }
+    expect: { ok: false, error: { category: unauthorized, code: agentry.hitl.reviewer_refused }, newEvents: 0 }
+  - action: resume
+    session: $s
+    reviewer: r1
+    decisions:
+      - { decisionId: "01900000-0000-7000-8000-000000000552", pendingActionId: $act, type: confirm, outcome: succeeded, output: { updated: true, confirmedBy: reviewer } }
+    expect: { ok: true, endReason: responded }
+expect:
+  sessions:
+    $s:
+      state: idle
+      events:
+        mode: subsequence
+        items:
+          - { type: tool.call, payload: { callId: c1, tool: update_record, arguments: { key: k1, value: v1 } } }
+          - { type: error, payload: { error: { category: unavailable, code: agentry.tool.timeout, source: tool } } }
+          - type: escalation.raised
+            payload:
+              escalation:
+                sources: [recovery]
+                reasonCodes: [agentry.recovery.unknown_outcome]
+                pendingActions: [{ id: $act, kind: recovery, callId: c1, tool: update_record, idempotencyKey: $k, allowedDecisions: [confirm] }]
+          - { type: run.ended, payload: { reason: escalated } }
+          - { type: escalation.resolved }
+          - { type: tool.result, payload: { callId: c1, tool: update_record, result: { ok: { output: { updated: true, confirmedBy: reviewer } } } } }
+          - { type: model.request }
+          - { type: run.ended, payload: { reason: responded } }
+      absentEvents:
+        - { type: tool.result, payload: { result: { error: { code: agentry.tool.timeout } } } }
+        - { type: session.closed }
+  stubCalls:
+    update_record:
+      - { arguments: { key: k1, value: v1 }, cancelled: true, completed: false, context: { idempotencyKey: $k } }
+  ports:
+    eventLog:
+      t1:
+        $s:
+          $count: { of: { type: tool.call }, equals: 1 }
+    idempotencyStore:
+      t1:
+        $k: { state: completed, outcome: { ok: { output: { updated: true, confirmedBy: reviewer } } } }
+  providerRequests:
+    scripted-a:
+      - {}
+      - messages:
+          $contains:
+            - role: tool
+              parts: [{ type: tool_result, callId: c1, result: { ok: { output: { updated: true, confirmedBy: reviewer } } } }]
