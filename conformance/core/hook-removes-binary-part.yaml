@@ -120,5 +120,9 @@ expect:
           $contains:
             - role: principal
               parts: [{ type: text, text: "Describe this" }]
+  # The seeded blob holds these bytes by design, so the check covers every
+  # port but the blob store: none of them may carry the bytes inline.
   noPersistedContent:
-    - "U1lOVEhFVElDLUlNQUdFLTAwMDE="
+    - ports: [eventLog, checkpointStore, idempotencyStore, snapshotStore, auditLog]
+      strings:
+        - "U1lOVEhFVElDLUlNQUdFLTAwMDE="

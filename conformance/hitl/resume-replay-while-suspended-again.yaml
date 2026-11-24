@@ -28,6 +28,19 @@ setup:
   config:
     base: baseline
     artifacts:
+      # update_record is trusted, so its turn-1 result does not taint the
+      # session; otherwise c2 would escalate at the taint rule first and,
+      # once approved, again at approval (HOOK-120, HOOK-122, TOOL-036).
+      - kind: PolicyBundle
+        id: org
+        version: 1
+        schemaVersion: "0.1.0"
+        policyInstructions: "Follow organisational policy."
+        defaultFallbackMessage: "I can't help with that request."
+        trustedTools: [update_record@1]
+        sensitivityPolicies:
+          pii: { allowedProviders: [scripted-a, scripted-b], redaction: [{ mode: mask }] }
+          phi: { allowedProviders: [scripted-a], redaction: [{ mode: mask }] }
       - kind: Tool
         id: update_record
         version: 1

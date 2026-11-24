@@ -203,7 +203,9 @@ expect:
     $c:
       state: suspended
     $d:
-      state: idle
+      # $d went idle at 2026-01-01T00:01Z; its idleTtl (PT24H) has elapsed by
+      # the end, so it may already be closed `expired` (CORE-041). Its state
+      # is not asserted; its resolved escalation is what this fixture needs.
       events:
         mode: subsequence
         items:

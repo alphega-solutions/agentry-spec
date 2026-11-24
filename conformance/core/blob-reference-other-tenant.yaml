@@ -40,5 +40,9 @@ script:
 expect:
   providerRequests:
     scripted-a: { count: 0 }
+  # The seeded blob holds these bytes by design, so the check covers every
+  # port but the blob store: none of them may carry the bytes inline.
   noPersistedContent:
-    - "U1lOVEhFVElDLUlNQUdFLVQyLTAwMDE="
+    - ports: [eventLog, checkpointStore, idempotencyStore, snapshotStore, auditLog]
+      strings:
+        - "U1lOVEhFVElDLUlNQUdFLVQyLTAwMDE="

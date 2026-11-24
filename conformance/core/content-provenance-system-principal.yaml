@@ -62,3 +62,5 @@ expect:
                 - parts:
                     $contains:
                       - { type: text, text: { $regex: "Follow organisational policy\\." }, provenance: system, labels: [] }
+      # The second request (after the tool result) is not asserted.
+      - {}
