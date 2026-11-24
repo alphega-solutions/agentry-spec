@@ -104,7 +104,7 @@ setup:
         tools: [lookup@1, update_record@1, read_note@1]
         fallbackMessage: "This request was blocked."
         defaultProfile: default@1
-        allowedProfiles: [default@1, streamed@1]
+        allowedProfiles: [default@1]
         outputSchema:
           type: object
           additionalProperties: false

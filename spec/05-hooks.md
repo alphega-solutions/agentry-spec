@@ -336,7 +336,7 @@ Schemas: `schemas/config/v1/hook.yaml` (`HookDefinition`); `schemas/core/v1/hook
 
 **CEL (§9)**
 
-- HOOK-112: variables are typed with exactly the fields of §9.1, and a content part has `type`, `text` (text parts), `value` (structured parts), `labels` and `provenance`; `principal.attributes`, `call.arguments`, `result.output` and `value` are `dyn`. JSON values inside `dyn` follow CEL's JSON mapping: every JSON number is a `double`, so `call.arguments.count + 1` is a run-time error and `call.arguments.count + 1.0` is not. The subset has no `uint` literals and no `dyn()` or `type()` functions. A load-time failure has one of two stages, which CEL rule fixtures (EVAL-005) assert: `compile` — parsing, and the syntactic subset checks (bytes literals, message construction); `type_check` — every other load-time check, including names outside the subset (`timestamp`, `duration`, custom functions). A `matches` pattern that is a literal and not valid RE2 is a `type_check` failure; a non-literal invalid pattern is a run-time error.
+- HOOK-112: variables are typed with exactly the fields of §9.1, and a content part has `type`, `text` (text parts), `value` (structured parts), `labels` and `provenance`; `principal.attributes`, `call.arguments`, `result.output` and `value` are `dyn`. JSON values inside `dyn` follow CEL's JSON mapping: every JSON number is a `double`, so `call.arguments.count + 1` is a run-time error and `call.arguments.count + 1.0` is not. The subset has no `uint` literals and no `dyn()` or `type()` functions. A load-time failure has one of two stages, which CEL rule fixtures (EVAL-005) assert: `compile` — parsing, and the syntactic subset checks (bytes literals, `uint` literals, message construction); `type_check` — every other load-time check, including names outside the subset (`timestamp`, `duration`, custom functions). A `matches` pattern that is a literal and not valid RE2 is a `type_check` failure; a non-literal invalid pattern is a run-time error.
 
 **Known fixture limits** (fixtures to follow with Area 7)
 
@@ -398,3 +398,10 @@ Requirement text above has been edited where noted.
 
 - **Annotations.** An `annotate` result adds sensitivity labels to parts (the §5 table's "findings" are these labels). Its `hook.decision` **MUST** carry `annotations` (labels per part), which context rebuilding reapplies (CTX-001), and may carry `labelsAdded`, the union of the labels added, for audit queries. The event schema now requires `annotations`.
 - **HOOK-126, HOOK-127.** The event schema now requires `provenances` and `labels` on every taint `policy.decision`, as these requirements already said.
+
+## Amendment 2026-11-23 — CEL readings from a first implementation driver
+
+Readings above have been edited where noted.
+
+- **HOOK-112** (reading of 2026-11-01 edited). `uint` literals fail at `compile`, as `cel.subset-uint-literal-rejected` asserts. The reading listed only bytes literals and message construction as syntactic subset checks.
+- **HOOK-110, HOOK-111, HOOK-114: the evaluator enforces the subset.** The subset belongs to the rule evaluator (ADR-0006), not to the CEL library behind it. A conforming library may accept more: bytes and `uint` literals, message construction, `dyn()`, `type()`, timestamps and durations, and string-extension functions such as `substring`. The evaluator **MUST** reject each of these at the stage the HOOK-112 reading gives, whatever the library accepts. In the same way, a literal `matches` pattern that is not valid RE2 fails at `type_check`, even where the library reports it only at evaluation.

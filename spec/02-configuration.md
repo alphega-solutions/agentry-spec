@@ -387,3 +387,8 @@ Requirement text above has been edited where noted.
 ## Amendment 2026-11-14 — readings settled with the coverage fixtures (post-Phase 4 review)
 
 - **CFG-110, CFG-061: `extensions`.** A secret reference (`secret://…`) anywhere in a binding's `extensions` is a configuration error: bindings take secrets only in `credentials`. A literal secret value in `extensions` cannot be told apart from an ordinary setting, so that half of the rule is *(untestable: verified by review)*.
+
+## Amendment 2026-11-23 — fixture fixes from a first implementation driver
+
+- **CFG-003: duplicates within one load.** The runner keyed a `load` step's artifacts by kind, id and version, so two artifacts with one key in the same load reached the driver as one, and `cfg.artifact-id-version-unique` could not be passed. `tools/validate.py` `_apply` now keeps both. A later artifact still replaces one from an earlier load or the base.
+- **CFG-042: fixture setups.** `eval.grader-kinds-pass-fail` and `hook.record-block-reason-hidden` gave a persona `allowedProfiles: [default@1, streamed@1]` together with an output schema, or with a `beforeResponse` hook that blocks. CFG-042 as amended 2026-11-01 checks each allowed profile, and `cfg.load-order-effective-semantics` rejects these combinations, so the setups could not load. Neither fixture uses `streamed@1`; both personas now allow only `default@1`.

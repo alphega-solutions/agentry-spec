@@ -28,7 +28,6 @@ Phase 2 records every cross-cutting decision made during Phases 0–1. ADR-0001�
 
 ## Pending
 
-- [ ] Inventory ADRs from the earlier `@alphega/agentry` scaffold and mark each keep / revise / retire (needs repo access).
 - Further ADRs will be added as Tier 2 notes settle (HITL, context and memory, providers, content).
 - ADR-0016–0019 (memory, skills, reviewed behaviour changes, shadow mode), accepted 2026-11-14, target **1.x** and change nothing in 1.0. They enter the spec as amendments with schemas and fixtures: ADR-0016–0018 in Areas 2, 6, 7 and 10, and ADR-0019 in Areas 2, 5 and 11. `spec/README.md` lists them under "Accepted decisions not yet specified".
 - ADR-0020 (shared runner) is applied: EVAL-020 as amended 2026-11-14, `conformance/schema/driver.yaml` and `tools/runner/`.
