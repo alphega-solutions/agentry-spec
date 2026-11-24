@@ -265,3 +265,13 @@ Requirement text above has been edited where noted.
 ## Amendment 2026-11-14 — readings settled with the coverage fixtures (post-Phase 4 review)
 
 - **EVAL-060: `session.created.replay`.** Every session created by replay, under `recorded` or `candidate`, names the recording in `session.created.replay` (`{sessionId, snapshotHash}`).
+## Amendment 2026-11-24 — runner and fixture fixes from a session-running driver
+
+A driver that runs sessions, tools and escalations reached runner paths and fixture expectations that no driver had reached before. None of these changes a requirement.
+
+- **Runner, `holdAt` siblings.** Siblings that wait for a held action have no `startAfter`. The runner matched every persisted event against each waiting sibling's `startAfter`, so an event persisted while a sibling waited for a hold stopped the run with an internal error. It now matches only siblings that have one.
+- **Matcher, `$len`.** `$len` compared lengths with its argument as written, so `{$len: $n}` compared with the string `"$n"`, and `core.seq-gap-free-across-runs` could not be passed. A placeholder argument now takes its bound value, as it already did for `$gte` and `$lte`.
+- **Seeded blobs in `noPersistedContent`.** `core.image-part-blob-reference`, `core.blob-reference-other-tenant`, `core.event-payload-no-binary` and `core.hook-removes-binary-part` seed a blob, then list its bytes under `noPersistedContent` for every port. The blob store must hold those bytes, so no implementation could pass. The checks now cover every port except the blob store.
+- **`hitl.list-pending-tenant-ttl`.** `$d` went idle at 2026-01-01T00:01Z, and its `idleTtl` (PT24H) had elapsed by the end. The fixture asserted `state: idle`, which CORE-041 forbids once expiry is processed. An implementation may process expiry when the clock advances, as the fixture's description already allows for `$a`. `$d`'s state is no longer asserted.
+- **`hitl.resume-replay-while-suspended-again`.** The turn-1 result of `update_record` is untrusted, so it tainted the session (HOOK-120, HOOK-126). Turn 2's call therefore escalated at the taint rule, and once approved it escalated again at `approval: always` (TOOL-036). The fixture expected the first approval to finish the turn. `update_record` is now in `trustedTools`, so the fixture tests what it describes: replay of a resume (HITL-071).
+- **`core.content-provenance-system-principal`.** `expect.providerRequests` listed one request, but the script makes two (the tool call, then the answer). Arrays match exactly, so it could not pass. The second request is now listed as `{}`.

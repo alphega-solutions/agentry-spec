@@ -50,6 +50,10 @@ expect:
             payload:
               callId: c1
               result: { ok: { blob: { id: blob-img-152 } } }
+  # The seeded blob holds these bytes by design, so the check covers every
+  # port but the blob store: none of them may carry the bytes inline.
   noPersistedContent:
-    - "U1lOVEhFVElDLUlNQUdFLTAxNTI="
-    - "SYNTHETIC-IMAGE-0152"
+    - ports: [eventLog, checkpointStore, idempotencyStore, snapshotStore, auditLog]
+      strings:
+        - "U1lOVEhFVElDLUlNQUdFLTAxNTI="
+        - "SYNTHETIC-IMAGE-0152"

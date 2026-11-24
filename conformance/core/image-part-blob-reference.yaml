@@ -92,8 +92,12 @@ expect:
                   labels: { $any: true }
                   blob: { id: blob-file-1, hash: "sha256:488b66a845535f2173fe026ad21ad4238ca6b733b00a24ba332adab6729a0a80", mediaType: text/plain, size: 44 }
                   data: { $absent: true }
+  # The seeded blob holds these bytes by design, so the check covers every
+  # port but the blob store: none of them may carry the bytes inline.
   noPersistedContent:
-    - "U1lOVEhFVElDLUlNQUdFLTAwMDE="
-    - "U1lOVEhFVElDLUZJTEUtMDAwMTogcXVhcnRlcmx5IHdpZGdldCByZXBvcnQ="
-    - "SYNTHETIC-IMAGE-0001"
-    - "SYNTHETIC-FILE-0001"
+    - ports: [eventLog, checkpointStore, idempotencyStore, snapshotStore, auditLog]
+      strings:
+        - "U1lOVEhFVElDLUlNQUdFLTAwMDE="
+        - "U1lOVEhFVElDLUZJTEUtMDAwMTogcXVhcnRlcmx5IHdpZGdldCByZXBvcnQ="
+        - "SYNTHETIC-IMAGE-0001"
+        - "SYNTHETIC-FILE-0001"

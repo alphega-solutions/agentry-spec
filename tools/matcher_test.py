@@ -52,6 +52,13 @@ def test_scalar_matchers() -> None:
     assert M.matches({"xs": {"$all": [{"$len": 3}, {"$contains": [3, 1]}]}}, a)
 
 
+
+def test_len_takes_a_bound_placeholder() -> None:
+    a = {"xs": [1, 2, 3]}
+    assert M.matches({"xs": {"$len": "$n"}}, a, {"$n": 3}), "$len compares with a value bound earlier"
+    assert not M.matches({"xs": {"$len": "$n"}}, a, {"$n": 4})
+
+
 def test_not_matches_absent_and_never_binds() -> None:
     assert M.matches({"x": {"$not": 1}}, {}), "$not matches an absent field"
     assert M.matches({"x": {"$not": 1}}, {"x": 2})

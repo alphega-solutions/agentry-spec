@@ -180,7 +180,7 @@ class FixtureRun:
                         and len(self.events_by_request[rid]) == abandon["afterEvents"]:
                     self.c.call("stream.abandon", {"requestId": rid})  # the host stops consuming here
                     abandon = None
-                for w in list(waiting):  # startAfter: evaluated before any clock advance
+                for w in [x for x in waiting if "startAfter" in x[1]]:  # startAfter: evaluated before any clock advance
                     try:
                         hit = self.m.matches(w[1]["startAfter"], ev["event"], self.env)
                     except UnboundPlaceholder as exc:

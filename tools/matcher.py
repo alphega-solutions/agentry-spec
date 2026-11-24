@@ -201,6 +201,10 @@ class Matcher:
             if present and isinstance(actual, str) and re.search(arg, actual):
                 yield env
         elif name == "$len":
+            if is_placeholder(arg):  # a length observed earlier, like $gte/$lte
+                if arg not in env:
+                    raise UnboundPlaceholder(f"{arg} in $len must already be bound")
+                arg = env[arg]
             if present and isinstance(actual, (list, str, dict)) and len(actual) == arg:
                 yield env
         elif name in ("$gte", "$lte", "$gt", "$lt"):

@@ -273,9 +273,10 @@ class HoldClient:
     completes. `reach_hold=False` simulates an action that completes without
     reaching its hold point."""
 
-    def __init__(self, reach_hold: bool = True):
+    def __init__(self, reach_hold: bool = True, emit: bool = False):
         self.log: list = []
         self.reach_hold = reach_hold
+        self.emit = emit  # r1 persists an event before it is held
         self.state = "start"
 
     def call(self, method, params=None):
@@ -295,6 +296,10 @@ class HoldClient:
         if self.state == "start":
             self.state = "held"
             waiting.append({"requestId": "r1", "on": "held", "point": "after_operation_lease"})
+            if self.emit:
+                event = {"type": "session.closed", "sessionId": "s1", "seq": 9}
+                return {"now": "t", "events": [{"process": "p0", "requestId": "r1", "event": event}],
+                        "completed": done, "crashed": [], "waiting": waiting}
         elif self.state == "held":
             waiting.append({"requestId": "r1", "on": "held", "point": "after_operation_lease"})
             if "r2" in started and not any(m == "decided" for m, _ in self.log):
@@ -323,6 +328,19 @@ def test_hold_at_opens_a_window_for_siblings() -> None:
     assert methods.index("action.start", first_held_settle) > first_held_settle, "decide starts only once close is held"
     assert methods.index("action.release") > methods.index("decided"), "release only after the sibling completed"
     assert client.log[0][1].get("holdAt") == "after_operation_lease"
+
+
+def test_events_while_siblings_wait_for_a_hold() -> None:
+    """A sibling held back by `holdAt` has no `startAfter`; an event persisted
+    meanwhile must not be matched against one."""
+    client = HoldClient(emit=True)
+    fr = FixtureRun(client, {"id": "t", "script": []})
+    fr.env["$s"] = "s1"
+    outs = fr.run_actions([
+        {"action": "close", "session": "$s", "holdAt": "after_operation_lease", "expect": {"ok": True}},
+        {"action": "decide", "session": "$s", "decisions": []},
+    ], "script[0]", separate=True)
+    assert outs[0]["ok"] and not outs[1]["ok"]
 
 
 def test_hold_point_never_reached_is_unmet() -> None:
