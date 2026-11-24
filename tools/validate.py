@@ -503,10 +503,19 @@ def _base_artifacts(base: str) -> dict | None:
 
 
 def _apply(arts: dict, add, remove) -> dict:
+    """`arts` with `add` replacing artifacts of the same kind, id and version,
+    then `remove` applied. Two artifacts with one key within `add` are both
+    kept, so a load that defines an artifact twice reaches the driver as it
+    is written (CFG-003)."""
     out = dict(arts)
+    added: set = set()
     for a in add or []:
         if isinstance(a, dict):
-            out[(a.get("kind"), a.get("id"), a.get("version"))] = a
+            key = (a.get("kind"), a.get("id"), a.get("version"))
+            if key in added:
+                key = (*key, sum(1 for k in out if k[:3] == key))
+            added.add(key)
+            out[key] = a
     for ref in remove or []:
         rid, _, ver = str(ref).partition("@")
         for k in [k for k in out if k[1] == rid and str(k[2]) == ver]:

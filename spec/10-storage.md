@@ -241,3 +241,7 @@ Schemas: stored records in `schemas/ports/v1/records.yaml` (checkpoint, idempote
 ## Amendment 2026-11-14 — readings settled with the coverage fixtures (post-Phase 4 review)
 
 - **PORT-030: `checkpoint.saved`.** Every `checkpoint.saved` event carries the checkpoint's `fencingToken` after the save, once any lease has been issued. So the tokens of successive leases, including a crashed run's, are observable from the event log (PORT-031).
+
+## Amendment 2026-11-23 — port error codes (reading from a first implementation driver)
+
+- **PORT-004: codes.** The code registry (`schemas/core/v1/codes.yaml`) defines no codes for port errors other than `agentry.storage.version_mismatch` (PORT-122). Other port errors therefore carry a code in the implementation's own namespace (CORE-192), with the category PORT-004 gives. Port cases assert the category and bind the code, so they never depend on its value. The code for a missing record and for another tenant's record **MUST** be the same (CORE-193); the cases check this by binding `$missingCode` once and reusing it.
