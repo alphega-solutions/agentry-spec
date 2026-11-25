@@ -139,6 +139,53 @@ def test_outcome_mismatch_is_unmet() -> None:
         raise AssertionError("a wrong end reason must be unmet")
 
 
+class BindClient:
+    """Action r1 creates session s9: it persists `x.first`, then completes, or
+    crashes when `crash` is set. A sibling started meanwhile completes at once."""
+
+    def __init__(self, crash: bool = False):
+        self.crash, self.stage, self.starts = crash, 0, []
+
+    def call(self, method, params=None):
+        if method == "action.start":
+            self.starts.append(params)
+            return {}
+        if method != "settle":
+            return {}
+        out: dict = {"now": "2026-01-01T00:00:00Z", "events": [], "completed": [], "crashed": [], "waiting": []}
+        if self.stage == 0:
+            out["events"].append({"process": "main", "requestId": "r1",
+                                  "event": {"type": "x.first", "seq": 1, "sessionId": "s9"}})
+            out["waiting"].append({"requestId": "r1", "on": "paused"})
+        elif self.crash:
+            out["crashed"].append({"requestId": "r1", "point": "after_event_append"})
+        else:
+            out["completed"].append({"requestId": "r1", "outcome": {"ok": True, "sessionId": "s9"}})
+        out["completed"] += [{"requestId": p["requestId"], "outcome": {"ok": True}} for p in self.starts[1:]
+                             if self.stage == 1]
+        self.stage += 1
+        return out
+
+
+def test_bind_is_known_once_the_session_is() -> None:
+    """A sibling's `startAfter` may name the session the first action is creating."""
+    client = BindClient()
+    fr = FixtureRun(client, {"id": "t", "script": []})
+    fr.run_actions([
+        {"action": "run", "bind": "$s", "tenant": "t1"},
+        {"action": "cancel", "session": "$s", "startAfter": {"type": "x.first"}},
+    ], "script[0]", separate=False)
+    assert client.starts[1]["args"]["session"] == "s9"
+
+
+def test_a_crashed_action_binds_its_session() -> None:
+    """A crashed action has no outcome; its `bind` still names the session it created."""
+    fr = FixtureRun(BindClient(crash=True), {"id": "t", "script": []})
+    fr.armed_crash = True
+    fr.run_actions([{"action": "run", "bind": "$s", "tenant": "t1"}], "script[0]", separate=False)
+    assert fr.env["$s"] == "s9"
+
+
 class SnapshotStoreClient:
     """A tiny, honest in-memory snapshot store behind `port.call`, for running the
     real snapshot port cases. `leak=True` ignores the tenant on `get` (a bug)."""

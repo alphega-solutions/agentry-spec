@@ -275,3 +275,14 @@ A driver that runs sessions, tools and escalations reached runner paths and fixt
 - **`hitl.list-pending-tenant-ttl`.** `$d` went idle at 2026-01-01T00:01Z, and its `idleTtl` (PT24H) had elapsed by the end. The fixture asserted `state: idle`, which CORE-041 forbids once expiry is processed. An implementation may process expiry when the clock advances, as the fixture's description already allows for `$a`. `$d`'s state is no longer asserted.
 - **`hitl.resume-replay-while-suspended-again`.** The turn-1 result of `update_record` is untrusted, so it tainted the session (HOOK-120, HOOK-126). Turn 2's call therefore escalated at the taint rule, and once approved it escalated again at `approval: always` (TOOL-036). The fixture expected the first approval to finish the turn. `update_record` is now in `trustedTools`, so the fixture tests what it describes: replay of a resume (HITL-071).
 - **`core.content-provenance-system-principal`.** `expect.providerRequests` listed one request, but the script makes two (the tool call, then the answer). Arrays match exactly, so it could not pass. The second request is now listed as `{}`.
+
+## Amendment 2026-11-24 — `bind` from events, and a fixture fix, from crash recovery
+
+A driver that implements crash points, restart and cancellation of an active run reached two more runner and fixture problems. Neither changes a requirement.
+
+- **Runner, `bind`.** An action step's `bind` names "the session the action creates or targets" (fixture.yaml). The runner bound it only from the action's outcome. Two kinds of fixture could therefore not be passed:
+  - A crashed action has no outcome (`crashStep`), so a crashed `run()` that created the session left its placeholder unbound. This affects `storage.recovery-new-lease-token` and `hitl.raise-recovery-unknown-outcome`.
+  - A sibling that starts while the action is still running could not name its session. This affects `tool.exec-cancel-records-mutating-outcome`, whose `cancel()` starts after the run's `tool.call`.
+
+  The runner now binds the placeholder as soon as an event of the action is persisted, from that event's `sessionId`, before it evaluates any sibling's `startAfter`. Binding from the outcome is unchanged.
+- **`storage.crash-after-append-rebuilt`.** Two `run.ended` items asserted `turn`. The event schema requires `turn` only on turn, model, tool, decision, escalation and context events (CORE-150 as amended 2026-11-14), and no other fixture asserts it on `run.ended`. The two items no longer assert it.

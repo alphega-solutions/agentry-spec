@@ -176,6 +176,9 @@ class FixtureRun:
                 rid = ev.get("requestId")
                 if rid in self.events_by_request:
                     self.events_by_request[rid].append(ev["event"])
+                    bind = steps[started[rid]].get("bind") if rid in started else None
+                    if isinstance(bind, str) and ev["event"].get("sessionId"):  # bound once the session is known
+                        self.env.setdefault(bind, ev["event"]["sessionId"])
                 if abandon and rid == abandon["requestId"] \
                         and len(self.events_by_request[rid]) == abandon["afterEvents"]:
                     self.c.call("stream.abandon", {"requestId": rid})  # the host stops consuming here
