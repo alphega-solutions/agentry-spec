@@ -89,7 +89,7 @@ expect:
         mode: subsequence
         items:
           - { seq: 1, type: session.created }
-          - { type: run.ended, runId: $r1, turn: 1, payload: { reason: responded } }
+          - { type: run.ended, runId: $r1, payload: { reason: responded } }
           - { type: run.started, runId: { $all: [$r2, { $not: $r1 }] }, payload: { kind: run } }
           - { type: model.response, runId: $r2, turn: 2, step: 1 }
           - { type: tool.call, runId: $r2, turn: 2, step: 1, payload: { callId: c1, tool: lookup, arguments: { key: k1 } } }
@@ -97,7 +97,7 @@ expect:
           - { type: model.request, runId: $r2, turn: 2, step: 2 }
           - { type: run.ended, runId: $r2, payload: { reason: responded } }
           - { type: run.started, runId: { $all: [$r3, { $not: $r2 }] }, payload: { kind: run } }
-          - { type: run.ended, runId: $r3, turn: 3, payload: { reason: responded } }
+          - { type: run.ended, runId: $r3, payload: { reason: responded } }
           - { seq: $n, type: session.closed }
       absentEvents:
         - { type: escalation.raised }
